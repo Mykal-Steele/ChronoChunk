@@ -1,9 +1,17 @@
-# Discord File and Code Uploader Bot
+# Discord File and Code Uploader Bot  
 
-- Upload files via the `/upload` command.
-- Send long code snippets via the `/code` command
+## Features  
+- Upload files via `/upload`.  
+- Send long code snippets via `/code`.  
+- Large files are uploaded to Google Drive with a shared link.  
 
-## Store files in a google drive and share the download link to user if the file is too big to upload to discord
-
-do
-`pip install -r requirements.txt` #not working yet
+## Setup  
+1. Install dependencies:  
+   ```sh  
+   pip install -r requirements.txt  # (working now. i think...)  
+   ```  
+2. Add `DISCORD_TOKEN` in `.env`.  
+3. Run the bot:  
+   ```sh  
+   python bot.py  
+   ```
