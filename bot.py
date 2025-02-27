@@ -101,7 +101,7 @@ async def code(ctx):
             chunks.append(text.strip())
         # this print the splitted messages
         for chunk in chunks:
-            await ctx.send(f"```py\n{chunk}\n```")
+            await ctx.send(f"```java\n{chunk}\n```")
 
 
     except Exception as e:
@@ -110,6 +110,7 @@ async def code(ctx):
     await ctx.send("HERE is your entiree code file split into messaesgess so that it can be easily read without having to \"copyy\" the `.txt` file. Discord converts your code to text if it is over line 150 or so..")
 
     await ctx.send("If you prefer you can download the original `.txt` file here :) :", file=await attachment.to_file())
+
 
 # run bot
 bot.run(TOKEN)
