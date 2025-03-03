@@ -21,6 +21,5 @@ jobs:
 
       - name: Run Redeployment Script
         run: |
-          # Make sure the redeployment script is executable and run it
           chmod +x ./re-deploy.sh
           ./re-deploy.sh  # Run your redeployment script with the hardcoded API key
