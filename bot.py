@@ -127,7 +127,7 @@ async def code(ctx):
         
         # Send the split messages
         for chunk in chunks:
-            await ctx.send(f"```python\n{chunk}\n```")
+            await ctx.send(f"```jsx\n{chunk}\n```")
 
     except Exception as e:
         await ctx.send(f"ERROR PROCESSING: {e}")  
