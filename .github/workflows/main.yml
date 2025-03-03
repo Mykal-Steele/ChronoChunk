@@ -1,9 +1,11 @@
-name: Redeploy Service on Push
+name: Redeploy Service on Push and Schedule
 
 on:
   push:
     branches:
       - main  # Trigger the workflow when code is pushed to the main branch.
+  schedule:
+    - cron: '*/10 * * * *'  # Run every 10 minutes
 
 jobs:
   redeploy:
