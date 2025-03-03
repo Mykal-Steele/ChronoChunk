@@ -1,0 +1,17 @@
+name: Scheduled Render Redeploy
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"  # Runs every 15 minutes
+
+jobs:
+  redeploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Run Deploy Script
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: ./re-deploy.sh
