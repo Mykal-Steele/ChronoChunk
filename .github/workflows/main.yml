@@ -1,17 +1,26 @@
-name: Scheduled Render Redeploy
+name: Redeploy Service on Push
 
 on:
-  schedule:
-    - cron: "*/15 * * * *"  # Runs every 15 minutes
+  push:
+    branches:
+      - main  # Trigger the workflow when code is pushed to the main branch.
 
 jobs:
   redeploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
+    runs-on: ubuntu-latest  # Use the latest Ubuntu environment
 
-      - name: Run Deploy Script
-        env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-        run: ./re-deploy.sh
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3  # Checkout the repository code
+
+      - name: Install Dependencies
+        run: |
+          # Install curl if not already installed
+          sudo apt-get update
+          sudo apt-get install -y curl
+
+      - name: Run Redeployment Script
+        run: |
+          # Make sure the redeployment script is executable and run it
+          chmod +x ./re-deploy.sh
+          ./re-deploy.sh  # Run your redeployment script with the hardcoded API key
