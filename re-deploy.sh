@@ -14,7 +14,7 @@ JSON_DATA='{"clearCache": "do_not_clear"}'  # Using string "do_not_clear"
 echo "Sending request with data: $JSON_DATA"
 
 # Send the request to Render API
-RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST "https://api.render.com/v1/services/$SERVICE_ID/deploys" \
+RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys" \
   -H "Authorization: Bearer $RENDER_API_KEY" \
   -H "Content-Type: application/json" \
   --data "$JSON_DATA")
