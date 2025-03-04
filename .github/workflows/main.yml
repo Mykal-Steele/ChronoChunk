@@ -3,17 +3,17 @@ name: Redeploy Service on Push and Schedule
 on:
   push:
     branches:
-      - main  # Trigger the workflow when code is pushed to the main branch.
+      - main # Trigger the workflow when code is pushed to the main branch.
   schedule:
-    - cron: '*/10 * * * *'  # Run every 10 minutes
+    - cron: "*/10 * * * *" # Run every 10 minutes
 
 jobs:
   redeploy:
-    runs-on: ubuntu-latest  # Use the latest Ubuntu environment
+    runs-on: ubuntu-latest # Use the latest Ubuntu environment
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3  # Checkout the repository code
+        uses: actions/checkout@v3 # Checkout the repository code
 
       - name: Install Dependencies
         run: |
@@ -26,5 +26,5 @@ jobs:
           chmod +x ./re-deploy.sh
           ./re-deploy.sh  # Run your redeployment script
         env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}  # Pass API key secret as env var
-          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}  # Pass server ID secret as env var
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }} # Pass API key secret as env var
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }} # Pass server ID secret as env var
