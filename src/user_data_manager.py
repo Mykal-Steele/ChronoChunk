@@ -120,88 +120,73 @@ class UserDataManager:
         # Also extract facts from this conversation
         await self.extract_and_save_facts(user_id, message_content, username)
         
-    async def extract_and_save_facts(self, user_id: str, message_content: str, username: str = None) -> bool:
-        """Extract and save facts about the user using AI"""
-        if not message_content or (message_content.startswith('/') and len(message_content) < 4):
-            return False
+    async def extract_and_save_facts(self, user_id: str, message_content: str, username: str = None) -> List[str]:
+        """Extract facts from a message and save them to user data"""
+        # Skip analysis for very short messages or command-like messages
+        if len(message_content.split()) <= 3 or message_content.startswith('/'):
+            return []
+
+        sanitized_id = self._sanitize_discord_id(user_id)
+        facts = []
         
-        # Sanitize Discord user ID
-        user_id = re.sub(r'[^0-9]', '', user_id)    
-        user_data = self.load_user_data(user_id, username)
-        made_changes = False
+        # Skip extraction if message is too short
+        if not message_content or len(message_content.strip()) < 5:
+            return facts
+            
+        # Load user data
+        user_data = self.load_user_data(sanitized_id, username)
         
         try:
-            # Extract facts using AI with improved prompt
-            fact_prompt = FACT_EXTRACTION_PROMPT.format(message=message_content)
+            # Extract facts
+            prompt = FACT_EXTRACTION_PROMPT.replace("{message}", message_content)
             
-            response = await self.fact_model.generate_content_async(fact_prompt)
+            response = await self.fact_model.generate_content_async(prompt)
             facts_text = response.text.strip()
             
-            # Handle markdown formatting
-            if "```json" in facts_text:
-                facts_text = facts_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in facts_text:
-                facts_text = facts_text.split("```")[1].strip()
-            
-            # AI models love to wrap json in markdown code blocks or add extra text
-            # so we gotta do this janky string manipulation to extract just the JSON part
-            # then parse it with the actual json module for safety
+            # Try to parse as JSON
             try:
-                facts = json.loads(facts_text)
-                
-                # Check for conflicting facts before adding new ones
-                for fact in facts:
-                    if fact and len(fact.strip()) > 0:
-                        # Look for contradictions before adding
-                        contradiction_found = await self._check_and_handle_contradiction(user_id, user_data, fact)
-                        
-                        # If no contradiction was found and handled, add as new fact
-                        if not contradiction_found and not self._fact_exists(user_data, fact):
-                            user_data["facts"].append({
-                                "content": fact,
-                                "extracted_from": message_content,
-                                "timestamp": datetime.now().isoformat()
-                            })
-                            made_changes = True
-                            logging.info(f"Added new fact for {user_id}: {fact}")
-                
-            except json.JSONDecodeError as e:
-                logging.warning(f"Failed to parse facts JSON: {facts_text} - Error: {e}")
-                
-            # Extract topics of interest with improved prompt
-            topics_prompt = TOPIC_EXTRACTION_PROMPT.format(message=message_content)
+                facts_object = json.loads(facts_text)
+                if isinstance(facts_object, list):
+                    # List of facts
+                    for fact in facts_object:
+                        if fact and isinstance(fact, str) and fact.strip():
+                            self._add_fact(user_data, fact.strip())
+                    facts = facts_object
+                elif isinstance(facts_object, dict) and "facts" in facts_object:
+                    # Object with facts field
+                    for fact in facts_object["facts"]:
+                        if fact and isinstance(fact, str) and fact.strip():
+                            self._add_fact(user_data, fact.strip())
+                    facts = facts_object["facts"]
+            except json.JSONDecodeError as je:
+                # Not valid JSON, log at debug level only since this is common
+                logger.debug(f"Facts response not valid JSON: {facts_text}")
+                # Handle as plain text
+                if facts_text and "no facts" not in facts_text.lower():
+                    lines = [line.strip() for line in facts_text.split("\n") if line.strip()]
+                    for line in lines:
+                        # Skip non-fact lines
+                        if line.startswith("-") or line.startswith("*") or re.match(r'^\d+\.', line):
+                            fact = re.sub(r'^[-*\d.]+\s*', '', line).strip()
+                            if fact:
+                                self._add_fact(user_data, fact)
+                                facts.append(fact)
+                else:
+                    # Only log at debug level for this common case
+                    logger.debug(f"No facts extracted from message")
             
-            response = await self.fact_model.generate_content_async(topics_prompt)
-            topics_text = response.text.strip()
+            # Also extract topics of interest
+            self._extract_topics(user_data, message_content)
             
-            # Handle markdown formatting
-            if "```json" in topics_text:
-                topics_text = topics_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in topics_text:
-                topics_text = topics_text.split("```")[1].strip()
+            # Save updated data
+            self.save_user_data(sanitized_id, user_data)
             
-            try:
-                topics = json.loads(topics_text)
-                
-                for topic in topics:
-                    if topic and topic.strip() and topic not in user_data["topics_of_interest"]:
-                        # Clean up the topic - remove "so much" etc.
-                        clean_topic = self._clean_topic(topic)
-                        if clean_topic and clean_topic not in user_data["topics_of_interest"]:
-                            user_data["topics_of_interest"].append(clean_topic)
-                            made_changes = True
-                            logging.info(f"Added new topic for {user_id}: {clean_topic}")
-            except json.JSONDecodeError as e:
-                logging.warning(f"Failed to parse topics JSON: {topics_text} - Error: {e}")
-                
-            # Save changes
-            if made_changes:
-                self.save_user_data(user_id, user_data)
-                
         except Exception as e:
-            logging.error(f"Error extracting facts: {e}")
+            # Log at debug level instead of warning to avoid console spam
+            logger.debug(f"Failed to parse facts JSON: {facts_text if 'facts_text' in locals() else 'Unknown'} - Error: {e}")
+            return []
             
-        return made_changes
+        return facts
     
     def _clean_topic(self, topic: str) -> str:
         """Clean up a topic by removing qualifiers and extra words"""
