@@ -1,0 +1,4 @@
+{
+    "builds": [{ "src": "install.sh", "use": "@vercel/static" }]
+  }
+  

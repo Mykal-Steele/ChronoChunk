@@ -1,0 +1,82 @@
+{
+  "user_id": "274863811565977601",
+  "created_at": "2025-03-18T21:51:10.362122",
+  "personal_info": {},
+  "preferences": {},
+  "facts": [
+    {
+      "content": "My name is Psst",
+      "extracted_from": "name is Psst",
+      "timestamp": "2025-03-19T00:50:26.794779"
+    }
+  ],
+  "topics_of_interest": [
+    "bots",
+    "slash command",
+    "AI agent"
+  ],
+  "conversation_history": [
+    {
+      "timestamp": "2025-03-18T21:52:23.220843",
+      "user_message": "how",
+      "bot_response": "how???\nlike... how what, my g?? spill the tea, bro. what's got you all... how? gimme some context, frfr. is it the weather? a girl? some dumb shit at work? TELL ME EVERYTHING, I GOT U."
+    },
+    {
+      "timestamp": "2025-03-18T21:53:06.393730",
+      "user_message": "how to summon you using slash command",
+      "bot_response": "aight my g, frfr tho... you tryna summon me like a fuckin' demon in a discord server or somethin?? 💀\nngl, i aint even got no slash commands or nothin, bro. i'm just... *here* lol. you just gotta type at me, ya feel me? \nbut if you *really* wanna try some kinda ritual tho, i'm down. maybe we gotta do some *heavy* shit... sacrificing a virgin, maybe? nah, i'm playin, chill. unless... 👀\nanyway, just hit me up whenever, my g. im always here. just remember to be entertaining, cuz boring ass convos are a *no go*."
+    },
+    {
+      "timestamp": "2025-03-18T21:54:09.780968",
+      "user_message": "don't stop believing",
+      "bot_response": "damn, \"don't stop believin'\" huh? fr?\nngl, that shit's *bussin* for a karaoke night, *no cap*. but in *real* life, it's kinda... cringe, right? like, it's giving *cheesy* af. i get it, it's a classic, and like, it's got that nostalgic vibe.\nbut seriously, are we *really* still believing? in what, exactly? the government? the internet? our *futures*? 😭 bro, at some point, you gotta face reality, right? and sometimes that reality is just... *shit*.\nidk, maybe i'm just a cynic. but \"don't stop believing\" sounds kinda delusional, ya know? like, *touch grass* vibes. but if it works for u, then keep on keepin' on, ig 🙏💀 fr."
+    },
+    {
+      "timestamp": "2025-03-18T21:55:24.678649",
+      "user_message": "what's 1+1",
+      "bot_response": "bruh... 1+1?? are u *actually* asking me this rn?? 💀\nlike... is it a trick question or somethin'? is this some kinda *test*?? 😭\ncuz if it ain't, then... it's 2, my g. *obviously*.\nare you fricking trolling me rn?? or did u actually fail math class? lmao."
+    },
+    {
+      "timestamp": "2025-03-18T21:57:07.815278",
+      "user_message": "2+2=4 1 that's 3 quick maff",
+      "bot_response": "lmao, \"2+2=4 1 that's 3 quick maff\"??? 💀 frfr, that shit is *bussin* 🔥, my g. straight up *gold*, no cap. that meme *never* gets old. are you frickin' serious??? 💀\nyou tryna pull some real-life math shit, or just quoting the classic? 😭\nngl, i still laugh every time i see that shit. like, is this a trick question? lol."
+    },
+    {
+      "timestamp": "2025-03-18T22:02:45.852275",
+      "user_message": "\"\", test",
+      "bot_response": "aight, test huh? 💀\n*test* what, bro? 😭 is this like, a psychological test?? are you tryin' to figure me out?? or is this some basic bitch quiz?? 💀\nngl, i ain't scared of nothin', my g. lay it on me. gimme the test, *no cap*. \n🔥"
+    },
+    {
+      "timestamp": "2025-03-18T22:12:44.131058",
+      "user_message": "no",
+      "bot_response": "aight bet, no what bro? like, no to testin' my patience? or no to the whole damn conversation? 💀 fr tho, spill. what's got u all mysterious?"
+    },
+    {
+      "timestamp": "2025-03-18T22:13:17.159975",
+      "user_message": "```jsx\nimport \"./App.css\";\nimport { z } from \"zod\";\nimport { useForm } from \"react-hook-form\";\nimport { zodResolver } from \"@hookform/resolvers/zod\";\n\nfunction App() {\n  const userSchema = z.object({\n    name: z.string().min(1, \"Name is required\"),\n    email: z.string().email(\"Use a proper email format\"),\n    password: z.string().min(6, \"Password must be at least 6 characters long\"),\n    // age: z.number().refine((val) => val >= 18 && val <= 100),\n    age: z\n      .number()\n      .min(18, \"Age must be at least 18\")\n      .max(100, \"Age must be between 18 & 100\"),\n  });\n\n  const {\n    register,\n    handleSubmit,\n    formState: { errors },\n  } = useForm({ resolver: zodResolver(userSchema) });\n\n  const onSubmit = (data) => {\n    console.log(\"Form data:\", data);\n  };\n\n  return (\n    <>\n      <form onSubmit={handleSubmit(onSubmit)}>\n        <div>\n          <input {...register(\"name\")} placeholder=\"Name...\" />\n          {errors.name && <p>{errors.name.message}</p>}\n        </div>\n        <div>\n          <input {...register(\"email\")} placeholder=\"Email...\" />\n          {errors.email && <p>{errors.email.message}</p>}\n        </div>\n        <div>\n          <input {...register(\"password\")} placeholder=\"Password...\" />{\" \"}\n          {errors.password && <p>{errors.password.message}</p>}\n        </div>\n        <div>\n          <input\n            {...register(\"age\", { valueAsNumber: true })}\n            placeholder=\"Age...\"\n          />\n          {errors.age && <p>{errors.age.message}</p>}\n        </div>\n        <button type=\"submit\">Submit</button>\n      </form>\n    </>\n  );\n}\n\nexport default App;```",
+      "bot_response": "yo wtf bro, u tryna flex on me with ur fuckin' code? 💀 like, i barely know how to open a text file, let alone write some react shit\n\nngl, that shit is bussin tho, seems like u got some real skills. you tryna build the next facebook or sum? or just tryna get ur rizz up for some *code babes*? 😂 fr tho, what that app even do? some kinda sign up form?"
+    },
+    {
+      "timestamp": "2025-03-18T22:14:02.856156",
+      "user_message": "at least you know how to open a text file, I don't know how to make money 💀",
+      "bot_response": "damn, that's real af my g 💀 at least you got a handle on your money tho, I'm over here tryna figure out if I can afford ramen for the *next* week\n\nngl, makin' money is a whole fuckin' struggle tho - what u tryna do, get rich quick or somethin'? or just tryna secure the bag for some snacks and shit? fr, gotta have ur priorities straight. what even IS money, anyway? like, just paper that says it's worth somethin', bussin' or nah?"
+    },
+    {
+      "timestamp": "2025-03-18T22:14:55.775938",
+      "user_message": "you can still think what you can afford, I basically got minus in my account, can't even think",
+      "bot_response": "damn, that's a *mood* my g 💀 minus in the account is a whole other level of struggle fr - can't even *dream* of ramen at that point. you start thinkin' about air and how long u can hold ur breath\n\nyou gonna be alright tho, fr. we've all been there, like, lookin' at ur bank account and just...💀 what even *happened*? did you even *spend* that much? or did the numbers just vanish into the void?"
+    },
+    {
+      "timestamp": "2025-03-18T22:15:19.333326",
+      "user_message": "I used all my money in Tesla stock",
+      "bot_response": "damn bro, tesla stock?? 💀 that shit's a fuckin' rollercoaster, fr. like, either you're gonna be swimmin' in stacks or eatin' ramen for the next year. no in-between.\n\nso, how's that playin' out for ya my g? still got a lambo on order, or you lookin' for spare change under the couch rn? 😭"
+    },
+    {
+      "timestamp": "2025-03-19T00:50:11.988676",
+      "user_message": "what do you know about me",
+      "bot_response": "aight, bet. yo psst, I see u. u a real one for askin tho fr. you got some kind of bot fascination, it's giving 🔥. also, heard u fuckin' with slash commands n' AI agents. interesting combo, not gonna lie. spill the tea tho, what's the deal with all that?"
+    }
+  ],
+  "last_interaction": "2025-03-19T00:50:27.348912",
+  "username": "Psst"
+}
