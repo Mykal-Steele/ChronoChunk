@@ -5,6 +5,8 @@ import logging
 import google.generativeai as genai
 from typing import List, Tuple, Dict, Any, Optional
 from config.ai_config import PERSONALITY_PROMPT
+import json
+from collections import deque
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -12,14 +14,33 @@ logger = logging.getLogger(__name__)
 class AIResponseHandler:
     """Handles all AI response generation logic"""
     
-    def __init__(self, api_key: str, important_topics: List[str], intent_detector):
+    def __init__(self, api_key: str, important_topics: List[str], intent_detector, api_throttler=None):
         """Initialize AI response handler with API key and required components"""
         self.important_topics = important_topics
         self.intent_detector = intent_detector
+        self.api_throttler = api_throttler
+        
+        # Response cache to avoid repeated API calls with similar prompts
+        self.response_cache = {}
+        self.cache_size = 50
         
         # Set up AI model
         genai.configure(api_key=api_key)
         self.ai_model = genai.GenerativeModel("gemini-1.5-flash-latest")
+        
+        # Fallback responses for when API is quota limited
+        self.fallback_responses = deque([
+            "yo my neural nets are fried rn, gimme a sec",
+            "bruh i think im gettin rate limited, one sec",
+            "damn, quota issues again? my dev needs to pay up fr",
+            "ngl my brain just glitched for a sec, try again?",
+            "lmao my processor just overheated, brb",
+            "yo whoever coded me forgot to pay the brain bill 😭",
+            "shit i think my dev's api quota just got clapped lol",
+            "damn, can't think straight rn, try again in a bit?",
+            "bruh im lagging so hard rn, gimme a min",
+            "my brain cells just went on strike fr fr"
+        ], maxlen=10)
     
     def extract_important_topics(self, message_content: str) -> List[str]:
         """Find sensitive topics in messages more efficiently"""
@@ -137,6 +158,16 @@ class AIResponseHandler:
             """
             prompt_parts.append(sensitive_instructions)
         
+        # If user seems annoyed (uses words like "stfu", "stop", etc.)
+        if any(word in query.lower() for word in ["stfu", "stop", "stawp", "shut up", "stop it"]):
+            prompt_parts.append("""
+            IMPORTANT: The user seems annoyed. Change the subject completely.
+            - Briefly acknowledge and move on to something new
+            - Don't be defensive or argue back
+            - Be chill and genuine, not sarcastic
+            - Ask about something completely different or offer a genuinely interesting topic
+            """)
+        
         # Add conversation history AFTER instructions but BEFORE the query
         if conversation_history:
             prompt_parts.append("CONVERSATION CONTEXT:\n" + conversation_history)
@@ -146,16 +177,23 @@ class AIResponseHandler:
             # If it was an unrecognized command, remove the slash for natural chat
             clean_query = query[1:] if len(query) > 1 else query
             prompt_parts.append(f"User ({username}) just said: \"{clean_query}\"")
-            # Add context about attempted command
-            prompt_parts.append(f"NOTE: The user tried to use a command that doesn't exist.")
+
         else:
             prompt_parts.append(f"User ({username}) just said: \"{query}\"")
         
         # Ask AI to respond with style reminders
         prompt_parts.append("""
-        Your response as ChronoChunk:
-        
         REMEMBER:
+        - VARY YOUR RESPONSES! Sometimes be chill, sometimes excited, sometimes confused - be unpredictable
+        - DON'T use the same phrases all the time (never repeat "rizz is undefeated" or similar phrases)
+        - VARY YOUR SENTENCE LENGTH! Sometimes super short, sometimes a couple sentences
+        - DON'T sound like you're following a template or formula
+        - Be less defensive when challenged - sometimes just laugh it off or agree
+        - Don't try to "win" every argument - real people sometimes concede points
+        - If someone seems annoyed with you, sometimes just back off instead of doubling down
+        - Don't mention "touching grass" in every other message
+        - When confused, ask genuinely confused questions instead of being hostile
+        - Roll with whatever topic the user brings up rather than fixating on old topics
         - VARY MESSAGE LENGTH! Use 2-5 sentences (sometimes shorter, sometimes longer)
         - DON'T put sentences on separate lines - keep everything in one continuous paragraph
         - almost NEVER use capital letters
@@ -172,12 +210,20 @@ class AIResponseHandler:
         - Avoid overly random tangents and hallucinations
         """.strip())
         
+        prompt_parts.append("""
+        EMOJI RULES:
+        - When you want to use an emoji like :KEKW: or :pokeBruh:, just write :KEKW: or :pokeBruh:
+        - NEVER include emoji IDs like <:KEKW:1280462195939082242>
+        - NEVER copy the exact emoji format from the user - rewrite it naturally
+        - If youo want to use the emoji :KEKW:, respond with :KEKW: not with <:KEKW:1280462195939082242>
+        """)
+        
         # Randomly adjust how bizarre the bot will be for this message
         nonsense_factor = random.random()
-        if nonsense_factor < 0.6:  # 60% chance to be normal/coherent (increased from 30%)
-            prompt_parts.append("SPECIAL INSTRUCTION: Be very coherent and logical in this response. No nonsense or random topics.")
-        elif nonsense_factor > 0.95:  # 5% chance to be extra weird (reduced from 10%)
-            prompt_parts.append("SPECIAL INSTRUCTION: Be extra bizarre and random in this response. Mention something totally unexpected.")
+        if nonsense_factor < 0.65:  # 65% chance to be coherent
+            prompt_parts.append("SPECIAL INSTRUCTION: Be very coherent and logical in this response. No nonsense.")
+        elif nonsense_factor > 0.90:  # Only 10% chance to be weird
+            prompt_parts.append("SPECIAL INSTRUCTION: Be slightly bizarre in this response. Add an unexpected twist.")
         
         # Combine all parts
         return "\n\n".join(prompt_parts)
@@ -221,7 +267,18 @@ class AIResponseHandler:
 
     async def generate_response(self, query: str, conversation_history: str, username: str) -> str:
         """Generate an AI response to a user query"""
+        # Use cache for identical queries with same context to reduce API calls
+        cache_key = f"{query}|{conversation_history[-100:] if conversation_history else ''}"
+        if cache_key in self.response_cache:
+            return self.response_cache[cache_key]
+            
         try:
+            # Use API throttler if available
+            acquired = False
+            if self.api_throttler:
+                await self.api_throttler.acquire()
+                acquired = True
+                
             # Build the prompt
             prompt = await self._build_ai_prompt(query, conversation_history, username)
             
@@ -229,16 +286,34 @@ class AIResponseHandler:
             response = await self.ai_model.generate_content_async(
                 prompt,
                 generation_config={
-                    "temperature": 0.7,  # Reduced from default for more consistency
+                    "temperature": 0.75,  # Slightly reduced from default
                     "top_p": 0.85,
-                    "max_output_tokens": 250  # Increased from 150 to allow for longer responses
+                    "max_output_tokens": 200  # Reasonable length for Discord
                 }
             )
             
             # Format the response
-            return self._format_ai_response(response.text)
+            result = self._format_ai_response(response.text)
+            
+            # Cache the response
+            if len(self.response_cache) >= self.cache_size:
+                # Remove oldest item
+                self.response_cache.pop(next(iter(self.response_cache)))
+            self.response_cache[cache_key] = result
+            
+            return result
             
         except Exception as e:
             logger.error(f"Error generating AI response: {e}")
-            # Fall back to a generic error message with personality
-            return "ahh shit, my brain short-circuited for a sec. wanna try again?" 
+            
+            # Get a fallback response when quota is exhausted
+            if "429" in str(e):
+                fallback = self.fallback_responses[0]
+                # Rotate the queue to get different responses next time
+                self.fallback_responses.rotate(1)
+                return fallback
+            return "damn, my brain just glitched for a sec... gimme a min"
+        finally:
+            # Release the throttler if we acquired it
+            if self.api_throttler and acquired:
+                await self.api_throttler.release()

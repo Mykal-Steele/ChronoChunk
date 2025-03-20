@@ -136,20 +136,35 @@ class MessageHandler:
             if len(unique_authors) > 1:
                 content = f"{user_mention} {content}"
         
-        # Convert Discord emoji codes to actual emojis - only if needed
+        # Convert Discord emoji codes to actual emojis - improved version
         if ":" in content and hasattr(channel, "guild") and channel.guild:
-            # Pre-compile the regex for efficiency
-            emoji_pattern = re.compile(r":([a-zA-Z0-9_]+):")
+            # More accurate regex that handles emoji patterns at word boundaries
+            emoji_pattern = re.compile(r'(?<!\S):([a-zA-Z0-9_]+):(?!\S)')
             
             # Create emoji lookup dictionary
             if channel.guild.emojis:  # Only process if guild has emojis
+                # Case-insensitive matching for better reliability
                 guild_emojis = {emoji.name.lower(): str(emoji) for emoji in channel.guild.emojis}
                 
+                # First pass: Try exact matches
                 for match in emoji_pattern.finditer(content):
                     emoji_name = match.group(1)
-                    # Use a dictionary lookup for guild emojis if available
                     if emoji_name.lower() in guild_emojis:
                         content = content.replace(f":{emoji_name}:", guild_emojis[emoji_name.lower()])
+                
+                # Second pass: Try fuzzy matching for any remaining emoji codes
+                remaining_emoji_pattern = re.compile(r':([a-zA-Z0-9_]+):')
+                for match in remaining_emoji_pattern.finditer(content):
+                    emoji_name = match.group(1)
+                    # Try to find closest match if not exact
+                    closest_match = None
+                    for guild_emoji in guild_emojis:
+                        if emoji_name.lower() in guild_emoji or guild_emoji in emoji_name.lower():
+                            closest_match = guild_emoji
+                            break
+                    
+                    if closest_match:
+                        content = content.replace(f":{emoji_name}:", guild_emojis[closest_match])
         
         # Fix newlines - remove empty lines
         content = re.sub(r'\n\s*\n', '\n', content)
@@ -214,4 +229,4 @@ class MessageHandler:
             except:
                 pass  # If even this fails, just give up
             
-            return None 
+            return None

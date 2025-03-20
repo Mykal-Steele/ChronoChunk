@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import sys
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
 import re
 
 # Try different import approaches to handle both direct and relative imports
@@ -22,10 +22,13 @@ except ImportError:
 class IntentDetector:
     """detects user intentions from messages using AI instead of fixed word lists"""
     
-    def __init__(self, model_name="gemini-1.5-flash-latest"):
+    def __init__(self, model_name="gemini-1.5-flash-latest", api_throttler=None):
         """set up the intent detector with a lightweight model"""
         self.model = genai.GenerativeModel(model_name)
         self.logger = logging.getLogger("intent_detector")
+        
+        # Add API throttler
+        self.api_throttler = api_throttler
         
         # cache recent detections to avoid repeated calls for similar messages
         self.cache = {}
@@ -85,15 +88,81 @@ class IntentDetector:
             for intent, patterns in self.common_patterns.items()
         }
         
-    def _check_patterns(self, message: str, intent_type: str) -> bool:
-        """Check message against precompiled regex patterns for an intent type"""
-        if intent_type not in self.compiled_patterns:
-            return False
-            
-        return any(
-            pattern.search(message) is not None
-            for pattern in self.compiled_patterns[intent_type]
-        )
+    def _check_patterns(self, message: str, intent_type: str) -> Union[bool, Tuple[bool, str]]:
+        """Check if message matches patterns for a particular intent"""
+        message_lower = message.lower()
+        
+        # Different pattern dictionaries for different intent types
+        patterns = {
+            "correction": [
+                r"\b(that'?s not right|not true|incorrect|wrong|actually)\b",
+                r"\b(i meant|i said|i didn'?t say)\b",
+                r"\bi'?m not\b",
+                r"\bcorrect (this|that|it)\b",
+                r"\b(fix|update|change) (this|that|it|my)\b"
+            ],
+            "argumentative": {
+                "defensive": [
+                    r"\b(not my fault|wasn'?t me|didn'?t do|how dare you|excuse me)\b",
+                    r"\b(you'?re wrong|you don'?t know|you'?re mistaken)\b"
+                ],
+                "aggressive": [
+                    r"\b(shut up|stfu|fuck (you|off)|screw you|stupid)\b",
+                    r"\b(you suck|you'?re (dumb|stupid|idiot|moron))\b"
+                ],
+                "challenging": [
+                    r"\b(prove it|how do you know|says who|that'?s bullshit)\b",
+                    r"\b(no way|absolutely not|never|wrong)\b"
+                ],
+                "dismissive": [
+                    r"\b(whatever|don'?t care|so what|big deal|like i care)\b",
+                    r"\b(ok and\?|and\?|who asked|did i ask)\b"
+                ]
+            },
+            "game": [
+                r"\bplay .*game\b",
+                r"\b(start|begin|let'?s play) .*(game|quiz|challenge)\b",
+                r"\bguessing game\b",
+                r"\bnumber game\b"
+            ],
+            "end_game": [
+                r"\b(end|stop|quit|exit|cancel|finish) .*game\b",
+                r"\bgive up\b",
+                r"\bstop playing\b"
+            ],
+            "user_info": [
+                r"\bwhat do you know about me\b",
+                r"\bwhat .* remember about me\b",
+                r"\bdo you know (who i am|me)\b",
+                r"\bwhat .* data .* have (on|about) me\b"
+            ],
+            "forget": [
+                r"\bforget (about|that)\b",
+                r"\bremove .*information\b",
+                r"\bdelete .*data\b",
+                r"\bstop remembering\b"
+            ]
+        }
+        
+        
+        # Check if intent type exists in patterns
+        if intent_type not in patterns:
+            return False if intent_type != "argumentative" else (False, "neutral")
+        
+        # Handle argumentative intent differently
+        if intent_type == "argumentative":
+            for arg_type, pattern_list in patterns[intent_type].items():
+                for pattern in pattern_list:
+                    if re.search(pattern, message_lower):
+                        return True, arg_type
+            return False, "neutral"
+        
+        # For other intent types
+        for pattern in patterns[intent_type]:
+            if re.search(pattern, message_lower):
+                return True
+        
+        return False
         
     async def detect_correction_intent(self, message: str) -> bool:
         """detect if user is trying to correct previously stored info"""
@@ -121,18 +190,31 @@ class IntentDetector:
             """
             
             try:
+                # Use API throttler if available
+                if self.api_throttler:
+                    await self.api_throttler.acquire()  # Wait for permission
+                    
                 response = await self.model.generate_content_async(prompt)
                 result = response.text.strip().lower() == "true"
             except Exception as e:
-                self.logger.error(f"Error detecting correction intent: {e}")
-                # Fall back to pattern matching result
-                result = False
-            
+                if "429" in str(e):
+                    self.logger.warning(f"Rate limited by API, using pattern matching fallback")
+                    # Fall back to pattern matching on rate limit
+                    result = self._check_patterns(message, "correction")
+                else:
+                    self.logger.error(f"Error detecting correction intent: {e}")
+                    # Fall back to pattern matching result
+                    result = False
+            finally:
+                # Release the throttler if we acquired it
+                if self.api_throttler:
+                    await self.api_throttler.release()
+        
         # Cache the result
         if len(self.cache) >= self.cache_size:
             self.cache.pop(next(iter(self.cache)))
         self.cache[message] = {"correction": result}
-            
+        
         return result
     
     async def detect_forget_intent(self, message: str) -> Tuple[bool, Optional[str]]:
@@ -378,69 +460,65 @@ class IntentDetector:
         return result
     
     async def detect_argumentative_intent(self, message: str) -> Tuple[bool, str]:
-        """detect if user is arguing with or insulting the bot"""
+        """Detect if the message has an argumentative tone"""
         if message in self.cache and "argumentative" in self.cache[message]:
             return self.cache[message]["argumentative"]
             
         # First try pattern matching for speed
-        if self._check_patterns(message, "argumentative"):
-            # Try to classify the type of argument
-            if re.search(r"(?i)(fuck|shit|damn|bitch|stfu|shut up)", message):
-                arg_type = "insult"
-            elif re.search(r"(?i)(wrong|incorrect|not true|cap)", message):
-                arg_type = "disagreement"
-            elif re.search(r"(?i)(stupid|dumb|idiot|retarded)", message):
-                arg_type = "criticism"
+        pattern_result = self._check_patterns(message, "argumentative")
+        if pattern_result[0]:  # If pattern matching found argumentative intent
+            return pattern_result
+            
+        # Fall back to AI for nuanced cases
+        prompt = f"""
+        Determine if this message has an argumentative tone.
+        Return a JSON object with:
+        - "is_argumentative": true/false
+        - "type": "defensive", "aggressive", "dismissive", "challenging", or "neutral"
+        
+        Only mark as argumentative if the person is clearly disagreeing, challenging,
+        or being confrontational. Return false for neutral or mildly annoyed messages.
+        
+        Message: {message}
+        """
+        
+        try:
+            # Use API throttler if available
+            acquired = False
+            if self.api_throttler:
+                await self.api_throttler.acquire()
+                acquired = True
+                
+            response = await self.model.generate_content_async(prompt)
+            result_text = response.text.strip()
+            
+            # Try to parse JSON response
+            if "```json" in result_text:
+                result_text = result_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in result_text:
+                result_text = result_text.split("```")[1].split("```")[0].strip()
+                
+            result = json.loads(result_text)
+            is_argumentative = result.get("is_argumentative", False)
+            arg_type = result.get("type", "neutral")
+            
+            # Cache the result
+            if len(self.cache) >= self.cache_size:
+                self.cache.pop(next(iter(self.cache)))
+            self.cache[message] = {"argumentative": (is_argumentative, arg_type)}
+            
+            return is_argumentative, arg_type
+            
+        except Exception as e:
+            if "429" in str(e):
+                self.logger.warning(f"Rate limited by API, using pattern matching fallback")
+                # Fall back to pattern matching on rate limit
+                return self._check_patterns(message, "argumentative")
             else:
-                arg_type = "general"
-                
-            result = (True, arg_type)
-        else:
-            # Fall back to AI for complex cases
-            prompt = f"""
-            Determine if this message is ARGUMENTATIVE, INSULTING, or CHALLENGING the bot.
-            Consider direct insults, arguments, disagreements, and challenging statements.
-            
-            If it is, respond with JSON: {{"intent": true, "type": "<type>"}}
-            If not, respond with JSON: {{"intent": false, "type": null}}
-            
-            Type should be one of:
-            - "insult" (direct insults or profanity directed at bot)
-            - "disagreement" (user saying bot is wrong)
-            - "criticism" (user criticizing bot's abilities)
-            - "challenge" (user challenging bot's knowledge/skills)
-            - "general" (other forms of argument)
-            
-            Examples:
-            - "you're so fucking stupid" -> {{"intent": true, "type": "insult"}}
-            - "that's wrong, actually it's 42" -> {{"intent": true, "type": "disagreement"}}
-            - "you don't know what you're talking about" -> {{"intent": true, "type": "criticism"}}
-            - "bet you can't solve this" -> {{"intent": true, "type": "challenge"}}
-            - "whatever, this bot sucks" -> {{"intent": true, "type": "general"}}
-            - "hi how are you today" -> {{"intent": false, "type": null}}
-            
-            Message: {message}
-            """
-            
-            try:
-                response = await self.model.generate_content_async(prompt)
-                result_text = response.text.strip()
-                
-                # Handle markdown formatting
-                if "```json" in result_text:
-                    result_text = result_text.split("```json")[1].split("```")[0].strip()
-                elif "```" in result_text:
-                    result_text = result_text.split("```")[1].strip()
-                    
-                result_data = json.loads(result_text)
-                result = (result_data["intent"], result_data.get("type", "general") if result_data["intent"] else None)
-            except Exception as e:
                 self.logger.error(f"Error detecting argumentative intent: {e}")
-                result = (False, None)
-                
-        # Cache the result
-        if len(self.cache) >= self.cache_size:
-            self.cache.pop(next(iter(self.cache)))
-        self.cache[message] = {"argumentative": result}
-            
-        return result 
+                # Return a safe default
+                return False, "neutral"
+        finally:
+            # Release the throttler if we acquired it
+            if self.api_throttler and acquired:
+                await self.api_throttler.release()

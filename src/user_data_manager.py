@@ -9,6 +9,9 @@ from typing import Dict, List, Any, Optional, Tuple
 from config.config import Config
 from config.ai_config import FACT_EXTRACTION_PROMPT, TOPIC_EXTRACTION_PROMPT, CONTRADICTION_CHECK_PROMPT, CORRECTION_PROMPT, PERSPECTIVE_CONVERSION_PROMPT
 
+# Setup logger 
+logger = logging.getLogger(__name__)
+
 class UserDataManager:
     """Manages persistent user data storage and retrieval"""
     
@@ -120,73 +123,70 @@ class UserDataManager:
         # Also extract facts from this conversation
         await self.extract_and_save_facts(user_id, message_content, username)
         
-    async def extract_and_save_facts(self, user_id: str, message_content: str, username: str = None) -> List[str]:
-        """Extract facts from a message and save them to user data"""
-        # Skip analysis for very short messages or command-like messages
-        if len(message_content.split()) <= 3 or message_content.startswith('/'):
-            return []
-
-        sanitized_id = self._sanitize_discord_id(user_id)
-        facts = []
-        
-        # Skip extraction if message is too short
-        if not message_content or len(message_content.strip()) < 5:
-            return facts
+    async def extract_and_save_facts(self, user_id: str, message_content: str, username: str = None) -> bool:
+        """Extract and save facts about the user using AI"""
+        if not message_content or (message_content.startswith('/') and len(message_content) < 4):
+            return False
             
-        # Load user data
-        user_data = self.load_user_data(sanitized_id, username)
+        user_data = self.load_user_data(user_id, username)  # Pass username to load_user_data
+        made_changes = False
         
         try:
-            # Extract facts
-            prompt = FACT_EXTRACTION_PROMPT.replace("{message}", message_content)
+            # Extract facts using AI with improved prompt
+            fact_prompt = f"""
+            Extract factual statements about the user from this message.
+            Format the response as a JSON array of complete facts, with each fact being a complete statement.
+            Only extract DEFINITE facts about the user, not hypotheticals or preferences.
+            If there are no facts, return an empty array [].
             
-            response = await self.fact_model.generate_content_async(prompt)
-            facts_text = response.text.strip()
+            The user's message is: {message_content}
+            """
             
-            # Try to parse as JSON
             try:
-                facts_object = json.loads(facts_text)
-                if isinstance(facts_object, list):
-                    # List of facts
+                response = await self.fact_model.generate_content_async(fact_prompt)
+                facts_text = response.text.strip()
+                
+                # Handle markdown formatting
+                if "```json" in facts_text:
+                    facts_text = facts_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in facts_text:
+                    facts_text = facts_text.split("```")[1].strip()
+                    
+                # Parse facts from response
+                try:
+                    facts_object = json.loads(facts_text)
+                    
+                    # Check for conflicting facts before adding new ones
                     for fact in facts_object:
-                        if fact and isinstance(fact, str) and fact.strip():
-                            self._add_fact(user_data, fact.strip())
-                    facts = facts_object
-                elif isinstance(facts_object, dict) and "facts" in facts_object:
-                    # Object with facts field
-                    for fact in facts_object["facts"]:
-                        if fact and isinstance(fact, str) and fact.strip():
-                            self._add_fact(user_data, fact.strip())
-                    facts = facts_object["facts"]
-            except json.JSONDecodeError as je:
-                # Not valid JSON, log at debug level only since this is common
-                logger.debug(f"Facts response not valid JSON: {facts_text}")
-                # Handle as plain text
-                if facts_text and "no facts" not in facts_text.lower():
-                    lines = [line.strip() for line in facts_text.split("\n") if line.strip()]
-                    for line in lines:
-                        # Skip non-fact lines
-                        if line.startswith("-") or line.startswith("*") or re.match(r'^\d+\.', line):
-                            fact = re.sub(r'^[-*\d.]+\s*', '', line).strip()
-                            if fact:
-                                self._add_fact(user_data, fact)
-                                facts.append(fact)
-                else:
-                    # Only log at debug level for this common case
-                    logger.debug(f"No facts extracted from message")
-            
-            # Also extract topics of interest
-            self._extract_topics(user_data, message_content)
-            
-            # Save updated data
-            self.save_user_data(sanitized_id, user_data)
-            
+                        if fact and len(fact.strip()) > 0:
+                            # Add as new fact if not exists
+                            if not self._fact_exists(user_data, fact):
+                                user_data["facts"].append({
+                                    "content": fact,
+                                    "extracted_from": message_content,
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                                made_changes = True
+                                
+                except json.JSONDecodeError:
+                    # Silent fail on JSON errors - likely API quota issues
+                    pass
+                    
+            except Exception as e:
+                # API quota exceeded or other error - fail silently
+                if "429" in str(e):
+                    # Quota error, just return without logging spam
+                    return False
+                    
         except Exception as e:
-            # Log at debug level instead of warning to avoid console spam
-            logger.debug(f"Failed to parse facts JSON: {facts_text if 'facts_text' in locals() else 'Unknown'} - Error: {e}")
-            return []
+            # Catch-all error handler
+            return False
+                
+        # Save changes if we made any
+        if made_changes:
+            self.save_user_data(user_id, user_data)
             
-        return facts
+        return made_changes
     
     def _clean_topic(self, topic: str) -> str:
         """Clean up a topic by removing qualifiers and extra words"""
@@ -490,4 +490,10 @@ class UserDataManager:
             if topic and 2 <= len(topic) <= 30:
                 cleaned.append(topic)
                 
-        return cleaned 
+        return cleaned
+
+    def _sanitize_discord_id(self, user_id):
+        """Sanitize Discord user ID to ensure it's valid for filenames"""
+        # Remove any non-numeric characters
+        sanitized = ''.join(c for c in user_id if c.isdigit())
+        return sanitized
