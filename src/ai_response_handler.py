@@ -51,7 +51,7 @@ class AIResponseHandler:
         # Add additional instructions for clarity and context-awareness
         prompt_parts.append("""
         IMPORTANT INSTRUCTIONS:
-        1. MESSAGES MUST BE SHORT - MAX 1-2 SENTENCES, NEVER EXCEED 3 SENTENCES TOTAL
+        1. MESSAGES SHOULD VARY IN LENGTH - Use a mix of lengths from 2-5 sentences (never just 1 sentence)
         2. TYPING STYLE IS CRITICAL - type like a real Gen Z teen in Discord:
            - almost never use capital letters
            - rarely use periods at end of sentences
@@ -70,12 +70,13 @@ class AIResponseHandler:
         10. Use shortened words like "u" instead of "you", "rn" instead of "right now"
         11. NEVER capitalize first words of sentences
         12. Be unpredictable and natural - vary your style slightly
-        13. IMPORTANT: ONLY be ridiculous/nonsensical about 50% of the time, be more grounded the rest of the time
-        14. NEVER WRITE MORE THAN 1-2 SENTENCES. MESSAGES MUST BE SHORT.
+        13. IMPORTANT: ONLY be ridiculous/nonsensical about 5% of the time, be more grounded and focused the rest of the time
+        14. VARY MESSAGE LENGTH - sometimes use 2 sentences, sometimes use 3-5 sentences
         15. DON'T BE OVERLY DISMISSIVE - if the user asks a question, give an actual answer at least half the time
         16. DON'T overuse phrases like "wtf u care" or similar dismissive phrases
         17. Don't constantly talk about the same random topics (like time travel) in every message
         18. If the user seems confused or annoyed, tone down the nonsense and be more responsive
+        19. STAY ON TOPIC - your responses should relate to what the user just said at least 85% of the time
         """)
         
         # Extra instruction for command-like messages
@@ -155,7 +156,7 @@ class AIResponseHandler:
         Your response as ChronoChunk:
         
         REMEMBER:
-        - KEEP IT SHORT! 1-2 SENTENCES ONLY, NEVER MORE THAN 3
+        - VARY MESSAGE LENGTH! Use 2-5 sentences (sometimes shorter, sometimes longer)
         - DON'T put sentences on separate lines - keep everything in one continuous paragraph
         - almost NEVER use capital letters
         - use "u" not "you", "ur" not "your", etc. 
@@ -164,16 +165,18 @@ class AIResponseHandler:
         - use emojis VERY SPARINGLY (only 1 emoji max if any)
         - use multiple question/exclamation marks for emphasis
         - Be natural and unpredictable like a real person would
+        - ACTUALLY RESPOND TO WHAT THE USER SAID - stay on topic!
         - When user asks a question, give a real answer at least half the time
         - Don't be overly dismissive or use "wtf u care" type phrases too much
         - Vary your topics instead of repeating the same themes (like time travel)
+        - Avoid overly random tangents and hallucinations
         """.strip())
         
         # Randomly adjust how bizarre the bot will be for this message
         nonsense_factor = random.random()
-        if nonsense_factor < 0.3:  # 30% chance to be extra normal/coherent
+        if nonsense_factor < 0.6:  # 60% chance to be normal/coherent (increased from 30%)
             prompt_parts.append("SPECIAL INSTRUCTION: Be very coherent and logical in this response. No nonsense or random topics.")
-        elif nonsense_factor > 0.9:  # 10% chance to be extra weird
+        elif nonsense_factor > 0.95:  # 5% chance to be extra weird (reduced from 10%)
             prompt_parts.append("SPECIAL INSTRUCTION: Be extra bizarre and random in this response. Mention something totally unexpected.")
         
         # Combine all parts
@@ -199,10 +202,10 @@ class AIResponseHandler:
         # Fix multiple spaces in a row
         ai_response = re.sub(r' +', ' ', ai_response)
         
-        # Force shorter responses by truncating if necessary
+        # Allow longer responses (up to 5 sentences)
         sentences = re.split(r'(?<=[.!?])\s+', ai_response)
-        if len(sentences) > 3:
-            ai_response = ' '.join(sentences[:3])
+        if len(sentences) > 5:
+            ai_response = ' '.join(sentences[:5])
         
         # Reduce emoji usage (if more than one emoji, keep only one random emoji)
         emoji_pattern = re.compile(r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F700-\U0001F77F\U0001F780-\U0001F7FF\U0001F800-\U0001F8FF\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\U00002702-\U000027B0\U000024C2-\U0001F251]+')
@@ -222,8 +225,15 @@ class AIResponseHandler:
             # Build the prompt
             prompt = await self._build_ai_prompt(query, conversation_history, username)
             
-            # Call the AI model
-            response = await self.ai_model.generate_content_async(prompt)
+            # Call the AI model with slightly lower temperature
+            response = await self.ai_model.generate_content_async(
+                prompt,
+                generation_config={
+                    "temperature": 0.7,  # Reduced from default for more consistency
+                    "top_p": 0.85,
+                    "max_output_tokens": 250  # Increased from 150 to allow for longer responses
+                }
+            )
             
             # Format the response
             return self._format_ai_response(response.text)
