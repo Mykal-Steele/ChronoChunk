@@ -1,0 +1,572 @@
+<html>
+  <head>
+    <script>
+      var messageHeight = 50;
+      var canvasWidth = 650;
+      var canvasHeight = 400;
+      var audioHasLoaded = false;
+      var songDuration = 203;
+      var lineTaper = 1.7;
+      var lineHeight = 3;
+      var numberOfColumns = 8;
+      var dotMaximumRadius = 14;
+      var destinationMaximumRadius = 20;
+      var pulsationAmplitude = 3;
+      var rockingAmplitude = 0.15;
+      var dotRadius = dotMaximumRadius - pulsationAmplitude;
+      var destinationRadius = destinationMaximumRadius - pulsationAmplitude;
+      var destinationKeyCodeSet = [
+        81, 87, 69, 82, 85, 73, 79, 80, 65, 83, 68, 70, 74, 75, 76, 186,
+      ];
+      var debugMode = false;
+
+      var totalLineHeight = lineHeight * 2 + 3;
+
+      function Color(r, g, b) {
+        this.r = r;
+        this.g = g;
+        this.b = b;
+      }
+
+      Color.prototype.toString = function () {
+        return "rgb(" + this.r + ", " + this.g + ", " + this.b + ")";
+      };
+
+      var defaultLeftColor = new Color(192, 0, 0);
+      var defaultRightColor = new Color(0, 128, 0);
+      var rainbowLeftColorSet = [
+        new Color(192, 0, 192),
+        new Color(213, 0, 128),
+        new Color(234, 0, 64),
+        new Color(255, 0, 0),
+      ];
+      var rainbowRightColorSet = [
+        new Color(0, 192, 0),
+        new Color(0, 192, 64),
+        new Color(0, 192, 128),
+        new Color(0, 192, 192),
+      ];
+      var blackColor = new Color(0, 0, 0);
+      var whiteColor = new Color(255, 255, 255);
+      var backgroundColorSet = [
+        blackColor,
+        new Color(128, 0, 0),
+        new Color(0, 128, 128),
+        new Color(0, 128, 0),
+        new Color(128, 0, 128),
+        new Color(0, 0, 128),
+        new Color(128, 128, 0),
+      ];
+
+      function Pos(x, y) {
+        this.x = x;
+        this.y = y;
+      }
+
+      var message = "Loading...";
+      var messagePos = new Pos(messageHeight / 2, messageHeight / 2);
+
+      var linePosList = [];
+      var index = 0;
+      while (index < numberOfColumns) {
+        var tempLinePosY = 0;
+        while (tempLinePosY <= lineHeight) {
+          linePosList.push(new Pos(0, 0));
+          linePosList.push(new Pos(0, 0));
+          tempLinePosY += 1;
+        }
+        index += 1;
+      }
+
+      function updateLinePosList() {
+        var index = 0;
+        var tempColumn = 0;
+        while (tempColumn < numberOfColumns) {
+          var tempPosX1;
+          if (tempColumn < numberOfColumns / 2) {
+            tempPosX1 =
+              (tempColumn + 0.5) * (canvasWidth / (numberOfColumns + 0.5));
+          } else {
+            tempPosX1 =
+              (tempColumn + 1.0) * (canvasWidth / (numberOfColumns + 0.5));
+          }
+          var tempPosX2 =
+            (tempPosX1 - canvasWidth / 2) / (lineTaper - rockingOffset) +
+            canvasWidth / 2;
+          var tempLinePosY = 0;
+          while (tempLinePosY <= lineHeight) {
+            var tempPos = linePosList[index];
+            index += 1;
+            tempPos.x =
+              ((tempPosX2 - tempPosX1) * tempLinePosY) / lineHeight + tempPosX1;
+            tempPos.y = ((1 + tempLinePosY) * canvasHeight) / totalLineHeight;
+            tempLinePosY += 1;
+          }
+          tempLinePosY = 0;
+          while (tempLinePosY <= lineHeight) {
+            var tempPos = linePosList[index];
+            index += 1;
+            tempPos.x =
+              ((tempPosX2 - tempPosX1) * tempLinePosY) / lineHeight + tempPosX1;
+            tempPos.y =
+              ((2 + 2 * lineHeight - tempLinePosY) * canvasHeight) /
+              totalLineHeight;
+            tempLinePosY += 1;
+          }
+          tempColumn += 1;
+        }
+      }
+
+      function setContextColor(color) {
+        context.fillStyle = color.toString();
+        context.strokeStyle = color.toString();
+      }
+
+      function setContextColorByColumn(column) {
+        var tempColor;
+        if (column < numberOfColumns / 2) {
+          if (hasStartedRainbow) {
+            var index =
+              (column + numberOfColumns / 2 - rainbowColorIndexOffset) %
+              (numberOfColumns / 2);
+            tempColor = rainbowLeftColorSet[index];
+          } else {
+            tempColor = defaultLeftColor;
+          }
+        } else {
+          if (hasStartedRainbow) {
+            var index =
+              (column + rainbowColorIndexOffset) % (numberOfColumns / 2);
+            tempColor = rainbowRightColorSet[index];
+          } else {
+            tempColor = defaultRightColor;
+          }
+        }
+        if (hasStartedWhiteForeground) {
+          tempColor = whiteColor;
+        }
+        setContextColor(tempColor);
+      }
+
+      function drawLine(pos1, pos2) {
+        context.beginPath();
+        context.moveTo(Math.floor(pos1.x), Math.floor(pos1.y));
+        context.lineTo(Math.floor(pos2.x), Math.floor(pos2.y));
+        context.stroke();
+      }
+
+      function drawText(pos, text) {
+        if (hasStartedWhiteForeground) {
+          setContextColor(whiteColor);
+        } else {
+          setContextColor(blackColor);
+        }
+        context.fillText(text, pos.x, pos.y);
+      }
+
+      function drawMessage(text) {
+        drawText(messagePos, message);
+      }
+
+      function drawSolidCircle(pos, radius) {
+        context.beginPath();
+        context.arc(pos.x, pos.y, radius, 0, 2 * Math.PI);
+        context.fill();
+      }
+
+      function drawCircleOutline(pos, radius) {
+        context.beginPath();
+        context.arc(pos.x, pos.y, radius, 0, 2 * Math.PI);
+        context.stroke();
+      }
+
+      var dotList = [];
+
+      function Dot(lineIndex) {
+        this.lineIndex = lineIndex;
+        this.linePosY = 0;
+        dotList.push(this);
+      }
+
+      Dot.prototype.remove = function () {
+        var index = dotList.length - 1;
+        while (index > -1) {
+          var tempDot = dotList[index];
+          if (tempDot == this) {
+            dotList.splice(index, 1);
+            return;
+          }
+          index -= 1;
+        }
+      };
+
+      Dot.prototype.draw = function () {
+        setContextColorByColumn(this.lineIndex % numberOfColumns);
+        var tempOffset;
+        if (this.lineIndex >= numberOfColumns) {
+          tempOffset =
+            (this.lineIndex - numberOfColumns) * (lineHeight + 1) * 2 +
+            lineHeight +
+            1;
+        } else {
+          tempOffset = this.lineIndex * (lineHeight + 1) * 2;
+        }
+        var tempPos = linePosList[tempOffset + this.linePosY];
+        drawSolidCircle(tempPos, dotRadius);
+      };
+
+      Dot.prototype.advance = function () {
+        if (this.linePosY >= lineHeight) {
+          if (debugMode) {
+            this.remove();
+            return true;
+          } else {
+            message = "You missed a dot! Time: " + Math.floor(audioCurrentTime);
+            stopGame();
+            return false;
+          }
+        } else {
+          this.linePosY += 1;
+          return true;
+        }
+      };
+
+      function getDot(lineIndex, linePosY) {
+        var index = 0;
+        while (index < dotList.length) {
+          var tempDot = dotList[index];
+          if (tempDot.lineIndex == lineIndex && tempDot.linePosY == linePosY) {
+            return tempDot;
+          }
+          index += 1;
+        }
+        return null;
+      }
+
+      function drawAllDots() {
+        var index = dotList.length - 1;
+        while (index > -1) {
+          var tempDot = dotList[index];
+          tempDot.draw();
+          index -= 1;
+        }
+      }
+
+      function advanceAllDots() {
+        numberOfAdvancesUntilRest -= 1;
+        var index;
+        if (!debugMode) {
+          index = dotList.length - 1;
+          while (index > -1) {
+            var tempDot = dotList[index];
+            if (tempDot.linePosY >= lineHeight) {
+              message =
+                "You missed a dot! Time: " + Math.floor(audioCurrentTime);
+              stopGame();
+              return false;
+            }
+            index -= 1;
+          }
+        }
+        index = dotList.length - 1;
+        while (index > -1) {
+          var tempDot = dotList[index];
+          var tempResult = tempDot.advance();
+          if (!tempResult) {
+            return false;
+          }
+          index -= 1;
+        }
+        return true;
+      }
+
+      function createDot() {
+        var tempCount = 100;
+        while (tempCount > 0) {
+          tempCount -= 1;
+          var tempColumn = Math.floor(Math.random() * numberOfColumns);
+          var tempDot = getDot(tempColumn, 0);
+          if (tempDot != null) {
+            continue;
+          }
+          tempDot = getDot(tempColumn + numberOfColumns, 0);
+          if (tempDot != null) {
+            continue;
+          }
+          new Dot(tempColumn + Math.floor(Math.random() * 2) * numberOfColumns);
+          return;
+        }
+      }
+
+      function createDots() {
+        var tempProgress = audioCurrentTime / songDuration;
+        var tempCount;
+        if (audioCurrentTime < songDuration - 3) {
+          if (numberOfAdvancesUntilRest < 0) {
+            tempCount = 0;
+            numberOfAdvancesUntilRest =
+              2 + Math.floor(Math.random() * (4 + 8 * tempProgress));
+          } else {
+            tempCount =
+              1 + Math.floor(Math.random() * (0.7 + 2.3 * tempProgress));
+          }
+        } else {
+          tempCount = 0;
+        }
+        while (tempCount > 0) {
+          createDot();
+          tempCount -= 1;
+        }
+      }
+
+      function keyDownEvent(event) {
+        var keyCode = event.which;
+        // Firefox nonsense.
+        if (keyCode == 59) {
+          keyCode = 186;
+        }
+        if (keyCode == 27) {
+          message = "Press space to play!";
+          stopGame();
+          resetGameAndAudio();
+          return false;
+        }
+        if (keyCode == 32) {
+          if (audioHasLoaded && !gameIsActive) {
+            resetGameAndAudio();
+            startGame();
+          }
+          return false;
+        }
+        if (gameIsActive) {
+          var index = 0;
+          while (index < destinationKeyCodeSet.length) {
+            var tempKeyCode = destinationKeyCodeSet[index];
+            if (keyCode == tempKeyCode) {
+              var tempDot = getDot(index, lineHeight);
+              if (tempDot == null) {
+                if (!debugMode) {
+                  message =
+                    "You pressed the wrong key! Time: " +
+                    Math.floor(audioCurrentTime);
+                  stopGame();
+                }
+              } else {
+                tempDot.remove();
+              }
+            }
+            index += 1;
+          }
+        }
+      }
+
+      var gameIsActive = false;
+      var audioCurrentTime;
+      var tempo;
+      var hasStartedPulsating;
+      var hasIncreasedSpeed;
+      var hasStartedRainbow;
+      var rainbowColorIndexOffset;
+      var hasStartedWhiteForeground;
+      var hasStartedRainbowBackground;
+      var backgroundColorIndex;
+      var hasStartedRocking;
+      var rockingOffset;
+      var audioTimeOffset;
+      var advanceToggle;
+      var numberOfAdvancesUntilRest;
+
+      function resetGame() {
+        gameIsActive = false;
+        audioCurrentTime = 0;
+        tempo = 1.89;
+        hasStartedPulsating = false;
+        hasIncreasedSpeed = false;
+        hasStartedRainbow = false;
+        rainbowColorIndexOffset = 0;
+        hasStartedWhiteForeground = false;
+        hasStartedRainbowBackground = false;
+        backgroundColorIndex = 0;
+        hasStartedRocking = false;
+        rockingOffset = 0;
+        audioTimeOffset = 0.06 - 0.1;
+        advanceToggle = false;
+        numberOfAdvancesUntilRest = 0;
+        updateLinePosList();
+        dotList = [];
+      }
+
+      function resetAudio() {
+        audio.pause();
+        audio.currentTime = 0;
+      }
+
+      function resetGameAndAudio() {
+        resetGame();
+        resetAudio();
+      }
+
+      function startGame() {
+        audio.play();
+        gameIsActive = true;
+      }
+
+      function stopGame() {
+        audio.pause();
+        gameIsActive = false;
+      }
+
+      function timerEvent() {
+        if (audioHasLoaded && gameIsActive) {
+          audioCurrentTime = audio.currentTime;
+          var tempTime = audioCurrentTime - audioTimeOffset;
+          message = "Time: " + Math.floor(audioCurrentTime);
+          if (audioCurrentTime > songDuration) {
+            message = "You win!";
+            stopGame();
+          }
+          var tempMeasure = tempTime / tempo;
+          if (tempMeasure >= 4 && !hasStartedPulsating) {
+            hasStartedPulsating = true;
+          }
+          if (tempMeasure >= 12 && !hasIncreasedSpeed) {
+            audioTimeOffset += 12 * tempo;
+            tempo = (114.25 - 22.72) / 61;
+            hasIncreasedSpeed = true;
+          }
+          if (tempMeasure >= 24 && tempMeasure < 30 && !hasStartedRainbow) {
+            hasStartedRainbow = true;
+          }
+          if (tempMeasure >= 61 && !hasStartedWhiteForeground) {
+            hasStartedRainbow = false;
+            hasStartedWhiteForeground = true;
+          }
+          if (tempMeasure >= 77 && !hasStartedRainbowBackground) {
+            hasStartedRainbowBackground = true;
+          }
+          if (tempMeasure >= 99 && !hasStartedRocking) {
+            hasStartedRocking = true;
+          }
+          if ((tempTime / (tempo / 4)) % 2 < 1) {
+            if (!advanceToggle) {
+              var tempResult = advanceAllDots();
+              if (tempResult) {
+                createDots();
+              }
+              advanceToggle = true;
+            }
+          } else {
+            advanceToggle = false;
+          }
+          var tempOffset;
+          if (hasStartedPulsating) {
+            var tempNumber =
+              1 - Math.sin(((tempTime / (tempo / 4)) % 1) * Math.PI);
+            tempOffset = pulsationAmplitude * (1 - tempNumber * tempNumber);
+          } else {
+            tempOffset = pulsationAmplitude;
+          }
+          dotRadius = dotMaximumRadius - tempOffset;
+          destinationRadius = destinationMaximumRadius - tempOffset;
+          if (hasStartedRainbow) {
+            rainbowColorIndexOffset = Math.floor(
+              (tempTime / (tempo / 4)) % (numberOfColumns / 2)
+            );
+          }
+          if (hasStartedRainbowBackground) {
+            backgroundColorIndex =
+              1 +
+              Math.floor(
+                (tempTime / (tempo / 2)) % (backgroundColorSet.length - 1)
+              );
+          }
+          if (hasStartedRocking) {
+            var tempNumber =
+              1 - Math.sin(((tempTime / (tempo / 4)) % 1) * Math.PI);
+            rockingOffset = rockingAmplitude * tempNumber * tempNumber;
+            updateLinePosList();
+          }
+        }
+        var tempColor;
+        if (hasStartedWhiteForeground) {
+          tempColor = backgroundColorSet[backgroundColorIndex];
+        } else {
+          tempColor = whiteColor;
+        }
+        setContextColor(tempColor);
+        context.fillRect(0, 0, canvasWidth, canvasHeight);
+        drawMessage();
+        var index = 0;
+        while (index < numberOfColumns) {
+          setContextColorByColumn(index);
+          var tempOffset = index * (lineHeight + 1) * 2;
+          var tempPos1 = linePosList[tempOffset];
+          var tempPos2 = linePosList[tempOffset + lineHeight];
+          drawLine(tempPos1, tempPos2);
+          drawCircleOutline(tempPos2, destinationRadius);
+          tempPos1 = linePosList[tempOffset + lineHeight + 1];
+          tempPos2 = linePosList[tempOffset + 2 * lineHeight + 1];
+          drawLine(tempPos1, tempPos2);
+          drawCircleOutline(tempPos2, destinationRadius);
+          index += 1;
+        }
+        drawAllDots();
+      }
+    </script>
+    <style>
+      a {
+        color: black;
+      }
+    </style>
+  </head>
+  <body>
+    <div style="float: left">
+      <canvas id="canvas"></canvas>
+      <br />
+      <audio
+        id="audio"
+        src="The Boy Who Fought the Lightning.mp3"
+        onloadeddata="audioHasLoaded = true; message = 'Press space to play!'; resetGameAndAudio();"
+      ></audio>
+      <br />
+    </div>
+    <div style="float: left; width: 300px; margin-left: 20px">
+      <h2>DOTS DOTS DOTS</h2>
+      Programming by Jack Eisenmann
+      <br />
+      Music by Soleviio
+      <br />
+      <br />
+      After a dot lands in a circle, press the corresponding key.
+      <br />
+      Keys: QWER UIOP ASDF JKL;
+      <br />
+      Press space to start the game, and escape to end the game.
+      <br />
+      <br />
+      (Works best in Safari, Chrome, and Firefox)
+      <br />
+      <br />
+      <a href="http://www.ostracodfiles.com" style="color: black"
+        >Return to the Ostracod Pond</a
+      >
+    </div>
+    <script>
+      var canvas = document.getElementById("canvas");
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
+      var context = canvas.getContext("2d");
+      context.font = "bold 16px Arial";
+      context.lineWidth = 3;
+      context.strokeStyle = "black";
+
+      var audio = document.getElementById("audio");
+
+      window.onkeydown = keyDownEvent;
+
+      setInterval(timerEvent, 20);
+
+      resetGame();
+    </script>
+  </body>
+</html>

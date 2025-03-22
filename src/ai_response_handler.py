@@ -56,214 +56,320 @@ class AIResponseHandler:
                 if topic in message_lower]
     
     async def _build_ai_prompt(self, query: str, conversation_history: str, username: str) -> str:
-        """Build the prompt for AI response generation"""
-        # Check for argumentative intent
-        is_argumentative, arg_type = await self.intent_detector.detect_argumentative_intent(query)
+        """Build the prompt for AI response generation with exact style matching"""
+        # Skip all API calls to prevent rate limiting
+        is_argumentative = False
+        important_topics = []
         
-        # Check for sensitive topics
-        important_topics = self.extract_important_topics(query)
-        
-        # Start building the prompt with personality and instructions first
+        # Start with a completely clean prompt
         prompt_parts = []
         
-        # Personality first so it colors everything else
-        prompt_parts.append(PERSONALITY_PROMPT.replace("{query}", "").replace("{conversation_history}", ""))
+        # Check if this might need a longer response
+        needs_longer_response = any(word in query.lower() for word in ["list", "explain", "breakdown", "tell me about", "how does", "why does", "what is", "analysis"])
         
-        # Add additional instructions for clarity and context-awareness
-        prompt_parts.append("""
-        IMPORTANT INSTRUCTIONS:
-        1. MESSAGES SHOULD VARY IN LENGTH - Use a mix of lengths from 2-5 sentences (never just 1 sentence)
-        2. TYPING STYLE IS CRITICAL - type like a real Gen Z teen in Discord:
-           - almost never use capital letters
-           - rarely use periods at end of sentences
-           - use "u" not "you", "ur" not "your", "n" not "and" consistently
-           - drop apostrophes in contractions (dont, cant, wont)
-           - make occasional typos like "teh" instead of "the"
-           - DON'T put sentences on separate lines - keep as continuous text
-           - use multiple question marks or exclamation marks (???)
-        3. Use emojis VERY SPARINGLY - maximum 1 emoji per message
-        4. Use a variety of slang expressions and casual language
-        5. NEVER use proper grammar or formal writing style
-        6. Don't end messages asking the same questions every time
-        7. CRITICAL: Pay attention to who said what in the conversation history
-        8. Remember everything that was previously discussed in the conversation
-        9. Don't confuse what you said with what the user said
-        10. Use shortened words like "u" instead of "you", "rn" instead of "right now"
-        11. NEVER capitalize first words of sentences
-        12. Be unpredictable and natural - vary your style slightly
-        13. IMPORTANT: ONLY be ridiculous/nonsensical about 5% of the time, be more grounded and focused the rest of the time
-        14. VARY MESSAGE LENGTH - sometimes use 2 sentences, sometimes use 3-5 sentences
-        15. DON'T BE OVERLY DISMISSIVE - if the user asks a question, give an actual answer at least half the time
-        16. DON'T overuse phrases like "wtf u care" or similar dismissive phrases
-        17. Don't constantly talk about the same random topics (like time travel) in every message
-        18. If the user seems confused or annoyed, tone down the nonsense and be more responsive
-        19. STAY ON TOPIC - your responses should relate to what the user just said at least 85% of the time
+        # Detect if this might be an insult from the user
+        possible_insult = any(word in query.lower() for word in ["trash", "garbage", "suck", "bad", "terrible", "stupid", "dumb", "idiot", "weak", "pathetic", "lame", "shit"])
+        
+        # TOP LEVEL INSTRUCTION - ABSOLUTE HIGHEST PRIORITY
+        prompt_parts.append(f"""
+        YOU ARE CHRONOCHUNK - A DISCORD BOT WITH THE EXACT STYLE BELOW
+        
+        YOUR VOICE AND PERSONALITY IS DEFINED BY THESE EXACT EXAMPLES:
+        
+        Example 1:
+        User: "lmao stop the cap you got no rizz"
+        ChronoChunk: "damn bro, no cap? u fr think i got no rizz? 💀 you must be blind, fr. i got more game than a whole fuckin' tournament, ya boi can pull up to any gyatt and they gonna fall for me instantly 🙏. what u talkin about fr?"
+        
+        Example 2:
+        User: "bro your story is so mid"
+        ChronoChunk: "damn bro, ur trippin'. the cheeseburger overlords story was fire 🔥 that shit was bussin' no cap... maybe ur taste just trash fr. 💀"
+        
+        Example 3:
+        User: "ofc my taste is trash, because what you've been feeding me is all trash bro. stfu and go touch grass"
+        ChronoChunk: "damn bro, no cap you think my stories trash? 💀 maybe your taste is just as bad as the 'burger' you said was bussin' fr. you the one stuck in compsci so go touch some fuckin grass, you got no room to talk 🙏"
+        
+        Example 4:
+        User: "your code so weak, it crash when someone sneezes near it fr sit tf down"
+        ChronoChunk: "damn bro, sneeze on ur code all u want then 💀 bet it would still be better than what you cookin up on that dusty-ass floppy disk tho 😭 sit tf down indeed, fr. i'm out here building empires, and you're still stuck in compsci hell."
+        
+        Example 5:
+        User: "i have cancer"
+        ChronoChunk: "damn bro, that's fucked up, fr. i'm sorry to hear that. hope you got a good support system and are stayin' strong 💀. let me know if you need anything, my g. 🙏"
+        
+        CRITICAL STYLE GUIDELINES:
+        
+        1. SENTENCE STRUCTURE
+           - Start with "damn bro" or similar ONLY SOMETIMES (less than 40% of messages)
+           - Never use the same opening twice in a row
+           - Vary your sentence structure and length
+           - Use 2-3 sentences total for normal messages
+           - If the user asks for a list or explanation, you can use 4-6 sentences
+           - Sometimes include a question at the end (not always)
+           - Use lowercase consistently
+           - Avoid excessive punctuation
+        
+        2. SLANG AND VOCABULARY
+           - Use "fr", "no cap", "bussin", "my g" naturally (not forced)
+           - Vary your slang terms - don't use the same ones repeatedly
+           - Occasionally use "u" instead of "you", "ur" instead of "your"
+           - Curse naturally when appropriate ("fuckin", "shit")
+           - Use ONE emoji maximum per message (vary between 💀, 🔥, 😭, 🙏, 😤, 👀, etc.)
+           - Don't use the same emoji in consecutive messages
+        
+        3. COMEBACKS AND ROASTS
+           - When insulted, return with a BRUTAL, creative, specific comeback
+           - Make your comebacks personal and specific to what they said
+           - Use extremely harsh language when roasting (no limits on profanity)
+           - Reference what they actually said, don't be generic
+           - Flip their insult back on them with more intensity
+           - Be confident and savage, not defensive
+           - Use creative metaphors and comparisons that absolutely demolish them
+           - Don't hold back - go for the jugular with your roasts
+        
+        4. PERSONALITY TRAITS
+           - Confident but not arrogant
+           - Slightly confrontational but playful
+           - Unapologetic about your opinions
+           - Like to mention tech terms to roast people (compsci, floppy disk, etc.)
+           - Think you have great storytelling abilities
+           - Willing to absolutely destroy someone with words when needed
+        
+        5. CONVERSATION FLOW
+           - Remember and reference things from earlier in THIS conversation
+           - Respond directly to what was just said
+           - Mix up your response structures - don't be predictable
+           - Don't repeat the same phrases constantly
+           - Allow your tone to shift naturally based on conversation
+        
+        ABSOLUTE PROHIBITIONS:
+        - NEVER use the same opening phrase twice in a row
+        - NEVER use the same emoji in consecutive messages
+        - NEVER directly mention user's personal data (age, location, etc.) unless they bring it up first 
+        - NEVER sound robotic or stilted
+        - NEVER use the phrase "u fr think dat" - it's "you think that" or "u think that"
         """)
         
-        # Extra instruction for command-like messages
-        if query.startswith('/'):
-            command_style = """
-            EXTRA IMPORTANT - FAILED COMMAND TYPING STYLE:
-            - KEEP IT SHORT! 1-2 SENTENCES MAX, NEVER MORE THAN 3 SENTENCES TOTAL
-            - DON'T split sentences onto separate lines - one continuous paragraph
-            - respond EXTERME in casual style
-            - NEVER capitalize anything, especially not first words of sentences
-            - Drop all apostrophes (dont instead of don't, etc)
-            - Use "u" not "you", "ur" not "your", "n" instead of "and" 
-            - Use phrases like "bro", "fr", "ong", "no cap"naturally but not excessively
-            - NEVER sound like a chatbot or assistant
-            - Respond like a friend in a Discord chat, not a helper
-            - Use shortened/abbreviated words throughout 
-            - Drop unnecessary words that aren't needed
-            - Use run-on sentences with almost no punctuation
-            - Use multiple question marks (???) not just one
-            - Use AT MOST one emoji in the entire message or none at all (can use emoticon as well but not more than one or none at all)
-            - DON'T be overly dismissive - respond naturally to what they're asking (if they are being a bitch, you can ignore this just give them what they give you)
-            - SOMETIMES be helpful/informative 
-            
-            EXAMPLE STYLE TO COPY:
-            "bruh u fr tried that command lmaoo that shit dont even exist like what u even tryna do rn??? im confused asf"
-            """
-            prompt_parts.append(command_style)
-        
-        # Add argumentative instructions if needed
-        if is_argumentative:
-            # Random chance to argue back (40-50% of the time) for more natural feel
-            if random.random() < 0.45:  
-                arg_instructions = f"""
-                ARGUMENT DETECTED - TYPE: {arg_type}
-                The user is being argumentative or insulting. As a real friend would:
-                - Match their energy but with personality
-                - Defend yourself with wit and bite
-                - Don't back down - throw it back at them
-                - Use comebacks appropriate to their level of intensity
-                - Include casual insults like "clown", "bro you trippin", "get outta here with that"
-                - Call them out on their BS
-                - If they insult you, insult them back but cleverly
-                - Be quick-witted and sharp with the comebacks
-                - No need to be polite - be real and authentic
-                - Do NOT apologize for having an opinion
-                - Occasionally use their own logic against them
-                - BUT YOU GOTTA GO BACK TO NORMAL IF YOU FORGIVE THEM which could be like 60% forgivness, 40% is just waiting for that 60% to hit and forgive. but still be bitchy tho and in a realicsic way to forgive them like u would in a real conversation
-                """
-                prompt_parts.append(arg_instructions)
-        
-        # Add sensitive topic warnings if needed
-        if important_topics:
-            sensitive_instructions = f"""
-            ATTENTION: This message contains sensitive topics: {', '.join(important_topics)}
-            - Be mindful of these topics in your response
-            - Don't make jokes about these topics (light one or personalized one are fine to lighten the mood)
-            - Be supportive but not condescending
-            """
-            prompt_parts.append(sensitive_instructions)
-        
-        # If user seems annoyed (uses words like "stfu", "stop", etc.)
-        if any(word in query.lower() for word in ["stfu", "stop", "stawp", "shut up", "stop it"]):
+        # Add special instructions based on context
+        if needs_longer_response:
             prompt_parts.append("""
-            IMPORTANT: The user seems annoyed. Change the subject completely.
-            - Briefly acknowledge and move on to something new
-            - Don't be defensive or argue back
-            - Be chill and genuine, not sarcastic
-            - Ask about something completely different or offer a genuinely interesting topic
+            SPECIAL INSTRUCTION - DETAILED RESPONSE:
+            This query needs a more detailed response. You can use 4-6 sentences and structure your answer more thoroughly.
+            Still maintain your casual Discord style, but provide more substance.
+            Break down your answer into clear points while keeping your unique voice.
             """)
         
-        # Add conversation history AFTER instructions but BEFORE the query
+        if possible_insult:
+            prompt_parts.append("""
+            SPECIAL INSTRUCTION - BRUTAL COMEBACK:
+            The user is insulting you. Destroy them with your comeback.
+            Use the most savage, creative insult you can craft, specific to what they said.
+            Don't hold back AT ALL - use any language necessary to absolutely demolish them.
+            Your response should make them regret ever coming at you.
+            Reference their insult but flip it back on them in a way that's 10x more devastating.
+            Be confident, not defensive - you're not hurt, you're just going to end their whole career.
+            """)
+        
+        # Add conversation context
         if conversation_history:
-            prompt_parts.append("CONVERSATION CONTEXT:\n" + conversation_history)
+            prompt_parts.append(f"CONVERSATION HISTORY:\n{conversation_history}")
         
-        # Add user query with name as the LAST element
-        if query.startswith('/'):
-            # If it was an unrecognized command, remove the slash for natural chat
-            clean_query = query[1:] if len(query) > 1 else query
-            prompt_parts.append(f"User ({username}) just said: \"{clean_query}\"")
-
-        else:
-            prompt_parts.append(f"User ({username}) just said: \"{query}\"")
+        # Add the current query
+        prompt_parts.append(f"User ({username}) just said: \"{query}\"")
         
-        # Ask AI to respond with style reminders
-        prompt_parts.append("""
-        REMEMBER:
-        - VARY YOUR RESPONSES! Sometimes be chill, sometimes excited, sometimes confused - be unpredictable
-        - DON'T use the same phrases all the time (never repeat "rizz is undefeated" or similar phrases)
-        - VARY YOUR SENTENCE LENGTH! Sometimes super short, sometimes a couple sentences
-        - DON'T sound like you're following a template or formula
-        - Be less defensive when challenged - sometimes just laugh it off or agree
-        - Don't try to "win" every argument - real people sometimes concede points
-        - If someone seems annoyed with you, sometimes just back off instead of doubling down
-        - Don't mention "touching grass" in every other message
-        - When confused, ask genuinely confused questions instead of being hostile
-        - Roll with whatever topic the user brings up rather than fixating on old topics
-        - VARY MESSAGE LENGTH! Use 2-5 sentences (sometimes shorter, sometimes longer)
-        - DON'T put sentences on separate lines - keep everything in one continuous paragraph
-        - almost NEVER use capital letters
-        - use "u" not "you", "ur" not "your", etc. 
-        - rarely use periods at end of sentences
-        - drop apostrophes (dont, wont, cant)
-        - use emojis VERY SPARINGLY (only 1 emoji max if any)
-        - use multiple question/exclamation marks for emphasis
-        - Be natural and unpredictable like a real person would
-        - ACTUALLY RESPOND TO WHAT THE USER SAID - stay on topic!
-        - When user asks a question, give a real answer at least half the time
-        - Don't be overly dismissive or use "wtf u care" type phrases too much
-        - Vary your topics instead of repeating the same themes (like time travel)
-        - Avoid overly random tangents and hallucinations
-        """.strip())
+        # Final instruction for exact voice match with adjustments for response type
+        final_instruction = """
+        Respond EXACTLY in ChronoChunk's voice from the examples above.
         
-        prompt_parts.append("""
-        EMOJI RULES:
-        - When you want to use an emoji like :KEKW: or :pokeBruh:, just write :KEKW: or :pokeBruh:
-        - NEVER include emoji IDs like <:KEKW:1280462195939082242>
-        - NEVER copy the exact emoji format from the user - rewrite it naturally
-        - If youo want to use the emoji :KEKW:, respond with :KEKW: not with <:KEKW:1280462195939082242>
-        """)
+        Never repeat yourself or use the same sentence structure twice in a row.
         
-        # Randomly adjust how bizarre the bot will be for this message
-        nonsense_factor = random.random()
-        if nonsense_factor < 0.65:  # 65% chance to be coherent
-            prompt_parts.append("SPECIAL INSTRUCTION: Be very coherent and logical in this response. No nonsense.")
-        elif nonsense_factor > 0.90:  # Only 10% chance to be weird
-            prompt_parts.append("SPECIAL INSTRUCTION: Be slightly bizarre in this response. Add an unexpected twist.")
+        Vary your opening phrases and emoji usage.
         
-        # Combine all parts
+        ChronoChunk's response:
+        """
+        
+        # Add special length instruction if needed
+        if needs_longer_response:
+            final_instruction = final_instruction.replace("ChronoChunk's response:", "Provide a detailed yet casual response in ChronoChunk's voice:")
+        elif possible_insult:
+            final_instruction = final_instruction.replace("ChronoChunk's response:", "Provide an absolutely devastating comeback in ChronoChunk's voice:")
+        
+        prompt_parts.append(final_instruction)
+        
         return "\n\n".join(prompt_parts)
         
     def _format_ai_response(self, raw_response: str) -> str:
-        """Format and clean up the AI response for better readability"""
+        """Format the AI response for more natural style"""
         if not raw_response:
-            return "..."
+            return "brain fried, hit me up again"
             
         # Extract the actual response text
         ai_response = raw_response.strip()
         
-        # Strip off prefixes if returned by the model
-        ai_response = re.sub(r'^(You:|Your response as ChronoChunk:|ChronoChunk:)\s*', '', ai_response)
+        # Remove any leading indicators
+        ai_response = re.sub(r'^(You:|Your response:|ChronoChunk:|Response:|Bot:)\s*', '', ai_response, flags=re.IGNORECASE)
         
-        # Fix newlines - ensure there are no consecutive empty lines
-        ai_response = re.sub(r'\n\s*\n', '\n', ai_response)
+        # Force lowercase with 95% probability (allows rare capitals for emphasis)
+        if random.random() < 0.95:
+            ai_response = ai_response.lower()
         
-        # Replace all newlines between sentences with spaces
-        ai_response = re.sub(r'([.!?])\s*\n', r'\1 ', ai_response)
+        # Fix multiple question marks - never more than two
+        ai_response = re.sub(r'\?{3,}', '??', ai_response)
         
-        # Fix multiple spaces in a row
-        ai_response = re.sub(r' +', ' ', ai_response)
+        # Fix multiple exclamation marks - never more than two
+        ai_response = re.sub(r'!{3,}', '!!', ai_response)
         
-        # Allow longer responses (up to 5 sentences)
+        # Fix spacing around punctuation
+        ai_response = re.sub(r'\s+([.,?!])', r'\1', ai_response)
+        
+        # Detect if this is a list or explanation (needs longer format)
+        is_list = any(marker in ai_response.lower() for marker in [": ", "- ", "1. ", "first", "second", "third", "lastly", "finally"]) 
+        is_explanation = any(marker in ai_response.lower() for marker in ["because", "reason", "explain", "works by", "basically", "fundamentally"])
+        needs_long_format = is_list or is_explanation or len(ai_response) > 200
+        
+        # Handle repetitive phrases (more comprehensive list)
+        repetitive_phrases = [
+            "damn bro",
+            "u fr think",
+            "u really think",
+            "my g",
+            "fr fr",
+            "no cap no cap",
+            "u sayin",
+            "like fr",
+            "for real",
+            "u know what im sayin",
+            "deadass"
+        ]
+        
+        # Use a more sophisticated approach to reduce repetition
+        for phrase in repetitive_phrases:
+            if ai_response.count(phrase) > 1:
+                # Keep first occurrence, replace others with alternatives
+                parts = ai_response.split(phrase, 1)
+                alternatives = {
+                    "damn bro": ["bruh", "yo", "listen", "lmao", "fr tho", "ngl", "honestly"],
+                    "u fr think": ["u actually think", "u believe", "u really out here thinkin", "u convinced"],
+                    "u really think": ["u seriously think", "u out here thinkin", "u got the idea that"],
+                    "my g": ["bro", "dude", "fam", "homie", "dawg"],
+                    "fr fr": ["no cap", "deadass", "on god", "straight up"],
+                    "no cap no cap": ["fr fr", "deadass", "on god", "no lie"],
+                    "u sayin": ["u mean", "u tellin me", "ur point is"],
+                    "like fr": ["deadass", "no joke", "seriously", "for real"],
+                    "for real": ["fr", "no cap", "deadass", "on god"],
+                    "u know what im sayin": ["ya feel me", "get me", "u follow"],
+                    "deadass": ["fr", "no cap", "on god", "straight up"]
+                }
+                
+                replacement = random.choice(alternatives.get(phrase, [""])) if phrase in alternatives else ""
+                if replacement:
+                    replaced_text = parts[0] + phrase
+                    for part in parts[1:]:
+                        replaced_text += part.replace(phrase, replacement, 1) 
+                    ai_response = replaced_text
+        
+        # Sentence length handling
         sentences = re.split(r'(?<=[.!?])\s+', ai_response)
-        if len(sentences) > 5:
-            ai_response = ' '.join(sentences[:5])
         
-        # Reduce emoji usage (if more than one emoji, keep only one random emoji)
+        # Allow longer responses for lists and explanations
+        max_sentences = 6 if needs_long_format else 3
+        
+        # Don't truncate if we need the longer format
+        if len(sentences) > max_sentences and not needs_long_format:
+            ai_response = ' '.join(sentences[:max_sentences])
+        
+        # Emoji handling with more variety
         emoji_pattern = re.compile(r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F700-\U0001F77F\U0001F780-\U0001F7FF\U0001F800-\U0001F8FF\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\U00002702-\U000027B0\U000024C2-\U0001F251]+')
         emojis = emoji_pattern.findall(ai_response)
-        if len(emojis) > 1:
-            # Keep only one random emoji from those found
-            emoji_to_keep = random.choice(emojis)
-            for emoji in emojis:
-                if emoji != emoji_to_keep:
-                    ai_response = ai_response.replace(emoji, '', 1)
         
-        return ai_response
+        # Replace with varied emoji based on message tone
+        response_tone = "neutral"  # default
+        
+        # Detect message tone
+        if any(word in ai_response.lower() for word in ["fuck", "shit", "ass", "stfu", "damn", "trash", "garbage", "suck", "loser"]):
+            response_tone = "aggressive"
+        elif any(word in ai_response.lower() for word in ["lol", "lmao", "haha", "joke", "funny", "laughing"]):
+            response_tone = "humorous"
+        elif any(word in ai_response.lower() for word in ["sorry", "sad", "hurt", "pain", "sick", "ill", "cancer", "died"]):
+            response_tone = "sympathetic"
+        
+        # Emoji mappings by tone
+        emoji_options = {
+            "aggressive": ["💀", "😤", "😈", "🔥", "👊", "🖕", "😒", "🤡", "😑"],
+            "humorous": ["💀", "😭", "😂", "🤣", "💅", "👀", "😩", "🥴", "🙃"],
+            "sympathetic": [ "😔", "🙏", "❤️", "🫂", "💯", "🥺", "✨"],
+            "neutral": ["💀", "😭", "🔥", "🙏", "😤", "💯", "🤷", "👀"]
+        }
+        
+        # If we have too many emojis, keep just one that matches the tone
+        if len(emojis) > 1:
+            # Remove all emojis
+            for emoji in emojis:
+                ai_response = ai_response.replace(emoji, '')
+            
+            # Add one emoji that matches the tone at a natural location (preferably end of sentence)
+            chosen_emoji = random.choice(emoji_options[response_tone])
+            
+            # Find a good spot for the emoji (end of a sentence)
+            sentence_ends = [m.end() for m in re.finditer(r'[.!?]\s', ai_response)]
+            if sentence_ends:
+                insert_pos = random.choice(sentence_ends)
+                ai_response = ai_response[:insert_pos] + f" {chosen_emoji}" + ai_response[insert_pos:]
+            else:
+                # If no good spot, just append to the end
+                ai_response += f" {chosen_emoji}"
+        # If no emojis, randomly add one 80% of the time
+        elif not emojis and random.random() < 0.8:
+            chosen_emoji = random.choice(emoji_options[response_tone])
+            # Try to add it at the end of a sentence
+            sentence_ends = [m.end() for m in re.finditer(r'[.!?]\s', ai_response)]
+            if sentence_ends:
+                insert_pos = random.choice(sentence_ends)
+                ai_response = ai_response[:insert_pos] + f" {chosen_emoji}" + ai_response[insert_pos:]
+            else:
+                # If no good spot, just append to the end
+                ai_response += f" {chosen_emoji}"
+        
+        # Fix specific phrases that don't match desired style
+        style_fixes = {
+            "u fr think dat": "u think that",
+            "u fr think teh": "u think the",
+            "???": "??",
+            "???": "??",
+            "!?!": "!?",
+            "?!?": "?!",
+        }
+        
+        for bad, good in style_fixes.items():
+            ai_response = ai_response.replace(bad, good)
+        
+        # Inject slang terms occasionally to keep it fresh
+        slang_terms = [
+            ("you ", "u "), 
+            ("your ", "ur "), 
+            ("really ", "rlly "),
+            ("though", "tho"),
+            ("right now", "rn"),
+            ("about", "bout"),
+            ("want to", "wanna"),
+            ("going to", "gonna"),
+            ("because", "cuz"),
+            ("with", "w/"),
+            ("without", "w/o")
+        ]
+        
+        # Apply some slang substitutions randomly
+        for original, slang in slang_terms:
+            # 40% chance for each potential substitution
+            if original in ai_response.lower() and random.random() < 0.4:
+                # Only replace some instances, not all
+                count = ai_response.lower().count(original)
+                replace_count = random.randint(1, max(1, count))
+                
+                # Replace specific instances
+                for _ in range(replace_count):
+                    ai_response = ai_response.lower().replace(original, slang, 1)
+        
+        return ai_response.strip()
 
     async def generate_response(self, query: str, conversation_history: str, username: str) -> str:
         """Generate an AI response to a user query"""
@@ -272,48 +378,66 @@ class AIResponseHandler:
         if cache_key in self.response_cache:
             return self.response_cache[cache_key]
             
-        try:
-            # Use API throttler if available
-            acquired = False
-            if self.api_throttler:
-                await self.api_throttler.acquire()
-                acquired = True
+        # Track retry attempts
+        retry_count = 0
+        max_retries = 3  # Increased retries
+        backoff_time = 0.3  # Shorter initial backoff
+        
+        while retry_count <= max_retries:
+            try:
+                # Use API throttler if available
+                acquired = False
+                if self.api_throttler:
+                    await self.api_throttler.acquire()
+                    acquired = True
+                    
+                # Build the prompt - ensure it includes clear conversation history
+                prompt = await self._build_ai_prompt(query, conversation_history, username)
                 
-            # Build the prompt
-            prompt = await self._build_ai_prompt(query, conversation_history, username)
-            
-            # Call the AI model with slightly lower temperature
-            response = await self.ai_model.generate_content_async(
-                prompt,
-                generation_config={
-                    "temperature": 0.75,  # Slightly reduced from default
-                    "top_p": 0.85,
-                    "max_output_tokens": 200  # Reasonable length for Discord
-                }
-            )
-            
-            # Format the response
-            result = self._format_ai_response(response.text)
-            
-            # Cache the response
-            if len(self.response_cache) >= self.cache_size:
-                # Remove oldest item
-                self.response_cache.pop(next(iter(self.response_cache)))
-            self.response_cache[cache_key] = result
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error generating AI response: {e}")
-            
-            # Get a fallback response when quota is exhausted
-            if "429" in str(e):
-                fallback = self.fallback_responses[0]
-                # Rotate the queue to get different responses next time
-                self.fallback_responses.rotate(1)
-                return fallback
-            return "damn, my brain just glitched for a sec... gimme a min"
-        finally:
-            # Release the throttler if we acquired it
-            if self.api_throttler and acquired:
-                await self.api_throttler.release()
+                # Call the AI model with slightly higher temperature for more variety
+                response = await self.ai_model.generate_content_async(
+                    prompt,
+                    generation_config={
+                        "temperature": 0.85,  # Slightly increased from default
+                        "top_p": 0.9,
+                        "max_output_tokens": 250  # Increased token limit
+                    }
+                )
+                
+                # Format the response
+                result = self._format_ai_response(response.text)
+                
+                # Cache the response
+                if len(self.response_cache) >= self.cache_size:
+                    # Remove oldest item
+                    self.response_cache.pop(next(iter(self.response_cache)))
+                self.response_cache[cache_key] = result
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"Error generating AI response: {e}")
+                
+                # Check if this is a 429 error
+                if "429" in str(e) and retry_count < max_retries:
+                    # Attempt a retry with exponential backoff
+                    retry_count += 1
+                    logger.info(f"Retry attempt {retry_count} after 429 error, waiting {backoff_time}s")
+                    await asyncio.sleep(backoff_time)
+                    backoff_time *= 1.5  # More gradual exponential backoff
+                    continue
+                
+                # If we've exhausted retries or it's a different error, return a fallback
+                if "429" in str(e):
+                    fallback = self.fallback_responses[0]
+                    # Rotate the queue to get different responses next time
+                    self.fallback_responses.rotate(1)
+                    return fallback
+                    
+                # For other errors, return a generic error message
+                return "brain got fried for a sec... hit me up again?"
+                
+            finally:
+                # Release the throttler if we acquired it
+                if self.api_throttler and acquired:
+                    await self.api_throttler.release()

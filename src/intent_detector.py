@@ -20,7 +20,7 @@ except ImportError:
         Config = None
 
 class IntentDetector:
-    """detects user intentions from messages using AI instead of fixed word lists"""
+    """Detects user intent in messages"""
     
     def __init__(self, model_name="gemini-1.5-flash-latest", api_throttler=None):
         """set up the intent detector with a lightweight model"""
@@ -459,66 +459,17 @@ class IntentDetector:
             
         return result
     
-    async def detect_argumentative_intent(self, message: str) -> Tuple[bool, str]:
-        """Detect if the message has an argumentative tone"""
-        if message in self.cache and "argumentative" in self.cache[message]:
-            return self.cache[message]["argumentative"]
-            
-        # First try pattern matching for speed
-        pattern_result = self._check_patterns(message, "argumentative")
-        if pattern_result[0]:  # If pattern matching found argumentative intent
-            return pattern_result
-            
-        # Fall back to AI for nuanced cases
-        prompt = f"""
-        Determine if this message has an argumentative tone.
-        Return a JSON object with:
-        - "is_argumentative": true/false
-        - "type": "defensive", "aggressive", "dismissive", "challenging", or "neutral"
-        
-        Only mark as argumentative if the person is clearly disagreeing, challenging,
-        or being confrontational. Return false for neutral or mildly annoyed messages.
-        
-        Message: {message}
+    async def detect_argumentative_intent(self, text: str) -> tuple:
         """
-        
-        try:
-            # Use API throttler if available
-            acquired = False
-            if self.api_throttler:
-                await self.api_throttler.acquire()
-                acquired = True
-                
-            response = await self.model.generate_content_async(prompt)
-            result_text = response.text.strip()
-            
-            # Try to parse JSON response
-            if "```json" in result_text:
-                result_text = result_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in result_text:
-                result_text = result_text.split("```")[1].split("```")[0].strip()
-                
-            result = json.loads(result_text)
-            is_argumentative = result.get("is_argumentative", False)
-            arg_type = result.get("type", "neutral")
-            
-            # Cache the result
-            if len(self.cache) >= self.cache_size:
-                self.cache.pop(next(iter(self.cache)))
-            self.cache[message] = {"argumentative": (is_argumentative, arg_type)}
-            
-            return is_argumentative, arg_type
-            
-        except Exception as e:
-            if "429" in str(e):
-                self.logger.warning(f"Rate limited by API, using pattern matching fallback")
-                # Fall back to pattern matching on rate limit
-                return self._check_patterns(message, "argumentative")
-            else:
-                self.logger.error(f"Error detecting argumentative intent: {e}")
-                # Return a safe default
-                return False, "neutral"
-        finally:
-            # Release the throttler if we acquired it
-            if self.api_throttler and acquired:
-                await self.api_throttler.release()
+        Detect if text has argumentative intent
+        Returns (is_argumentative, type)
+        """
+        # COMPLETELY BYPASS THE API CALL TO SAVE QUOTA
+        # Always return non-argumentative result
+        return False, "neutral"
+    
+    # If you have other intent detection methods, bypass those too:
+    
+    async def detect_intent(self, text: str) -> dict:
+        """Generic intent detection - BYPASSED"""
+        return {"intent": "neutral", "confidence": 0.0}

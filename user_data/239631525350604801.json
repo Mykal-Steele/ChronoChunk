@@ -4,8 +4,19 @@
   "created_at": "2025-03-20T00:07:06.215441",
   "personal_info": {},
   "preferences": {},
-  "facts": [],
+  "facts": [
+    {
+      "content": "The user stopped music playback.",
+      "extracted_from": "<:check:502235451592278016> Stopped music playback and left the voice channel.",
+      "timestamp": "2025-03-23T01:52:49.919579"
+    },
+    {
+      "content": "The user left the voice channel.",
+      "extracted_from": "<:check:502235451592278016> Stopped music playback and left the voice channel.",
+      "timestamp": "2025-03-23T01:52:49.919579"
+    }
+  ],
   "topics_of_interest": [],
   "conversation_history": [],
-  "last_interaction": "2025-03-20T00:07:06.215528"
+  "last_interaction": "2025-03-23T01:52:49.919579"
 }

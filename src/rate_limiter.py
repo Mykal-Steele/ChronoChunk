@@ -24,43 +24,9 @@ class RateLimiter:
         self._cleanup_interval = Config.RATE_LIMIT_CLEANUP_INTERVAL  # Use configured cleanup interval
         
     def check_rate_limit(self, user_id: str, action: str = "default") -> None:
-        """Check if user has hit rate limit and update history"""
-        now = time.time()
-        
-        # Clean up old data periodically (not on every request)
-        if now - self._last_cleanup > self._cleanup_interval:
-            self._cleanup_old_history()
-            self._last_cleanup = now
-            
-        # Standardize user ID
-        user_id = str(user_id)
-        
-        # Default to "default" if action is None or empty
-        if not action:
-            action = "default"
-        
-        # Get rate limit parameters, defaulting to "default" if action not found
-        max_requests, window = self._limits.get(action, self._limits.get("default", (30, 1800)))
-        cutoff = now - window
-        
-        # Get history for this user and action
-        history = self._history[user_id][action]
-        
-        # using a sliding window approach here - way better than fixed time buckets
-        # we only care about actions within the window time period
-        # so if window is 30 mins, we filter to keep only timestamps from last 30 mins
-        if history:
-            # Remove outdated timestamps in place
-            history[:] = [t for t in history if t > cutoff]
-            
-            # Check if they're over the limit
-            if len(history) >= max_requests:
-                # wait_time is how long until their oldest action "expires" from the window
-                wait_time = history[0] + window - now
-                raise RateLimitError(wait_time)
-        
-        # Record this action
-        history.append(now)
+        """Check if user has hit rate limit and update history - COMPLETELY BYPASSED"""
+        # BYPASS ALL RATE LIMITING - let all messages through
+        return  # Just return without checking anything
         
     def _cleanup_old_history(self) -> None:
         """Clean up old rate limit history entries in one pass"""
@@ -87,4 +53,4 @@ class RateLimiter:
                 
             # Remove user entry if all actions are empty
             if not user_history:
-                del self._history[user_id] 
+                del self._history[user_id]

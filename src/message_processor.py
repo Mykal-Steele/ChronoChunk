@@ -136,15 +136,34 @@ class MessageProcessor:
                                 conversation_history: str) -> None:
         """Generate and send an AI response to a message"""
         try:
-            # Notify that we're "typing"
+            # Start typing indicator
             async with message.channel.typing():
-                # Generate AI response
-                ai_response = await self.ai_handler.generate_response(query, conversation_history, username)
+                # Process command messages differently
+                if query.startswith('/'):
+                    # Clean the query for processing but keep command context
+                    clean_query = query[1:] if len(query) > 1 else query
+                    
+                    # Add special command handling context
+                    enhanced_history = self._enhance_command_history(conversation_history)
+                    
+                    # Get AI response with better context
+                    ai_response = await self.ai_handler.generate_response(
+                        clean_query,  # Use cleaned version without slash
+                        enhanced_history,
+                        username
+                    )
+                else:
+                    # Normal message processing
+                    ai_response = await self.ai_handler.generate_response(
+                        query, 
+                        conversation_history,
+                        username
+                    )
                 
                 # Send the response
-                sent_message = await self.message_handler.send_response(
-                    message.channel, 
-                    ai_response, 
+                await self.message_handler.send_response(
+                    message.channel,
+                    ai_response,
                     user_mention=message.author.mention
                 )
                 
@@ -157,7 +176,7 @@ class MessageProcessor:
                     is_bot=True
                 )
                 
-                # Store in conversation memory
+                # Update conversation memory
                 is_command = query.startswith('/')
                 self.message_handler.update_conversation_memory(
                     channel_id=channel_id,
@@ -181,4 +200,71 @@ class MessageProcessor:
                 message.channel,
                 "ahh shit, my brain short-circuited for a sec. wanna try again?",
                 user_mention=message.author.mention
-            ) 
+            )
+    
+    def _enhance_command_history(self, conversation_history: str) -> str:
+        """Enhance conversation history for slash commands"""
+        # Add special note to help process commands better
+        command_note = "\nNOTE: User tried using a slash command. Treat it as normal message but keep conversation natural.\n"
+        
+        # Add the note at the appropriate position
+        if conversation_history:
+            return conversation_history + command_note
+        else:
+            return command_note
+    
+    async def _handle_message(self, message: discord.Message) -> None:
+        """Process incoming Discord messages"""
+        # Skip bot messages to prevent loops
+        if message.author.bot:
+            return
+        
+        try:
+            # Extract basic info
+            content = message.content
+            user_id = str(message.author.id)
+            username = message.author.name
+            channel_id = str(message.channel.id)
+            
+            # Strip command prefix for better context while keeping original for command detection
+            is_command = content.startswith('/')
+            query = content
+            
+            # Update channel history with the user's message
+            self.message_handler.update_channel_history(
+                channel_id=channel_id,
+                user_id=user_id,
+                username=username,
+                content=content,
+                is_bot=False,
+                is_command=is_command
+            )
+            
+            # Get user data to include in context
+            user_data = await self.user_data_manager.get_user_data(user_id)
+            
+            # Get conversation context - critical for natural back and forth
+            conversation_history = await self.message_handler.build_conversation_context(
+                channel_id=channel_id,
+                user_data=user_data,
+                is_correction=False
+            )
+            
+            # Process the message based on content
+            if is_command:
+                # Strip the command prefix for handlers
+                command_content = content[1:] if len(content) > 1 else ""
+                # Try to handle as a command first, fall back to AI if no command matches
+                command_response = await self._try_handle_command(message, command_content)
+                
+                if command_response is None:
+                    # No matching command, treat as normal message for AI but keep command context
+                    # This is critical - process the command as a regular message but preserve context
+                    await self._handle_ai_response(message, user_id, username, channel_id, query, conversation_history)
+            else:
+                # Regular message, handle with AI
+                await self._handle_ai_response(message, user_id, username, channel_id, query, conversation_history)
+        
+        except Exception as e:
+            logger.error(f"Error processing message: {e}")
+            traceback.print_exc()

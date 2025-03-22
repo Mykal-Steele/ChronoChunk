@@ -14,8 +14,10 @@ class MessageHandler:
     
     def __init__(self):
         """Initialize message handler"""
+        from config.config import Config  # Import at method level to avoid circular imports
         self.conversation_memory = {}  # channel_id -> list of messages
         self.last_channel_messages = {}  # channel_id -> list of recent messages
+        self.config = Config  # Add direct reference to Config class
     
     def update_channel_history(self, channel_id: str, user_id: str, username: str, 
                                content: str, is_bot: bool, is_command: bool = False):
@@ -41,25 +43,28 @@ class MessageHandler:
         if len(self.last_channel_messages[channel_id]) > Config.CHANNEL_HISTORY_SIZE:
             self.last_channel_messages[channel_id] = self.last_channel_messages[channel_id][-Config.CHANNEL_HISTORY_SIZE:]
     
-    def update_conversation_memory(self, channel_id: str, username: str, 
-                                  user_message: str, bot_response: str, is_command: bool = False):
-        """Update the conversation memory with user and bot messages"""
+    def update_conversation_memory(self, channel_id: str, username: str, user_message: str, bot_response: str, is_command: bool = False) -> None:
+        """Update the conversation memory for a channel with proper attribution"""
+        # Create conversation memory for this channel if it doesn't exist
         if channel_id not in self.conversation_memory:
             self.conversation_memory[channel_id] = []
         
-        # Format messages to clearly indicate who is speaking
+        # Don't store slash commands in conversation memory
         if is_command and user_message.startswith('/'):
-            # Store without the slash prefix for better context
+            # Strip the slash for better context
             clean_message = user_message[1:] if len(user_message) > 1 else user_message
             self.conversation_memory[channel_id].append(f"USER ({username}): {clean_message}")
         else:
             self.conversation_memory[channel_id].append(f"USER ({username}): {user_message}")
         
+        # Add bot response to memory with clear attribution
         self.conversation_memory[channel_id].append(f"BOT (ChronoChunk): {bot_response}")
         
-        # Keep memory size manageable but sufficient for context
-        if len(self.conversation_memory[channel_id]) > 2 * Config.MEMORY_SIZE:
-            self.conversation_memory[channel_id] = self.conversation_memory[channel_id][-Config.MEMORY_SIZE*2:]
+        # Ensure we're remembering enough context (at least 10 exchanges)
+        memory_size = max(20, self.config.MEMORY_SIZE * 2)
+        if len(self.conversation_memory[channel_id]) > memory_size:
+            # Keep at least the last 10 messages
+            self.conversation_memory[channel_id] = self.conversation_memory[channel_id][-memory_size:]
     
     async def build_conversation_context(self, channel_id: str, user_data: Dict[str, Any], 
                                         is_correction: bool = False) -> str:
@@ -67,9 +72,13 @@ class MessageHandler:
         # Get recent channel messages for context (who said what)
         context_parts = []
         
+        # Import Config here if needed
+        from config.config import Config
+        context_size = Config.DISPLAY_CONTEXT_SIZE
+        
         # Add channel context first - use configured size
         if channel_id in self.last_channel_messages and self.last_channel_messages[channel_id]:
-            recent_msgs = self.last_channel_messages[channel_id][-Config.DISPLAY_CONTEXT_SIZE:]  
+            recent_msgs = self.last_channel_messages[channel_id][-context_size:]  
             context_parts.append("RECENT CHANNEL MESSAGES (IN ORDER):")
             for msg in recent_msgs:
                 author_name = msg["author_name"]
@@ -83,36 +92,8 @@ class MessageHandler:
                     else:
                         context_parts.append(f"USER ({author_name}): \"{content}\"")
         
-        # Initialize memory for channel conversations if it doesn't exist
-        if channel_id not in self.conversation_memory:
-            self.conversation_memory[channel_id] = []
-        
-        # Get recent bot conversation memory
-        memory = self.conversation_memory[channel_id]
-        
-        # Add bot conversation history - more structured format
-        if memory:
-            context_parts.append("\nCONVERSATION HISTORY:")
-            # Include all available memory for better continuity
-            for entry in memory[-Config.MEMORY_SIZE*2:]:
-                context_parts.append(entry)
-        
-        # Add facts about the user
-        if user_data.get("facts"):
-            context_parts.append("\nFACTS ABOUT THIS USER:")
-            for fact in user_data["facts"][-15:]:  # Include more facts (up from 10)
-                content = fact["content"] if isinstance(fact, dict) and "content" in fact else fact
-                context_parts.append(f"- {content}")
-        
-        # Add topics of interest
-        if user_data.get("topics_of_interest"):
-            interests = ", ".join(user_data["topics_of_interest"])
-            context_parts.append(f"\nUSER INTERESTS: {interests}")
-        
-        # Make it plain text
-        context = "\n".join(context_parts)
-        
-        return context
+        # Build final context
+        return "\n".join(context_parts)
     
     async def send_response(self, channel, content: str, user_mention: Optional[str] = None, 
                            should_mention: bool = True) -> Optional[discord.Message]:

@@ -211,7 +211,7 @@ class ChronoChunk(commands.Bot):
                 if message.reference.resolved.author.id == self.user.id:
                     is_correction = await self.intent_detector.detect_correction_intent(message.content)
                     if is_correction:
-                        await self.handle_correction(message, user_id, user_data)
+                        await self.user_data_manager.handle_correction(user_id, message.content, message.author.display_name)
                         return
         except Exception as e:
             logger.error(f"Error checking for corrections: {e}")
@@ -254,6 +254,19 @@ class ChronoChunk(commands.Bot):
                 await self.message_processor.process_message(message)
             except RateLimitError as e:
                 return
+
+    async def process_message(self, message):
+        """Process a message through the message processor"""
+        # This method is incomplete and causing errors
+        # Simply delegate to the message processor which has the correct logic
+        try:
+            user_id = str(message.author.id)
+            # Use the proper message processor instead of trying to handle directly
+            await self.message_processor.process_message(message)
+        except Exception as e:
+            logger.error(f"Error processing message: {e}")
+            # Fallback to a simple response if everything fails
+            await message.channel.send("yo my brain just froze for a sec, try again?")
 
 def main() -> None:
     """Start up the bot"""
