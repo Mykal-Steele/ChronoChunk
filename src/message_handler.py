@@ -12,12 +12,13 @@ logger = logging.getLogger(__name__)
 class MessageHandler:
     """Handles processing messages and managing conversation history"""
     
-    def __init__(self):
+    def __init__(self, bot=None):
         """Initialize message handler"""
         from config.config import Config  # Import at method level to avoid circular imports
         self.conversation_memory = {}  # channel_id -> list of messages
         self.last_channel_messages = {}  # channel_id -> list of recent messages
         self.config = Config  # Add direct reference to Config class
+        self.bot = bot  # Store the bot reference if provided
     
     def update_channel_history(self, channel_id: str, user_id: str, username: str, 
                                content: str, is_bot: bool, is_command: bool = False):
@@ -60,39 +61,38 @@ class MessageHandler:
         # Add bot response to memory with clear attribution
         self.conversation_memory[channel_id].append(f"BOT (ChronoChunk): {bot_response}")
         
-        # Ensure we're remembering enough context (at least 10 exchanges)
-        memory_size = max(20, self.config.MEMORY_SIZE * 2)
+        # CRITICAL FIX: Keep more context history - at least 20 messages
+        memory_size = max(20, Config.MEMORY_SIZE * 2)
         if len(self.conversation_memory[channel_id]) > memory_size:
-            # Keep at least the last 10 messages
+            # Keep at least the last 20 messages for better context
             self.conversation_memory[channel_id] = self.conversation_memory[channel_id][-memory_size:]
     
     async def build_conversation_context(self, channel_id: str, user_data: Dict[str, Any], 
-                                        is_correction: bool = False) -> str:
-        """Build context from past conversations"""
-        # Get recent channel messages for context (who said what)
+                                   is_correction: bool = False) -> str:
+        """Build richer context from past conversations"""
         context_parts = []
         
-        # Import Config here if needed
+        # Include more history for better context
         from config.config import Config
-        context_size = Config.DISPLAY_CONTEXT_SIZE
+        context_size = max(10, Config.DISPLAY_CONTEXT_SIZE)  # Ensure at least 10 messages
         
-        # Add channel context first - use configured size
+        # Add channel context with clear formatting
         if channel_id in self.last_channel_messages and self.last_channel_messages[channel_id]:
             recent_msgs = self.last_channel_messages[channel_id][-context_size:]  
-            context_parts.append("RECENT CHANNEL MESSAGES (IN ORDER):")
+            context_parts.append("RECENT CONVERSATION (NEWEST LAST):")
+            
+            # Include all messages with clear attribution
             for msg in recent_msgs:
                 author_name = msg["author_name"]
                 content = msg["content"]
                 is_bot = msg.get("is_bot", False)
                 
                 if content and len(content) > 0:
-                    # Format clearly with user/bot identification
                     if is_bot:
-                        context_parts.append(f"BOT ({author_name}): \"{content}\"")
+                        context_parts.append(f"BOT (ChronoChunk): {content}")
                     else:
-                        context_parts.append(f"USER ({author_name}): \"{content}\"")
+                        context_parts.append(f"USER ({author_name}): {content}")
         
-        # Build final context
         return "\n".join(context_parts)
     
     async def send_response(self, channel, content: str, user_mention: Optional[str] = None, 

@@ -17,16 +17,25 @@ class UserDataManager:
     
     def __init__(self, data_dir=None, model=None):
         """Initialize the user data manager"""
-        # Use the data directory from Config if not specified
-        self.data_dir = data_dir or Config.USER_DATA_DIR
+        # Set data directory
+        self.data_dir = data_dir or os.path.join(os.path.dirname(os.path.dirname(__file__)), "user_data")
+        os.makedirs(self.data_dir, exist_ok=True)
         
-        # Create the data directory if it doesn't exist
-        if not os.path.exists(self.data_dir):
-            os.makedirs(self.data_dir)
-            logging.info(f"Created user data directory: {self.data_dir}")
+        # Initialize the fact extraction model
+        try:
+            # Add this import inside the method to avoid circular imports
+            import google.generativeai as genai
+            from config.config import Config
             
-        # Use provided model or create our own using configured model
-        self.fact_model = model or genai.GenerativeModel(Config.FACT_MODEL)
+            api_key = os.environ.get("GEMINI_API_KEY") or Config.GEMINI_API_KEY
+            genai.configure(api_key=api_key)
+            self.fact_model = genai.GenerativeModel("gemini-1.5-flash-latest")
+            logger.info("Fact extraction model initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize fact extraction model: {e}")
+            self.fact_model = None
+        
+        logger.info(f"UserDataManager initialized with data directory: {self.data_dir}")
         
     def _get_user_file_path(self, user_id: str) -> str:
         """Get file path for user data - using sanitized user ID"""
@@ -36,50 +45,44 @@ class UserDataManager:
         return os.path.join(self.data_dir, f"{user_id}.json")
 
     def load_user_data(self, user_id: str, username: str = None) -> Dict[str, Any]:
-        """Load user data or create new profile"""
-        # Sanitize Discord user ID for consistency
-        user_id = re.sub(r'[^0-9]', '', user_id)
+        """Load user data with consistent username handling"""
+        # Create file path
         file_path = self._get_user_file_path(user_id)
         
-        if os.path.exists(file_path):
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    # Ensure all required fields are present
-                    if "facts" not in data:
-                        data["facts"] = []
-                    if "topics_of_interest" not in data:
-                        data["topics_of_interest"] = []
-                    if "conversation_history" not in data:
-                        data["conversation_history"] = []
-                    if "username" not in data and username:
-                        data["username"] = username
-                    elif username and data.get("username") != username:
-                        # Update username if it changed
-                        data["username"] = username
-                        self.save_user_data(user_id, data)
-                    return data
-            except json.JSONDecodeError as e:
-                logging.warning(f"Corrupted user data for {user_id}: {e}")
-        
-        # Create new default user profile
-        new_profile = {
+        # Create default data structure
+        default_data = {
             "user_id": user_id,
-            "username": username or "Unknown",
+            "username": username,  # Always include username
             "created_at": datetime.now().isoformat(),
             "personal_info": {},
             "preferences": {},
             "facts": [],
             "topics_of_interest": [],
             "conversation_history": [],
-            "last_interaction": None
+            "last_interaction": datetime.now().isoformat()
         }
         
-        # Save the new profile immediately to ensure the file exists
-        self.save_user_data(user_id, new_profile)
-        logging.info(f"Created new user profile for {user_id}")
-        
-        return new_profile
+        try:
+            # Create user file if it doesn't exist
+            if not os.path.exists(file_path):
+                with open(file_path, 'w', encoding='utf-8') as f:  # Add UTF-8 encoding here
+                    json.dump(default_data, f, indent=2, ensure_ascii=False)
+                return default_data
+                
+            # Read existing file - ADD ENCODING='UTF-8' HERE
+            with open(file_path, 'r', encoding='utf-8') as f:  # This is the critical fix
+                user_data = json.load(f)
+                
+            # Always update username if provided
+            if username and user_data.get("username") != username:
+                user_data["username"] = username
+                self.save_user_data(user_id, user_data)
+                
+            return user_data
+            
+        except Exception as e:
+            logger.error(f"Error loading user data: {e}")
+            return default_data
 
     def save_user_data(self, user_id: str, data: Dict[str, Any]) -> None:
         """Save user data to file"""
@@ -125,62 +128,74 @@ class UserDataManager:
         
     async def extract_and_save_facts(self, user_id: str, message_content: str, username: str = None) -> bool:
         """Extract and save facts about the user using AI"""
-        if not message_content or (message_content.startswith('/') and len(message_content) < 4):
+        if not message_content or len(message_content.split()) < 3 or message_content.startswith('/'):
             return False
             
-        user_data = self.load_user_data(user_id, username)  # Pass username to load_user_data
+        user_data = self.load_user_data(user_id, username)
         made_changes = False
         
         try:
-            # Extract facts using AI with improved prompt
-            fact_prompt = f"""
-            Extract factual statements about the user from this message.
-            Format the response as a JSON array of complete facts, with each fact being a complete statement.
-            Only extract DEFINITE facts about the user, not hypotheticals or preferences.
-            If there are no facts, return an empty array [].
+            # Enhanced fact extraction prompt
+            fact_prompt = """
+            Extract ONLY definite personal facts about the user from this message.
+            Respond with ONLY a JSON array of facts in second-person format.
             
-            The user's message is: {message_content}
-            """
+            Example message: "I am 21 years old and I hate math"
+            Example response: ["You are 21 years old", "You hate math"]
             
-            try:
-                response = await self.fact_model.generate_content_async(fact_prompt)
-                facts_text = response.text.strip()
+            Example message: "I love coffee so much"
+            Example response: ["You love coffee"]
+            
+            Example message: "My cat just died"
+            Example response: ["Your cat died"]
+            
+            Example message: "I just moved to a new apartment"
+            Example response: ["You moved to a new apartment"]
+            
+            IMPORTANT RULES:
+            - Only include CLEAR factual statements (age, preferences, status, location)
+            - Use second-person format ("You are", "You have", "You like")
+            - Return as a plain JSON array ["fact 1", "fact 2"]
+            - Return empty array [] if no clear facts present
+            - DO NOT include uncertainties, hypotheticals, questions, or one-time events
+            
+            USER MESSAGE: """ + message_content
+            
+            # Extract facts
+            response = await self.fact_model.generate_content_async(fact_prompt)
+            facts_text = response.text.strip()
+            
+            # Handle markdown formatting
+            if "```json" in facts_text:
+                facts_text = facts_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in facts_text:
+                facts_text = facts_text.split("```")[1].strip()
                 
-                # Handle markdown formatting
-                if "```json" in facts_text:
-                    facts_text = facts_text.split("```json")[1].split("```")[0].strip()
-                elif "```" in facts_text:
-                    facts_text = facts_text.split("```")[1].strip()
-                    
-                # Parse facts from response
-                try:
-                    facts_object = json.loads(facts_text)
-                    
-                    # Check for conflicting facts before adding new ones
-                    for fact in facts_object:
-                        if fact and len(fact.strip()) > 0:
-                            # Add as new fact if not exists
-                            if not self._fact_exists(user_data, fact):
-                                user_data["facts"].append({
-                                    "content": fact,
-                                    "extracted_from": message_content,
-                                    "timestamp": datetime.now().isoformat()
-                                })
-                                made_changes = True
-                                
-                except json.JSONDecodeError:
-                    # Silent fail on JSON errors - likely API quota issues
-                    pass
-                    
-            except Exception as e:
-                # API quota exceeded or other error - fail silently
-                if "429" in str(e):
-                    # Quota error, just return without logging spam
-                    return False
-                    
+            # Parse facts from response
+            try:
+                facts_object = json.loads(facts_text)
+                
+                # Check for conflicting facts before adding new ones
+                for fact in facts_object:
+                    if fact and len(fact.strip()) > 0:
+                        # Add as new fact if not exists
+                        if not self._fact_exists(user_data, fact):
+                            user_data["facts"].append({
+                                "content": fact,
+                                "extracted_from": message_content,
+                                "timestamp": datetime.now().isoformat()
+                            })
+                            made_changes = True
+                            
+            except json.JSONDecodeError:
+                # Silent fail on JSON errors - likely API quota issues
+                pass
+                
         except Exception as e:
-            # Catch-all error handler
-            return False
+            # API quota exceeded or other error - fail silently
+            if "429" in str(e):
+                # Quota error, just return without logging spam
+                return False
                 
         # Save changes if we made any
         if made_changes:
@@ -281,24 +296,56 @@ class UserDataManager:
             logging.error(f"Error checking contradictions: {e}")
             return False
     
-    def _fact_exists(self, user_data: Dict[str, Any], new_fact: str) -> bool:
-        """Check if a similar fact already exists for this user"""
-        # Return early if no fact to check
-        if not new_fact or not user_data["facts"]:
-            return not new_fact  # Return True if new_fact is empty, False if facts are empty
+    def _fact_exists(self, user_data: dict, new_fact: str) -> bool:
+        """Check if fact already exists or conflicts with existing facts"""
+        if not user_data or "facts" not in user_data:
+            return False
             
-        # Convert once to lowercase for efficiency
+        # Convert to lowercase for comparison
         new_fact_lower = new_fact.lower()
         
-        # walrus operator (:=) here lets us assign and check in one go - pretty slick
-        # we're checking if facts match exactly OR are subsets of each other
-        return any(
-            # Check if facts are same or contained within each other
-            (content_lower := (fact["content"] if isinstance(fact, dict) and "content" in fact else fact).lower()) == new_fact_lower
-            or new_fact_lower in content_lower 
-            or content_lower in new_fact_lower
-            for fact in user_data["facts"] if fact  # Skip None or empty facts
-        )
+        # Extract key terms for better matching
+        # For example "You are 21 years old" -> "age"
+        fact_topics = {
+            "age": ["you are", "years old", "age"],
+            "location": ["you live in", "you are from", "you moved to"],
+            "preference": ["you like", "you love", "you hate", "you don't like", "you enjoy"],
+            "status": ["you have", "you own", "you got", "you bought"]
+        }
+        
+        # Determine topic of new fact
+        fact_topic = None
+        for topic, keywords in fact_topics.items():
+            if any(keyword in new_fact_lower for keyword in keywords):
+                fact_topic = topic
+                break
+        
+        # Check for conflicts
+        for existing_fact in user_data["facts"]:
+            # Get fact content
+            if isinstance(existing_fact, dict) and "content" in existing_fact:
+                content = existing_fact["content"].lower()
+            else:
+                content = str(existing_fact).lower()
+                
+            # Exact match
+            if content == new_fact_lower:
+                return True
+                
+            # Check for topic conflicts (if we identified a topic)
+            if fact_topic:
+                fact_matches_topic = any(keyword in content for keyword in fact_topics.get(fact_topic, []))
+                
+                # If same topic but different content, we have a contradiction
+                if fact_matches_topic:
+                    # Remove the conflicting fact
+                    if isinstance(existing_fact, dict):
+                        user_data["facts"].remove(existing_fact)
+                    else:
+                        user_data["facts"].remove(existing_fact)
+                    return False  # Return False to add the new fact
+        
+        return False
             
     async def handle_correction(self, user_id: str, correction_message: str, username: str = None) -> bool:
         """Handle user correction of stored facts"""
@@ -497,3 +544,24 @@ class UserDataManager:
         # Remove any non-numeric characters
         sanitized = ''.join(c for c in user_id if c.isdigit())
         return sanitized
+
+    def get_conversation_stats(self, user_id: str) -> Dict[str, Any]:
+        """Get conversation statistics including total message count and first interaction date"""
+        user_data = self.load_user_data(user_id)
+        
+        # Get total number of conversations (not limited by memory context size)
+        total_conversations = len(user_data.get("conversation_history", []))
+        
+        # Get first interaction timestamp
+        first_interaction = None
+        if total_conversations > 0:
+            try:
+                first_timestamp = user_data["conversation_history"][0]["timestamp"]
+                first_interaction = first_timestamp.split("T")[0]  # Just the date part
+            except (KeyError, IndexError):
+                pass
+        
+        return {
+            "total_messages": total_conversations,
+            "first_interaction": first_interaction
+        }

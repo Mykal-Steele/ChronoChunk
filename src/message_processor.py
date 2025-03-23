@@ -3,6 +3,10 @@ import discord
 from typing import Optional, Tuple
 from src.command_handler import RateLimitError
 from discord.ext.commands.errors import CommandNotFound
+import asyncio
+import sys  # Add this import
+import traceback
+from typing import Dict, Any, List, Optional
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -10,83 +14,61 @@ logger = logging.getLogger(__name__)
 class MessageProcessor:
     """Processes incoming Discord messages and handles routing them correctly"""
     
-    def __init__(self, bot, command_handler, rate_limiter, user_data_manager, 
-                 intent_detector, message_handler, ai_handler):
-        """Initialize with required components"""
+    def __init__(self, bot, message_handler, ai_response_handler=None, user_data_manager=None, 
+                 game_manager=None, command_handler=None):
+        """Initialize message processor with required components"""
         self.bot = bot
-        self.command_handler = command_handler
-        self.rate_limiter = rate_limiter
-        self.user_data_manager = user_data_manager
-        self.intent_detector = intent_detector
         self.message_handler = message_handler
-        self.ai_handler = ai_handler
+        self.ai_handler = ai_response_handler  # Store with internal name ai_handler
+        self.user_data_manager = user_data_manager
+        self.game_manager = game_manager
+        self.command_handler = command_handler  # Add this line to store the command handler
     
     async def process_message(self, message: discord.Message) -> None:
-        """Process an incoming Discord message"""
-        # Ignore our own messages
-        if message.author == self.bot.user:
-            return
-            
+        """Process an incoming Discord message - ONLY commands and replies"""
         try:
-            # Get permanent discord user ID
+            # Skip bot messages
+            if message.author.bot:
+                return
+                
+            # Get basic info
+            content = message.content
             user_id = str(message.author.id)
-            channel_id = str(message.channel.id)
             username = message.author.display_name
+            channel_id = str(message.channel.id)
             
-            # Log message
-            logger.info(f"Message from {message.author.name} ({user_id}): {message.content[:50]}...")
+            # Only process these two types of messages:
+            # 1. Messages that start with / (commands)
+            # 2. Direct replies to the bot
             
-            # Store message in channel history
-            is_command = message.content.startswith('/') and not message.content.startswith('//')
-            self.message_handler.update_channel_history(
-                channel_id=channel_id,
-                user_id=user_id,
-                username=username,
-                content=message.content,
-                is_bot=False,
-                is_command=is_command
-            )
-            
-            # Load user data with username
-            user_data = self.user_data_manager.load_user_data(user_id, username)
-            
-            # Check if message is a correction using AI
-            is_correction = await self.intent_detector.detect_correction_intent(message.content)
-            
-            # Check if this is a reply to one of our messages
+            # Check if this is a command
+            if content.startswith('/'):
+                await self._handle_command_message(message, user_id, username, channel_id, {}, False)
+                return
+                
+            # Check if this is a reply to the bot
             is_reply_to_bot = await self._check_if_reply_to_bot(message)
-            if is_reply_to_bot and not message.content.startswith('/'):
-                try:
-                    self.rate_limiter.check_rate_limit(user_id, "chat")
-                    conversation_history = await self.message_handler.build_conversation_context(channel_id, user_data, is_correction)
-                    await self._handle_ai_response(message, user_id, username, channel_id, message.content, conversation_history)
-                    return
-                except RateLimitError as e:
-                    await self.message_handler.send_response(message.channel, str(e), user_mention=message.author.mention)
-                    return
+            if is_reply_to_bot:
+                # Handle as a reply
+                await self._handle_ai_response(message, user_id, username, channel_id, content, None)
+                return
+                
+            # If we get here, message is neither a command nor a reply to the bot
+            # DO NOTHING - this is the key change
             
-            # Process commands first (standard Discord command processing)
-            try:
-                await self.bot.process_commands(message)
-            except CommandNotFound:
-                # Silently ignore command not found errors
-                pass
-            
-            # Handle slash-prefixed messages
-            if message.content.startswith('/'):
-                await self._handle_command_message(message, user_id, username, channel_id, user_data, is_correction)
-            else:
-                # Only extract facts from regular messages in non-DM channels
-                # AND only if the message is likely to contain facts (longer than a few words)
-                if not isinstance(message.channel, discord.DMChannel) and len(message.content.split()) > 3:
-                    try:
-                        self.rate_limiter.check_rate_limit(user_id, "chat")
-                        await self.user_data_manager.extract_and_save_facts(user_id, message.content, username)
-                    except RateLimitError:
-                        pass  # Silently ignore rate limit errors for passive fact extraction
-        
         except Exception as e:
-            logger.error(f"Error processing message: {e}")
+            # Error reporting
+            import traceback, sys
+            error_type = type(e).__name__
+            tb = traceback.extract_tb(sys.exc_info()[2])
+            error_file = tb[-1].filename
+            error_line = tb[-1].lineno
+            error_func = tb[-1].name
+            
+            error_msg = f"Error processing message: {error_type}: {e} in {error_file}, line {error_line}, function {error_func}"
+            logger.error(error_msg)
+            logger.error("Full traceback:")
+            logger.error(traceback.format_exc())
     
     async def _check_if_reply_to_bot(self, message: discord.Message) -> bool:
         """Check if the message is a reply to one of the bot's messages"""
@@ -100,107 +82,93 @@ class MessageProcessor:
         return False
     
     async def _handle_command_message(self, message: discord.Message, user_id: str, 
-                                    username: str, channel_id: str, user_data: dict,
-                                    is_correction: bool) -> None:
+                              username: str, channel_id: str, user_data: dict,
+is_correction: bool) -> None:
         """Handle messages that begin with a slash (potential commands)"""
-        # Extract command and args
-        parts = message.content.split()
-        command = parts[0][1:]  # Remove the slash
-        args = parts[1:] if len(parts) > 1 else []
-        
-        # Try to run registered command
-        cmd_response = None
         try:
+            # Split into command and args
+            parts = message.content.split()
+            command = parts[0][1:] if len(parts[0]) > 1 else ""  # Remove the slash
+            args = parts[1:] if len(parts) > 1 else []
+            
+            # Check if we actually have a command handler
+            if not self.command_handler:
+                # If no command handler, treat as AI query
+                await self._handle_ai_response(message, user_id, username, channel_id, message.content, None)
+                return
+                
+            # Pass to command handler
             cmd_response = await self.command_handler.handle_command(command, args, message, user_id)
-        except RateLimitError as e:
-            await self.message_handler.send_response(message.channel, str(e), user_mention=message.author.mention)
-            return
             
-        if cmd_response:
-            await self.message_handler.send_response(message.channel, cmd_response, user_mention=message.author.mention)
-            return
-            
-        # For unrecognized commands, process as AI query with rate limit check
-        try:
-            self.rate_limiter.check_rate_limit(user_id, "chat")
-        except RateLimitError as e:
-            await self.message_handler.send_response(message.channel, str(e), user_mention=message.author.mention)
-            return
-            
-        # Process with original form to maintain context
-        conversation_history = await self.message_handler.build_conversation_context(channel_id, user_data, is_correction)
-        await self._handle_ai_response(message, user_id, username, channel_id, message.content, conversation_history)
+            # If the command was recognized and handled, send the response
+            if cmd_response:
+                await message.channel.send(cmd_response)
+            else:
+                # Handle unrecognized commands as AI queries
+                # This preserves your requirement to handle "/yoo bro" as an AI query
+                await self._handle_ai_response(message, user_id, username, channel_id, message.content, None)
+                
+        except Exception as e:
+            logger.error(f"Error handling command: {e}")
+            await message.channel.send("yo, something went wrong with that command 💀")
     
     async def _handle_ai_response(self, message: discord.Message, user_id: str, 
-                                username: str, channel_id: str, query: str,
-                                conversation_history: str) -> None:
-        """Generate and send an AI response to a message"""
+                              username: str, channel_id: str, query: str,
+                              conversation_history: str) -> None:
         try:
             # Start typing indicator
             async with message.channel.typing():
-                # Process command messages differently
-                if query.startswith('/'):
-                    # Clean the query for processing but keep command context
-                    clean_query = query[1:] if len(query) > 1 else query
-                    
-                    # Add special command handling context
-                    enhanced_history = self._enhance_command_history(conversation_history)
-                    
-                    # Get AI response with better context
-                    ai_response = await self.ai_handler.generate_response(
-                        clean_query,  # Use cleaned version without slash
-                        enhanced_history,
-                        username
-                    )
-                else:
-                    # Normal message processing
-                    ai_response = await self.ai_handler.generate_response(
-                        query, 
-                        conversation_history,
-                        username
-                    )
-                
-                # Send the response
-                await self.message_handler.send_response(
-                    message.channel,
-                    ai_response,
-                    user_mention=message.author.mention
+                # Get AI response
+                ai_response = await self.ai_handler.generate_response(
+                    query, 
+                    conversation_history,
+                    username,
+                    user_id
                 )
                 
-                # Update bot's message in channel history
+                # Send response
+                await message.channel.send(ai_response)
+                
+                # Update message history
                 self.message_handler.update_channel_history(
                     channel_id=channel_id,
-                    user_id=str(self.bot.user.id),
+                    user_id=user_id,
+                    username=username,
+                    content=query,
+                    is_bot=False
+                )
+                
+                # Update message history with bot response
+                self.message_handler.update_channel_history(
+                    channel_id=channel_id,
+                    user_id=self.bot.user.id,
                     username="ChronoChunk",
                     content=ai_response,
                     is_bot=True
                 )
                 
-                # Update conversation memory
-                is_command = query.startswith('/')
-                self.message_handler.update_conversation_memory(
-                    channel_id=channel_id,
-                    username=username,
-                    user_message=query,
-                    bot_response=ai_response,
-                    is_command=is_command
-                )
-                
-                # Save to user data manager and only extract facts for non-slash messages
-                await self.user_data_manager.add_conversation(user_id, query, ai_response, username)
-                
-                # Only attempt to extract facts from messages that aren't command-like
-                # and have reasonable length to contain facts
-                if not query.startswith('/') and len(query.split()) > 3:
+                # Save to user data
+                if self.user_data_manager:
+                    await self.user_data_manager.add_conversation(
+                        user_id, 
+                        query,
+                        ai_response, 
+                        username
+                    )
+                    
+                    # CRITICAL FIX: Always extract facts for non-command messages
+                    if not query.startswith('/') and len(query.split()) > 2:
+                        await self.user_data_manager.extract_and_save_facts(user_id, query, username)
+                        
+                # Always try to extract facts for non-command, substantive messages
+                if self.user_data_manager and not query.startswith('/') and len(query.split()) > 2:
+                    # Explicitly log this attempt
+                    logger.info(f"Attempting to extract facts from: {query[:30]}...")
                     await self.user_data_manager.extract_and_save_facts(user_id, query, username)
-                
+                        
         except Exception as e:
             logger.error(f"Error generating AI response: {e}")
-            await self.message_handler.send_response(
-                message.channel,
-                "ahh shit, my brain short-circuited for a sec. wanna try again?",
-                user_mention=message.author.mention
-            )
+            await message.channel.send("yo, my brain just glitched. try again?")
     
     def _enhance_command_history(self, conversation_history: str) -> str:
         """Enhance conversation history for slash commands"""

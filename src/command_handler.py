@@ -59,66 +59,22 @@ class CommandHandler:
             "good-boy": self._handle_good_boy,
         }
         
-    async def handle_command(self, command: str, args: List[str], message: discord.Message, user_id: str) -> Optional[str]:
-        """process a command and return a response"""
-        # First check if we have an exact command match
-        if command in self.command_handlers:
-            # Check rate limit first
-            try:
-                self.rate_limiter.check_rate_limit(user_id, command)
-            except RateLimitError as e:
-                return str(e)
-                
-            # Call the command handler
-            return await self.command_handlers[command](args, message, user_id)
+    async def handle_command(self, command: str, args: str, message: discord.Message, user_id: str) -> str:
+        """Handle commands using exact command matching only"""
         
-        # If no exact match, check for intent
-        # Handle user info intent
-        if await self.intent_detector.detect_user_info_intent(message.content):
-            try:
-                self.rate_limiter.check_rate_limit(user_id, "mydata")
-            except RateLimitError as e:
-                return str(e)
-            return await self._handle_my_data(args, message, user_id)
-            
-        # Handle forget intent
-        is_forget, target = await self.intent_detector.detect_forget_intent(message.content)
-        if is_forget:
-            try:
-                self.rate_limiter.check_rate_limit(user_id, "forget")
-            except RateLimitError as e:
-                return str(e)
-            # Pass what needs to be forgotten as arg
-            return await self._handle_forget([target] if target else args, message, user_id)
-            
-        # Handle game start intent
-        if await self.intent_detector.detect_game_intent(message.content):
-            try:
-                self.rate_limiter.check_rate_limit(user_id, "game")
-            except RateLimitError as e:
-                return str(e)
-            return await self._handle_game(args, message, user_id)
-            
-        # Handle game end intent
-        if await self.intent_detector.detect_end_game_intent(message.content):
-            try:
-                self.rate_limiter.check_rate_limit(user_id, "end")
-            except RateLimitError as e:
-                return str(e)
-            return await self._handle_end(args, message, user_id)
-            
-        # Handle guess
-        guess_value = await self.intent_detector.extract_guess_value(message.content)
-        if guess_value is not None:
-            try:
-                self.rate_limiter.check_rate_limit(user_id, "guess")
-            except RateLimitError as e:
-                return str(e)
-            return await self._handle_guess([str(guess_value)], message, user_id)
+        if command == "forget":
+            return await self._handle_forget_command(args, message, user_id)
+        elif command == "remember":
+            return await self._handle_remember_command(args, message, user_id)
+        elif command == "info":
+            return await self._handle_info_command(args, message, user_id)
+        elif command == "game":
+            return await self._handle_game_command(args, message, user_id)
+        # Add all your other command handlers
         
-        # No matching intent found
-        return None
-    
+        # Default - unknown command
+        return "Command not recognized. Try '/help' for a list of commands."
+
     async def _handle_my_data(self, args: List[str], message: discord.Message, user_id: str) -> str:
         """show user what data we have about them"""
         try:
@@ -260,4 +216,4 @@ class CommandHandler:
         
     async def _handle_good_boy(self, args: List[str], message: discord.Message, user_id: str) -> str:
         """Simple command that responds with a smiley face"""
-        return ":)" 
+        return ":)"

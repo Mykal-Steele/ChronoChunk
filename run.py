@@ -6,6 +6,7 @@ Main entry point to run the bot
 import os
 import sys
 import logging
+import traceback  # Add this import
 from dotenv import load_dotenv
 
 # hacky but effective - make our imports work no matter where we run from
@@ -24,5 +25,22 @@ if __name__ == "__main__":
         # Run the bot
         main()
     except Exception as e:
-        logging.error(f"Fatal error: {e}")
-        sys.exit(1) 
+        # Get detailed traceback info
+        error_type = type(e).__name__
+        tb = traceback.extract_tb(sys.exc_info()[2])
+        file_name = tb[-1].filename
+        line_num = tb[-1].lineno
+        code_name = tb[-1].name
+        
+        # Log with file path and line number
+        error_msg = f"Fatal error in {file_name}:{line_num} (function: {code_name}): {error_type}: {e}"
+        logging.error(error_msg)
+        
+        # Also print to console for immediate visibility
+        print(f"\nERROR: {error_msg}\n")
+        
+        # Print full traceback for debugging
+        print("Full traceback:")
+        traceback.print_exc()
+        
+        sys.exit(1)

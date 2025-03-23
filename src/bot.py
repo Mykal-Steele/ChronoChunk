@@ -45,96 +45,100 @@ class ChronoChunk(commands.Bot):
     """Main bot class that ties everything together"""
     
     def __init__(self):
-        """Initialize the bot with all required components"""
-        # Init Discord stuff with needed perms
+        """Initialize the bot without rate limiting or intent detection"""
+        # Initialize Discord bot with required parameters
         intents = discord.Intents.default()
-        intents.message_content = True  # Need to read messages
-        intents.members = True  # Need to see server members
-        super().__init__(command_prefix='/', intents=intents)
+        intents.message_content = True  # This is a privileged intent
+        intents.members = True  # This is a privileged intent
         
-        # Override default error handling to suppress CommandNotFound errors
-        self._old_on_command_error = self.on_command_error
-        self.on_command_error = self._custom_on_command_error
+        super().__init__(
+            command_prefix='/',
+            intents=intents
+        )
         
-        # Initialize core components
-        self.rate_limiter = RateLimiter()
-        self.game_manager = GameManager()
+        # Initialize the user data manager
         self.user_data_manager = UserDataManager()
         
-        # Create API throttler
-        from src.api_throttler import APIThrottler
-        self.api_throttler = APIThrottler(requests_per_minute=40, burst_limit=3)
-
-        # Initialize intent detector with throttler
-        self.intent_detector = IntentDetector(
-            model_name="gemini-1.5-flash-latest",
-            api_throttler=self.api_throttler
-        )
+        # Create game manager
+        self.game_manager = GameManager()
         
-        # Initialize refactored components
-        self.ai_handler = AIResponseHandler(
+        # Create message handler
+        self.message_handler = MessageHandler(self)
+        
+        # Create AI response handler
+        self.ai_response_handler = AIResponseHandler(
             api_key=GEMINI_API_KEY,
             important_topics=Config.IMPORTANT_TOPICS,
-            intent_detector=self.intent_detector,
-            api_throttler=self.api_throttler
+            user_data_manager=self.user_data_manager
         )
         
-        self.message_handler = MessageHandler()
+        # Store a reference as ai_handler for compatibility
+        self.ai_handler = self.ai_response_handler
         
+        # Create command handler
         self.command_handler = CommandHandler(
+            bot=self,
+            user_data_manager=self.user_data_manager,
+            game_manager=self.game_manager
+        )
+        
+        # Create message processor with correct parameter
+        self.message_processor = MessageProcessor(
+            bot=self,
+            message_handler=self.message_handler,
+            ai_response_handler=self.ai_response_handler,  # CHANGE THIS LINE - use ai_response_handler instead of ai_handler
+            user_data_manager=self.user_data_manager,
+            game_manager=self.game_manager
+        )
+        
+        logger.info("Bot initialized without rate limiting")
+    
+    async def setup_hook(self) -> None:
+        """Setup hook for bot initialization"""
+        try:
+            # Initialize web server
+            self.web_server = WebServer()
+            await self.web_server.start()
+            logger.info("Web server started successfully")
+        except Exception as e:
+            logger.warning(f"Web server couldn't start (may be already running): {e}")
+        
+        # Initialize slash commands WITHOUT rate limiter
+        self.slash_commands = SlashCommandManager(
             bot=self,
             game_manager=self.game_manager,
             user_data_manager=self.user_data_manager,
-            rate_limiter=self.rate_limiter,
-            intent_detector=self.intent_detector
+            ai_handler=self.ai_handler,
+            message_handler=self.message_handler
         )
         
-        self.web_server = WebServer()
-        
-        self.message_processor = MessageProcessor(
-            bot=self,
-            command_handler=self.command_handler,
-            rate_limiter=self.rate_limiter,
-            user_data_manager=self.user_data_manager,
-            intent_detector=self.intent_detector,
-            message_handler=self.message_handler,
-            ai_handler=self.ai_handler
-        )
-        
-        logger.info("Bot initialized")
+        # Register slash commands
+        await self.slash_commands.register_commands()
     
-    async def _custom_on_command_error(self, context, exception):
-        """Custom error handler that suppresses CommandNotFound errors"""
-        if not isinstance(exception, CommandNotFound):
-            # For any other exception, use the original handler
-            await self._old_on_command_error(context, exception)
+    async def on_message(self, message):
+        """Handle incoming Discord messages with NO rate limiting"""
+        # Skip our own messages
+        if message.author == self.user:
+            return
         
-    async def setup_hook(self) -> None:
-        """Set up things that need to run before bot starts"""
         try:
-            # Start the web server
-            try:
-                await self.web_server.start()
-            except Exception as e:
-                # More graceful handling of web server errors
-                logger.warning(f"Web server couldn't start (may be already running): {e}")
-            
-            # Initialize slash commands
-            self.slash_commands = SlashCommandManager(
-                bot=self,
-                game_manager=self.game_manager,
-                user_data_manager=self.user_data_manager,
-                rate_limiter=self.rate_limiter,
-                ai_handler=self.ai_handler,
-                message_handler=self.message_handler
-            )
-            
-            # Register slash commands
-            await self.slash_commands.register_commands()
-            
+            # Process ALL messages immediately without any rate limiting
+            await self.message_processor.process_message(message)
+                
         except Exception as e:
-            logger.error(f"Error in setup_hook: {e}")
-    
+            # Enhanced error reporting
+            import traceback
+            error_type = type(e).__name__
+            tb = traceback.extract_tb(sys.exc_info()[2])
+            error_file = tb[-1].filename
+            error_line = tb[-1].lineno
+            error_func = tb[-1].name
+            
+            error_msg = f"Error processing message: {error_type}: {e} in {error_file}, line {error_line}, function {error_func}"
+            logger.error(error_msg)
+            logger.error("Full traceback:")
+            logger.error(traceback.format_exc())
+
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         """Handle errors from slash commands"""
         try:
@@ -195,66 +199,6 @@ class ChronoChunk(commands.Bot):
         except Exception as e:
             logger.error(f"Error handling command error: {e}")
     
-    async def on_message(self, message):
-        # Skip own messages
-        if message.author == self.user:
-            return
-            
-        # Extract user data
-        user_id = str(message.author.id)
-        channel_id = str(message.channel.id)
-        user_data = self.user_data_manager.load_user_data(user_id)
-        
-        # Check for reply to bot message (for corrections)
-        try:
-            if message.reference and message.reference.resolved:
-                if message.reference.resolved.author.id == self.user.id:
-                    is_correction = await self.intent_detector.detect_correction_intent(message.content)
-                    if is_correction:
-                        await self.user_data_manager.handle_correction(user_id, message.content, message.author.display_name)
-                        return
-        except Exception as e:
-            logger.error(f"Error checking for corrections: {e}")
-        
-        # Extract facts and add conversation
-        await self.user_data_manager.extract_and_save_facts(user_id, message.content)
-        
-        # Handle slash commands from traditional prefix
-        if message.content.startswith('/'):
-            # Split into command and args
-            parts = message.content.split()
-            command = parts[0][1:] if len(parts[0]) > 1 else ""  # Remove the slash
-            args = parts[1:] if len(parts) > 1 else []
-            
-            # Check if this is an actual registered command
-            if command in self.command_handler.command_handlers:
-                try:
-                    self.rate_limiter.check_rate_limit(user_id, command)
-                    cmd_response = await self.command_handler.handle_command(command, args, message, user_id)
-                    if cmd_response:
-                        await message.channel.send(cmd_response)
-                        return
-                except RateLimitError as e:
-                    await message.channel.send(str(e))
-                    return
-            else:
-                # This is NOT a registered command - process as AI query
-                try:
-                    self.rate_limiter.check_rate_limit(user_id, "chat")
-                    # Remove the is_correction parameter - process_message doesn't accept it
-                    await self.message_processor.process_message(message)
-                except RateLimitError as e:
-                    await message.channel.send(str(e))
-                return
-        else:
-            # Process regular messages
-            try:
-                self.rate_limiter.check_rate_limit(user_id, "chat")
-                # Remove the is_correction parameter here too
-                await self.message_processor.process_message(message)
-            except RateLimitError as e:
-                return
-
     async def process_message(self, message):
         """Process a message through the message processor"""
         # This method is incomplete and causing errors

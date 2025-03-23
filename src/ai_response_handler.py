@@ -2,6 +2,7 @@ import asyncio
 import random
 import re
 import logging
+import time  # Add this import
 import google.generativeai as genai
 from typing import List, Tuple, Dict, Any, Optional
 from config.ai_config import PERSONALITY_PROMPT
@@ -14,13 +15,14 @@ logger = logging.getLogger(__name__)
 class AIResponseHandler:
     """Handles all AI response generation logic"""
     
-    def __init__(self, api_key: str, important_topics: List[str], intent_detector, api_throttler=None):
-        """Initialize AI response handler with API key and required components"""
+    def __init__(self, api_key: str, important_topics: List[str], api_throttler=None, user_data_manager=None):
+        """Initialize AI response handler without intent detection"""
         self.important_topics = important_topics
-        self.intent_detector = intent_detector
         self.api_throttler = api_throttler
+        self.user_data_manager = user_data_manager
+        # No intent_detector attribute
         
-        # Response cache to avoid repeated API calls with similar prompts
+        # Response cache
         self.response_cache = {}
         self.cache_size = 50
         
@@ -28,7 +30,7 @@ class AIResponseHandler:
         genai.configure(api_key=api_key)
         self.ai_model = genai.GenerativeModel("gemini-1.5-flash-latest")
         
-        # Fallback responses for when API is quota limited
+        # Fallback responses
         self.fallback_responses = deque([
             "yo my neural nets are fried rn, gimme a sec",
             "bruh i think im gettin rate limited, one sec",
@@ -41,6 +43,9 @@ class AIResponseHandler:
             "bruh im lagging so hard rn, gimme a min",
             "my brain cells just went on strike fr fr"
         ], maxlen=10)
+        
+        # Add reference to user data manager
+        self.user_data_manager = user_data_manager
     
     def extract_important_topics(self, message_content: str) -> List[str]:
         """Find sensitive topics in messages more efficiently"""
@@ -55,22 +60,22 @@ class AIResponseHandler:
         return [topic for topic in self.important_topics 
                 if topic in message_lower]
     
-    async def _build_ai_prompt(self, query: str, conversation_history: str, username: str) -> str:
-        """Build the prompt for AI response generation with exact style matching"""
-        # Skip all API calls to prevent rate limiting
-        is_argumentative = False
-        important_topics = []
-        
-        # Start with a completely clean prompt
+    async def _build_ai_prompt(self, query: str, conversation_history: str, username: str, user_id: str = None) -> str:
+        """Build the prompt with better conversation context"""
         prompt_parts = []
         
-        # Check if this might need a longer response
-        needs_longer_response = any(word in query.lower() for word in ["list", "explain", "breakdown", "tell me about", "how does", "why does", "what is", "analysis"])
+        # Detect query types that need longer responses - ADD THIS CODE
+        needs_longer_response = any(word in query.lower() for word in 
+                                   ["list", "explain", "breakdown", "tell me about", 
+                                    "how to", "what are", "why do", "difference between",
+                                    "describe", "compare", "what is"])
         
-        # Detect if this might be an insult from the user
-        possible_insult = any(word in query.lower() for word in ["trash", "garbage", "suck", "bad", "terrible", "stupid", "dumb", "idiot", "weak", "pathetic", "lame", "shit"])
+        # Also detect potential insults for special handling
+        possible_insult = any(word in query.lower() for word in 
+                             ["trash", "garbage", "suck", "bad", "terrible", "stupid",
+                              "idiot", "dumb", "stfu", "shut up", "weak"])
         
-        # TOP LEVEL INSTRUCTION - ABSOLUTE HIGHEST PRIORITY
+        # TOP LEVEL INSTRUCTION
         prompt_parts.append(f"""
         YOU ARE CHRONOCHUNK - A DISCORD BOT WITH THE EXACT STYLE BELOW
         
@@ -175,6 +180,79 @@ class AIResponseHandler:
         
         # Add the current query
         prompt_parts.append(f"User ({username}) just said: \"{query}\"")
+        
+        # Get user data - ADD THIS SECTION
+        user_data_summary = None
+        if user_id and hasattr(self, 'user_data_manager') and self.user_data_manager:
+            try:
+                # Get user data directly from user data manager
+                user_data = self.user_data_manager.load_user_data(user_id, username)
+                
+                if user_data and user_data.get("facts"):
+                    facts_list = []
+                    for fact in user_data["facts"]:
+                        content = fact["content"] if isinstance(fact, dict) and "content" in fact else fact
+                        if content:
+                            facts_list.append(content)
+                    
+                    if facts_list:
+                        user_data_summary = "Facts about this user:\n- " + "\n- ".join(facts_list)
+            except Exception as e:
+                logger.error(f"Error getting user data for prompt: {e}")
+        
+        # Add user data summary
+        user_data_summary = []
+        if user_id and hasattr(self, 'user_data_manager') and self.user_data_manager:
+            try:
+                # Get conversation stats for accurate message count
+                stats = self.user_data_manager.get_conversation_stats(user_id)
+                
+                if stats["total_messages"] > 0:
+                    interaction_info = f"You've talked with this user {stats['total_messages']} times"
+                    if stats["first_interaction"]:
+                        interaction_info += f" since {stats['first_interaction']}"
+                    user_data_summary.append(interaction_info)
+                    
+                # ... existing code for facts ...
+                
+            except Exception as e:
+                logger.error(f"Error getting user data for prompt: {e}")
+        
+        # Add user data knowledge instruction
+        if user_data_summary:
+            prompt_parts.append(f"""
+            USER KNOWLEDGE (PRIVATE, FOR YOUR CONTEXT ONLY):
+            {user_data_summary}
+            
+            INSTRUCTIONS FOR USER KNOWLEDGE:
+            - You know the above facts about this user
+            - If directly asked about this information, acknowledge and share it naturally
+            - Don't randomly mention these facts unless relevant to the conversation
+            - Act like a real friend who knows facts about their friend - share when asked
+            - Don't be overly formal when sharing this information - keep your usual style
+            - NEVER pretend you don't know information that is in the facts list
+            """)
+        
+        # CRITICAL FIX: Add more conversation history for better context
+        if conversation_history:
+            prompt_parts.append(f"""
+            RECENT CONVERSATION HISTORY:
+            {conversation_history}
+            
+            NOTES ABOUT CONVERSATION HISTORY:
+            - This is your conversation with the user
+            - Maintain continuity with this history
+            - If they reference something from earlier, you should understand it
+            - If telling a story, remember what you already said
+            """)
+        
+        # Add current user query
+        prompt_parts.append(f"""
+        CURRENT USER MESSAGE FROM {username}:
+        {query}
+        
+        YOUR RESPONSE AS CHRONOCHUNK:
+        """)
         
         # Final instruction for exact voice match with adjustments for response type
         final_instruction = """
@@ -371,73 +449,40 @@ class AIResponseHandler:
         
         return ai_response.strip()
 
-    async def generate_response(self, query: str, conversation_history: str, username: str) -> str:
-        """Generate an AI response to a user query"""
-        # Use cache for identical queries with same context to reduce API calls
-        cache_key = f"{query}|{conversation_history[-100:] if conversation_history else ''}"
-        if cache_key in self.response_cache:
-            return self.response_cache[cache_key]
+    async def generate_response(self, query: str, conversation_history: str, username: str, user_id: str = None) -> str:
+        """Generate an AI response with better error handling"""
+        try:
+            # Build prompt with user ID to include user data
+            prompt = await self._build_ai_prompt(query, conversation_history, username, user_id)
             
-        # Track retry attempts
-        retry_count = 0
-        max_retries = 3  # Increased retries
-        backoff_time = 0.3  # Shorter initial backoff
-        
-        while retry_count <= max_retries:
-            try:
-                # Use API throttler if available
-                acquired = False
-                if self.api_throttler:
-                    await self.api_throttler.acquire()
-                    acquired = True
+            # Skip API throttling - directly call the API
+            response = await self.ai_model.generate_content_async(prompt)
+            
+            formatted_response = self._format_ai_response(response.text)
+            
+            # Cache the response
+            cache_key = f"{query}|{conversation_history[-100:] if conversation_history else ''}"
+            self.response_cache[cache_key] = formatted_response
+            
+            # Enforce cache size limit
+            if len(self.response_cache) > self.cache_size:
+                # Remove oldest items
+                keys = list(self.response_cache.keys())
+                for k in keys[:-self.cache_size]:
+                    self.response_cache.pop(k, None)
                     
-                # Build the prompt - ensure it includes clear conversation history
-                prompt = await self._build_ai_prompt(query, conversation_history, username)
-                
-                # Call the AI model with slightly higher temperature for more variety
-                response = await self.ai_model.generate_content_async(
-                    prompt,
-                    generation_config={
-                        "temperature": 0.85,  # Slightly increased from default
-                        "top_p": 0.9,
-                        "max_output_tokens": 250  # Increased token limit
-                    }
-                )
-                
-                # Format the response
-                result = self._format_ai_response(response.text)
-                
-                # Cache the response
-                if len(self.response_cache) >= self.cache_size:
-                    # Remove oldest item
-                    self.response_cache.pop(next(iter(self.response_cache)))
-                self.response_cache[cache_key] = result
-                
-                return result
-                
-            except Exception as e:
-                logger.error(f"Error generating AI response: {e}")
-                
-                # Check if this is a 429 error
-                if "429" in str(e) and retry_count < max_retries:
-                    # Attempt a retry with exponential backoff
-                    retry_count += 1
-                    logger.info(f"Retry attempt {retry_count} after 429 error, waiting {backoff_time}s")
-                    await asyncio.sleep(backoff_time)
-                    backoff_time *= 1.5  # More gradual exponential backoff
-                    continue
-                
-                # If we've exhausted retries or it's a different error, return a fallback
-                if "429" in str(e):
-                    fallback = self.fallback_responses[0]
-                    # Rotate the queue to get different responses next time
-                    self.fallback_responses.rotate(1)
-                    return fallback
-                    
-                # For other errors, return a generic error message
-                return "brain got fried for a sec... hit me up again?"
-                
-            finally:
-                # Release the throttler if we acquired it
-                if self.api_throttler and acquired:
-                    await self.api_throttler.release()
+            return formatted_response
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Error generating AI response: {error_msg}")
+            
+            # If we get a rate limit error, use a fallback response
+            if "429" in error_msg or "quota" in error_msg.lower():
+                # Get a response from the rotation
+                fallback = self.fallback_responses[0]
+                # Rotate for variety next time
+                self.fallback_responses.rotate(1)
+                return fallback
+            
+            return "my brain just glitched fr, try again in a sec 💀"

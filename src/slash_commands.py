@@ -7,16 +7,17 @@ from typing import Dict, Any, List, Optional, Callable, Awaitable
 logger = logging.getLogger(__name__)
 
 class SlashCommandManager:
-    """Manages registration and handling of Discord slash commands"""
+    """Handles registration and execution of slash commands"""
     
-    def __init__(self, bot, game_manager, user_data_manager, rate_limiter, ai_handler, message_handler):
-        """Initialize with required components"""
+    def __init__(self, bot, game_manager=None, user_data_manager=None, 
+                 ai_handler=None, message_handler=None):
+        """Initialize WITHOUT rate limiter"""
         self.bot = bot
         self.game_manager = game_manager
         self.user_data_manager = user_data_manager
-        self.rate_limiter = rate_limiter
         self.ai_handler = ai_handler
         self.message_handler = message_handler
+        logger.info("Slash command manager initialized without rate limiting")
     
     async def register_commands(self):
         """Register all slash commands with Discord"""
@@ -38,7 +39,7 @@ class SlashCommandManager:
             # Sync the commands with Discord
             await self.bot.tree.sync()
             logger.info("Slash commands registered!")
-            
+        
         except Exception as e:
             logger.error(f"Error registering slash commands: {e}")
     
@@ -180,13 +181,6 @@ class SlashCommandManager:
             channel_id = str(interaction.channel_id)
             
             try:
-                # Check rate limit
-                try:
-                    self.rate_limiter.check_rate_limit(user_id, "chat")
-                except Exception as e:
-                    await interaction.response.send_message(str(e))
-                    return
-                
                 # Defer the response to give us time to process
                 await interaction.response.defer(thinking=True)
                 
@@ -236,4 +230,4 @@ class SlashCommandManager:
                 
             except Exception as e:
                 logger.error(f"Error handling chat command: {e}")
-                await interaction.followup.send("damn, something went wrong with the AI. try again?") 
+                await interaction.followup.send("damn, something went wrong with the AI. try again?")
