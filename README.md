@@ -55,6 +55,26 @@ python src/bot.py
 - `/forget <text>` - Make the bot forget specific info
 - `/code` - Format code for Discord (React only rn)
 
+## Music Commands
+
+ChronoChunk now supports playing music from YouTube and Spotify links:
+
+- `/music <link or search>` - Play music from YouTube or Spotify
+- `/skip` - Skip to the next song
+- `/pause` - Pause the current song
+- `/resume` - Resume playback
+- `/stop` - Stop playback and leave the voice channel
+- `/queue` - Show the current queue
+- `/volume <0-100>` - Set the volume
+- `/relate` - Play a song related to the current one (YouTube recommendations)
+
+Examples:
+
+- `/music https://www.youtube.com/watch?v=dQw4w9WgXcQ` - Play from YouTube URL
+- `/music https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT` - Play from Spotify URL
+- `/music lofi beats` - Search and play
+- `/relate` - Get a related song to the currently playing one
+
 ## Development
 
 - Code is in `src/` directory

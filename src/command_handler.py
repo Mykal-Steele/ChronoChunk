@@ -25,7 +25,9 @@ except ImportError:
 class CommandHandler:
     """handles all the bot commands"""
     
-    def __init__(self, bot=None, game_manager: GameManager = None, user_data_manager: UserDataManager = None, rate_limiter: RateLimiter = None, intent_detector: IntentDetector = None):
+    def __init__(self, bot=None, game_manager: GameManager = None, user_data_manager: UserDataManager = None, 
+                rate_limiter: RateLimiter = None, intent_detector: IntentDetector = None, 
+                music_manager=None):
         """set up the command handler"""
         self.bot = bot  # Can be None for standalone usage
         
@@ -39,6 +41,13 @@ class CommandHandler:
         self.user_data_manager = user_data_manager if user_data_manager else UserDataManager()
         self.rate_limiter = rate_limiter if rate_limiter else RateLimiter()
         self.intent_detector = intent_detector if intent_detector else IntentDetector()
+        
+        # Import MusicManager here to avoid circular imports
+        if music_manager is None:
+            from src.music_manager import MusicManager
+            self.music_manager = MusicManager()
+        else:
+            self.music_manager = music_manager
         
         # we're supporting multiple command prefixes to make the bot flexible
         # users can trigger commands with / (slash commands) or ! (traditional prefix)
@@ -57,6 +66,15 @@ class CommandHandler:
             "guess": self._handle_guess,
             "code": self._handle_code,
             "good-boy": self._handle_good_boy,
+            # Add music commands
+            "music": self._handle_music,
+            "skip": self._handle_skip,
+            "pause": self._handle_pause,
+            "resume": self._handle_resume,
+            "stop": self._handle_stop,
+            "queue": self._handle_queue,
+            "volume": self._handle_volume,
+            "relate": self._handle_relate,
         }
         
     async def handle_command(self, command: str, args: str, message: discord.Message, user_id: str) -> str:
@@ -217,3 +235,129 @@ class CommandHandler:
     async def _handle_good_boy(self, args: List[str], message: discord.Message, user_id: str) -> str:
         """Simple command that responds with a smiley face"""
         return ":)"
+
+    async def _handle_music(self, args: List[str], message: discord.Message, user_id: str) -> str:
+        """Play music from a YouTube or Spotify URL"""
+        if not message.author.voice:
+            return "yo, u gotta be in a voice channel to play music"
+            
+        if not args:
+            return "gimme a link or search term, like '/music https://youtube.com/...' or '/music lofi beats'"
+        
+        # Join the user's voice channel
+        voice_channel = message.author.voice.channel
+        
+        try:
+            # Join the voice channel
+            await self.music_manager.join_voice_channel(voice_channel)
+            
+            # Get the URL or search term
+            query = " ".join(args)
+            
+            # Play the music
+            success, response = await self.music_manager.play(
+                message.guild.id, 
+                query, 
+                message.author.display_name
+            )
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error in music command: {e}")
+            return "damn, something went wrong tryna play that"
+    
+    async def _handle_skip(self, args: List[str], message: discord.Message, user_id: str) -> str:
+        """Skip to the next song in queue"""
+        if not message.guild:
+            return "this only works in servers not dms"
+            
+        success, response = await self.music_manager.skip(message.guild.id)
+        return response
+    
+    async def _handle_pause(self, args: List[str], message: discord.Message, user_id: str) -> str:
+        """Pause the current song"""
+        if not message.guild:
+            return "this only works in servers not dms"
+            
+        success, response = await self.music_manager.pause(message.guild.id)
+        return response
+    
+    async def _handle_resume(self, args: List[str], message: discord.Message, user_id: str) -> str:
+        """Resume playback"""
+        if not message.guild:
+            return "this only works in servers not dms"
+            
+        success, response = await self.music_manager.resume(message.guild.id)
+        return response
+    
+    async def _handle_stop(self, args: List[str], message: discord.Message, user_id: str) -> str:
+        """Stop playback and clear the queue"""
+        if not message.guild:
+            return "this only works in servers not dms"
+        
+        # Clear the queue
+        self.music_manager.clear_queue(message.guild.id)
+        
+        # Leave the voice channel
+        success = await self.music_manager.leave_voice_channel(message.guild.id)
+        return "aight, stopped the music n left the channel" if success else "im not even playing anything rn"
+    
+    async def _handle_queue(self, args: List[str], message: discord.Message, user_id: str) -> str:
+        """Show the current queue"""
+        if not message.guild:
+            return "this only works in servers not dms"
+            
+        # Get the current song
+        current_song = self.music_manager.get_current_song(message.guild.id)
+        
+        # Get the queue
+        queue = self.music_manager.get_queue(message.guild.id)
+        
+        if not current_song and not queue:
+            return "queue empty af, add something with /music"
+        
+        response = []
+        if current_song:
+            response.append(f"**Now Playing:** {current_song}")
+            
+        if queue:
+            response.append("\n**Up Next:**")
+            for i, song in enumerate(queue, 1):
+                if i > 10:  # Limit to 10 songs
+                    remaining = len(queue) - 10
+                    response.append(f"*...and {remaining} more*")
+                    break
+                response.append(f"{i}. {song}")
+        
+        return "\n".join(response)
+    
+    async def _handle_volume(self, args: List[str], message: discord.Message, user_id: str) -> str:
+        """Set the volume (0-100)"""
+        if not message.guild:
+            return "this only works in servers not dms"
+            
+        if not args:
+            return "gimme a number between 0 and 100"
+            
+        try:
+            volume = float(args[0]) / 100.0  # Convert to 0.0-1.0 range
+            success, response = await self.music_manager.set_volume(message.guild.id, volume)
+            return response
+        except ValueError:
+            return "yo that aint a number, try again"
+
+    async def _handle_relate(self, args: List[str], message: discord.Message, user_id: str) -> str:
+        """Play a related song based on YouTube recommendations"""
+        if not message.guild:
+            return "this only works in servers not dms"
+            
+        if not message.author.voice:
+            return "yo, u gotta be in a voice channel to play related music"
+        
+        success, response = await self.music_manager.get_related_song(
+            message.guild.id, 
+            message.author.display_name
+        )
+        
+        return response

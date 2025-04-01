@@ -6,6 +6,8 @@ import google.generativeai as genai
 import logging
 import os
 import sys
+import time
+import traceback
 from dotenv import load_dotenv
 from discord.ext.commands.errors import CommandNotFound
 
@@ -50,6 +52,7 @@ class ChronoChunk(commands.Bot):
         intents = discord.Intents.default()
         intents.message_content = True  # This is a privileged intent
         intents.members = True  # This is a privileged intent
+        intents.voice_states = True  # Enable voice state updates
         
         super().__init__(
             command_prefix='/',
@@ -91,7 +94,22 @@ class ChronoChunk(commands.Bot):
             game_manager=self.game_manager
         )
         
+        # Register event handlers
+        self.setup_event_handlers()
+        
         logger.info("Bot initialized without rate limiting")
+    
+    def setup_event_handlers(self):
+        """Setup all event handlers for the bot"""
+        @self.event
+        async def on_voice_state_update(member, before, after):
+            try:
+                # Forward voice state updates to the music manager
+                if hasattr(self.command_handler, 'music_manager'):
+                    await self.command_handler.music_manager.on_voice_state_update(member, before, after)
+            except Exception as e:
+                logger.error(f"Error handling voice state update: {e}")
+                logger.error(traceback.format_exc())
     
     async def setup_hook(self) -> None:
         """Setup hook for bot initialization"""
@@ -172,7 +190,7 @@ class ChronoChunk(commands.Bot):
             
             # Log available emojis
             logger.info(f"Collected {len(server_emojis)} custom emojis from {len(self.guilds)} servers")
-            
+            await self.command_handler.music_manager.start_inactivity_checker()
             # Store emoji info in your AI handler
             self.ai_handler.server_emojis = list(server_emojis.keys())
             
@@ -212,7 +230,71 @@ class ChronoChunk(commands.Bot):
             # Fallback to a simple response if everything fails
             await message.channel.send("yo my brain just froze for a sec, try again?")
 
-def main() -> None:
+    async def on_error(self, event, *args, **kwargs):
+        """Global error handler for all events"""
+        error_type, error, tb = sys.exc_info()
+        
+        # Generate error ID for tracking
+        error_id = f"ERR-{int(time.time())}"
+        
+        logger.error(f"Error ID {error_id} | Unhandled exception in {event}: {error_type.__name__}: {error}")
+        logger.error("".join(traceback.format_tb(tb)))
+        
+        # Try to notify channel if possible
+        if event == 'on_message' and len(args) > 0:
+            message = args[0]
+            try:
+                await message.channel.send(f"Encountered an unexpected error (ID: {error_id}). The issue has been logged.")
+            except:
+                # If we can't send to the channel, just log it
+                pass
+
+    async def close(self):
+        """Ensure proper cleanup when the bot is shutting down"""
+        try:
+            logger.info("Bot is shutting down, performing cleanup...")
+            
+            # Save any in-memory data
+            if hasattr(self, 'user_data_manager'):
+                logger.info("Saving user data...")
+                # Any final save operations
+            
+            # Close web server if it exists
+            if hasattr(self, 'web_server'):
+                logger.info("Stopping web server...")
+                await self.web_server.stop()
+                
+            # Close any other resources
+            logger.info("Cleanup complete, shutting down bot")
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
+        
+        # Call parent close method
+        await super().close()
+
+def shutdown_bot():
+    """Gracefully shut down the bot and all its components"""
+    logger.info("Initiating bot shutdown sequence")
+    
+    # Get active bot instances
+    from asyncio import all_tasks, current_task, get_event_loop
+    
+    try:
+        # Try to close any bot instances
+        for task in all_tasks():
+            if task != current_task() and task.get_name() == "ChronoChunk Bot Task":
+                logger.info("Found bot task, scheduling shutdown")
+                task.cancel()
+                
+        # Signal event loop to stop
+        loop = get_event_loop()
+        if loop.is_running():
+            logger.info("Stopping event loop")
+            loop.stop()
+    except Exception as e:
+        logger.error(f"Error during shutdown sequence: {e}")
+
+def main() -> None: 
     """Start up the bot"""
     try:
         bot = ChronoChunk()

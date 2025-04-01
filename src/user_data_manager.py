@@ -116,6 +116,12 @@ class UserDataManager:
             "bot_response": bot_response
         })
         
+        # Increment total conversation counter (add this field if it doesn't exist)
+        if "total_conversations" not in user_data:
+            user_data["total_conversations"] = len(user_data["conversation_history"])
+        else:
+            user_data["total_conversations"] += 1
+        
         # Keep only the configured number of conversations
         if len(user_data["conversation_history"]) > Config.MAX_CONVERSATION_HISTORY:
             user_data["conversation_history"] = user_data["conversation_history"][-Config.MAX_CONVERSATION_HISTORY:]
@@ -128,14 +134,26 @@ class UserDataManager:
         
     async def extract_and_save_facts(self, user_id: str, message_content: str, username: str = None) -> bool:
         """Extract and save facts about the user using AI"""
-        if not message_content or len(message_content.split()) < 3 or message_content.startswith('/'):
+        # CHANGE THIS CHECK to handle more cases:
+        original_content = message_content
+        
+        # Remove slash prefix if present (for /hello style messages)
+        if message_content.startswith('/') and len(message_content) > 1:
+            message_content = message_content[1:].strip()
+        
+        # Skip fact extraction for very short messages or commands
+        if not message_content or len(message_content.split()) < 2:
+            return False
+        
+        # Skip actual commands like "/chat" or "/help"
+        if message_content.split()[0].lower() in ["chat", "code", "help", "summary", "profile", "stats"]:
             return False
             
         user_data = self.load_user_data(user_id, username)
         made_changes = False
         
         try:
-            # Enhanced fact extraction prompt
+            # IMPROVED fact extraction prompt
             fact_prompt = """
             Extract ONLY definite personal facts about the user from this message.
             Respond with ONLY a JSON array of facts in second-person format.
@@ -149,15 +167,21 @@ class UserDataManager:
             Example message: "My cat just died"
             Example response: ["Your cat died"]
             
-            Example message: "I just moved to a new apartment"
-            Example response: ["You moved to a new apartment"]
+            Example message: "I hate Monday"
+            Example response: ["You hate Monday"]
+            
+            Example message: "My friend is a doctor"
+            Example response: ["Your friend is a doctor"] 
+            
+            Example message: "I don't eat meat anymore"
+            Example response: ["You do not eat meat"]
             
             IMPORTANT RULES:
-            - Only include CLEAR factual statements (age, preferences, status, location)
-            - Use second-person format ("You are", "You have", "You like")
+            - Include any personal facts (preferences, status, relationships, possessions)
+            - Use second-person format ("You are", "You have", "You like", "Your friend is")
             - Return as a plain JSON array ["fact 1", "fact 2"]
             - Return empty array [] if no clear facts present
-            - DO NOT include uncertainties, hypotheticals, questions, or one-time events
+            - DO NOT miss obvious facts - especially likes, dislikes, and relationships
             
             USER MESSAGE: """ + message_content
             
@@ -181,7 +205,7 @@ class UserDataManager:
                         # Add as new fact if not exists
                         if not self._fact_exists(user_data, fact):
                             user_data["facts"].append({
-                                "content": fact,
+                                "content": fact,    
                                 "extracted_from": message_content,
                                 "timestamp": datetime.now().isoformat()
                             })
@@ -442,71 +466,37 @@ class UserDataManager:
             
         return False
         
-    async def get_user_summary(self, user_id: str, username: str = None) -> str:
-        """Generate a summary of stored user data"""
-        # Sanitize Discord user ID
-        user_id = re.sub(r'[^0-9]', '', user_id)
+    def get_user_summary(self, user_id: str, username: str = None) -> str:
+        """Get user summary with facts and interests but NOT mentioning conversation metadata"""
         user_data = self.load_user_data(user_id, username)
+        summary_parts = []
         
-        summary = []
+        # Add facts but NOT conversation counts or dates
+        if "facts" in user_data and user_data["facts"]:
+            formatted_facts = []
+            for fact in user_data["facts"]:
+                content = fact.get("content", "")
+                if content:
+                    formatted_facts.append(f"- {content}")
+            
+            if formatted_facts:
+                summary_parts.append("Things I know about you:")
+                summary_parts.extend(formatted_facts)
         
-        # Add facts with proper formatting
-        if user_data["facts"]:
-            summary.append(f"What I know about {user_data.get('username', 'you')}:")
-            
-            # Extract fact contents
-            facts = [fact["content"] if isinstance(fact, dict) and "content" in fact else fact 
-                    for fact in user_data["facts"]]
-            
-            try:
-                # Convert facts to second person using AI
-                conversion_prompt = PERSPECTIVE_CONVERSION_PROMPT.format(facts=json.dumps(facts))
-                response = await self.fact_model.generate_content_async(conversion_prompt)
-                converted_text = response.text.strip()
-                
-                # Handle markdown formatting
-                if "```json" in converted_text:
-                    converted_text = converted_text.split("```json")[1].split("```")[0].strip()
-                elif "```" in converted_text:
-                    converted_text = converted_text.split("```")[1].strip()
-                
-                try:
-                    converted_facts = json.loads(converted_text)
-                    for fact in converted_facts:
-                        if fact:  # Skip empty facts
-                            # Ensure first letter is capitalized
-                            fact = fact[0].upper() + fact[1:] if fact else fact
-                            summary.append(f"- {fact}")
-                except json.JSONDecodeError:
-                    # Fallback: just use original facts if conversion fails
-                    for fact in facts:
-                        if fact:  # Skip empty facts
-                            fact = fact[0].upper() + fact[1:] if fact else fact
-                            summary.append(f"- {fact}")
-            except Exception as e:
-                logging.error(f"Error converting facts: {e}")
-                # Fallback: use original facts
-                for fact in facts:
-                    if fact:  # Skip empty facts
-                        fact = fact[0].upper() + fact[1:] if fact else fact
-                        summary.append(f"- {fact}")
-                
-        # Add topics of interest
-        if user_data["topics_of_interest"]:
-            summary.append("\nYour interests:")
-            for topic in user_data["topics_of_interest"]:
-                summary.append(f"- {topic}")
-                
-        # Add interaction stats
-        if user_data.get("conversation_history"):
-            first_interaction = datetime.fromisoformat(user_data["created_at"])
-            total_convos = len(user_data.get("conversation_history", []))
-            summary.append(f"\nWe've talked {total_convos} times since {first_interaction.strftime('%B %d, %Y')}")
-            
-        if not summary:
-            return "I don't have any information saved about you yet."
-            
-        return "\n".join(summary)
+        # Add topics of interest if available
+        if "topics_of_interest" in user_data and user_data["topics_of_interest"]:
+            topics = user_data["topics_of_interest"]
+            if topics:
+                summary_parts.append("\nTopics you're interested in:")
+                summary_parts.append(", ".join(topics))
+        
+        # IMPORTANT: Do NOT include conversation counts or dates
+        
+        # If we have no info, mention that
+        if not summary_parts:
+            return "I don't have any information about you yet."
+        
+        return "\n".join(summary_parts)
 
     def _clean_topics(self, topics: List[str]) -> List[str]:
         """Clean the list of topics to ensure they are valid.
@@ -549,12 +539,12 @@ class UserDataManager:
         """Get conversation statistics including total message count and first interaction date"""
         user_data = self.load_user_data(user_id)
         
-        # Get total number of conversations (not limited by memory context size)
-        total_conversations = len(user_data.get("conversation_history", []))
+        # Use the dedicated counter instead of just counting the history length
+        total_conversations = user_data.get("total_conversations", len(user_data.get("conversation_history", [])))
         
         # Get first interaction timestamp
         first_interaction = None
-        if total_conversations > 0:
+        if user_data.get("conversation_history", []):
             try:
                 first_timestamp = user_data["conversation_history"][0]["timestamp"]
                 first_interaction = first_timestamp.split("T")[0]  # Just the date part

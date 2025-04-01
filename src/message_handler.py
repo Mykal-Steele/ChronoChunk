@@ -67,14 +67,24 @@ class MessageHandler:
             # Keep at least the last 20 messages for better context
             self.conversation_memory[channel_id] = self.conversation_memory[channel_id][-memory_size:]
     
-    async def build_conversation_context(self, channel_id: str, user_data: Dict[str, Any], 
-                                   is_correction: bool = False) -> str:
-        """Build richer context from past conversations"""
+    def _extract_recent_topics(self, channel_id: str) -> List[str]:
+        """Extract topics from recent messages for relevance filtering"""
+        # Simple implementation - extract words from recent messages
+        topics = set()
+        if channel_id in self.last_channel_messages:
+            for msg in self.last_channel_messages[channel_id][-5:]:  # Last 5 messages
+                content = msg.get("content", "").lower()
+                # Get meaningful words (exclude common stopwords)
+                words = [w for w in re.findall(r'\b\w+\b', content) if len(w) > 3]
+                topics.update(words)
+        return list(topics)
+    
+    async def build_conversation_context(self, channel_id: str, user_data: Dict[str, Any], is_correction: bool = False) -> str:
+        """Build context for conversation"""
         context_parts = []
         
-        # Include more history for better context
-        from config.config import Config
-        context_size = max(10, Config.DISPLAY_CONTEXT_SIZE)  # Ensure at least 10 messages
+        # Use more context messages
+        context_size = min(30, max(20, Config.DISPLAY_CONTEXT_SIZE))  # More context but not too much
         
         # Add channel context with clear formatting
         if channel_id in self.last_channel_messages and self.last_channel_messages[channel_id]:
@@ -82,16 +92,47 @@ class MessageHandler:
             context_parts.append("RECENT CONVERSATION (NEWEST LAST):")
             
             # Include all messages with clear attribution
-            for msg in recent_msgs:
+            for i, msg in enumerate(recent_msgs):
                 author_name = msg["author_name"]
                 content = msg["content"]
                 is_bot = msg.get("is_bot", False)
                 
                 if content and len(content) > 0:
+                    # Mark the 3 most recent messages for emphasis
+                    prefix = ">>> " if i >= len(recent_msgs) - 3 else ""
                     if is_bot:
-                        context_parts.append(f"BOT (ChronoChunk): {content}")
+                        context_parts.append(f"{prefix}BOT (ChronoChunk): {content}")
                     else:
-                        context_parts.append(f"USER ({author_name}): {content}")
+                        context_parts.append(f"{prefix}USER ({author_name}): {content}")
+        
+        # Add special handling for topic continuity with more explicit instructions
+        if channel_id in self.last_channel_messages and len(self.last_channel_messages[channel_id]) >= 2:
+            # Get the most recent messages
+            bot_messages = [msg for msg in self.last_channel_messages[channel_id][-5:] 
+                           if msg.get("is_bot", True)]
+            user_messages = [msg for msg in self.last_channel_messages[channel_id][-5:] 
+                            if not msg.get("is_bot", True)]
+            
+            # If we have both bot and user messages
+            if bot_messages and user_messages:
+                last_bot_msg = bot_messages[-1].get("content", "").lower()
+                last_user_msg = user_messages[-1].get("content", "").lower()
+                
+                # Check if the user message is a short question/follow-up
+                if len(last_user_msg.split()) <= 5:
+                    context_parts.append("\nCRITICAL CONTEXT INSTRUCTION:")
+                    context_parts.append("The user's message is a FOLLOW-UP to your previous response.")
+                    context_parts.append("Stay on the EXACT SAME TOPIC you were just discussing.")
+                    
+                    # Extract key topics from the bot's last message to emphasize continuity
+                    topic_words = set()
+                    for word in re.findall(r'\b[a-z]{4,}\b', last_bot_msg):
+                        if word not in ['like', 'dont', 'just', 'with', 'that', 'this', 'have', 'about', 'what', 'when', 'where', 'from', 'your', 'been', 'would', 'could', 'since', 'them', 'they', 'than', 'then', 'some']:
+                            topic_words.add(word)
+                    
+                    if topic_words:
+                        context_parts.append(f"CURRENT TOPIC: {', '.join(topic_words)}")
+                        context_parts.append("DO NOT change the subject - stay on these topics.")
         
         return "\n".join(context_parts)
     

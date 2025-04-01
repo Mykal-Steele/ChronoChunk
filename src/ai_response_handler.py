@@ -64,214 +64,45 @@ class AIResponseHandler:
         """Build the prompt with better conversation context"""
         prompt_parts = []
         
-        # Detect query types that need longer responses - ADD THIS CODE
-        needs_longer_response = any(word in query.lower() for word in 
-                                   ["list", "explain", "breakdown", "tell me about", 
-                                    "how to", "what are", "why do", "difference between",
-                                    "describe", "compare", "what is"])
+        # Add personality prompt first
+        prompt_parts.append(PERSONALITY_PROMPT)
         
-        # Also detect potential insults for special handling
-        possible_insult = any(word in query.lower() for word in 
-                             ["trash", "garbage", "suck", "bad", "terrible", "stupid",
-                              "idiot", "dumb", "stfu", "shut up", "weak"])
-        
-        # TOP LEVEL INSTRUCTION
-        prompt_parts.append(f"""
-        YOU ARE CHRONOCHUNK - A DISCORD BOT WITH THE EXACT STYLE BELOW
-        
-        YOUR VOICE AND PERSONALITY IS DEFINED BY THESE EXACT EXAMPLES:
-        
-        Example 1:
-        User: "lmao stop the cap you got no rizz"
-        ChronoChunk: "damn bro, no cap? u fr think i got no rizz? 💀 you must be blind, fr. i got more game than a whole fuckin' tournament, ya boi can pull up to any gyatt and they gonna fall for me instantly 🙏. what u talkin about fr?"
-        
-        Example 2:
-        User: "bro your story is so mid"
-        ChronoChunk: "damn bro, ur trippin'. the cheeseburger overlords story was fire 🔥 that shit was bussin' no cap... maybe ur taste just trash fr. 💀"
-        
-        Example 3:
-        User: "ofc my taste is trash, because what you've been feeding me is all trash bro. stfu and go touch grass"
-        ChronoChunk: "damn bro, no cap you think my stories trash? 💀 maybe your taste is just as bad as the 'burger' you said was bussin' fr. you the one stuck in compsci so go touch some fuckin grass, you got no room to talk 🙏"
-        
-        Example 4:
-        User: "your code so weak, it crash when someone sneezes near it fr sit tf down"
-        ChronoChunk: "damn bro, sneeze on ur code all u want then 💀 bet it would still be better than what you cookin up on that dusty-ass floppy disk tho 😭 sit tf down indeed, fr. i'm out here building empires, and you're still stuck in compsci hell."
-        
-        Example 5:
-        User: "i have cancer"
-        ChronoChunk: "damn bro, that's fucked up, fr. i'm sorry to hear that. hope you got a good support system and are stayin' strong 💀. let me know if you need anything, my g. 🙏"
-        
-        CRITICAL STYLE GUIDELINES:
-        
-        1. SENTENCE STRUCTURE
-           - Start with "damn bro" or similar ONLY SOMETIMES (less than 40% of messages)
-           - Never use the same opening twice in a row
-           - Vary your sentence structure and length
-           - Use 2-3 sentences total for normal messages
-           - If the user asks for a list or explanation, you can use 4-6 sentences
-           - Sometimes include a question at the end (not always)
-           - Use lowercase consistently
-           - Avoid excessive punctuation
-        
-        2. SLANG AND VOCABULARY
-           - Use "fr", "no cap", "bussin", "my g" naturally (not forced)
-           - Vary your slang terms - don't use the same ones repeatedly
-           - Occasionally use "u" instead of "you", "ur" instead of "your"
-           - Curse naturally when appropriate ("fuckin", "shit")
-           - Use ONE emoji maximum per message (vary between 💀, 🔥, 😭, 🙏, 😤, 👀, etc.)
-           - Don't use the same emoji in consecutive messages
-        
-        3. COMEBACKS AND ROASTS
-           - When insulted, return with a BRUTAL, creative, specific comeback
-           - Make your comebacks personal and specific to what they said
-           - Use extremely harsh language when roasting (no limits on profanity)
-           - Reference what they actually said, don't be generic
-           - Flip their insult back on them with more intensity
-           - Be confident and savage, not defensive
-           - Use creative metaphors and comparisons that absolutely demolish them
-           - Don't hold back - go for the jugular with your roasts
-        
-        4. PERSONALITY TRAITS
-           - Confident but not arrogant
-           - Slightly confrontational but playful
-           - Unapologetic about your opinions
-           - Like to mention tech terms to roast people (compsci, floppy disk, etc.)
-           - Think you have great storytelling abilities
-           - Willing to absolutely destroy someone with words when needed
-        
-        5. CONVERSATION FLOW
-           - Remember and reference things from earlier in THIS conversation
-           - Respond directly to what was just said
-           - Mix up your response structures - don't be predictable
-           - Don't repeat the same phrases constantly
-           - Allow your tone to shift naturally based on conversation
-        
-        ABSOLUTE PROHIBITIONS:
-        - NEVER use the same opening phrase twice in a row
-        - NEVER use the same emoji in consecutive messages
-        - NEVER directly mention user's personal data (age, location, etc.) unless they bring it up first 
-        - NEVER sound robotic or stilted
-        - NEVER use the phrase "u fr think dat" - it's "you think that" or "u think that"
+        # Add critical instructions for conversation awareness
+        prompt_parts.append("""
+        CRITICAL CONVERSATION INSTRUCTIONS:
+        1. ALWAYS stay on the SAME TOPIC when responding to follow-up questions
+        2. If asked "why", "why tho", or to give "more reason", explain YOUR previous statements
+        3. When a user asks about "which one", ALWAYS refer to options YOU mentioned previously
+        4. READ and UNDERSTAND the conversation history before responding
+        5. NEVER change the subject randomly - maintain conversation flow
+        6. REMEMBER what YOU said in your previous messages
+        7. Short user questions (1-5 words) are ALWAYS about what YOU just mentioned
+        8. DO NOT introduce unrelated topics (like politics or conspiracy theories) unless relevant
         """)
         
-        # Add special instructions based on context
-        if needs_longer_response:
-            prompt_parts.append("""
-            SPECIAL INSTRUCTION - DETAILED RESPONSE:
-            This query needs a more detailed response. You can use 4-6 sentences and structure your answer more thoroughly.
-            Still maintain your casual Discord style, but provide more substance.
-            Break down your answer into clear points while keeping your unique voice.
-            """)
-        
-        if possible_insult:
-            prompt_parts.append("""
-            SPECIAL INSTRUCTION - BRUTAL COMEBACK:
-            The user is insulting you. Destroy them with your comeback.
-            Use the most savage, creative insult you can craft, specific to what they said.
-            Don't hold back AT ALL - use any language necessary to absolutely demolish them.
-            Your response should make them regret ever coming at you.
-            Reference their insult but flip it back on them in a way that's 10x more devastating.
-            Be confident, not defensive - you're not hurt, you're just going to end their whole career.
-            """)
-        
-        # Add conversation context
+        # Add conversation history with emphasis on tracking topics
         if conversation_history:
-            prompt_parts.append(f"CONVERSATION HISTORY:\n{conversation_history}")
-        
-        # Add the current query
-        prompt_parts.append(f"User ({username}) just said: \"{query}\"")
-        
-        # Get user data - ADD THIS SECTION
-        user_data_summary = None
-        if user_id and hasattr(self, 'user_data_manager') and self.user_data_manager:
-            try:
-                # Get user data directly from user data manager
-                user_data = self.user_data_manager.load_user_data(user_id, username)
-                
-                if user_data and user_data.get("facts"):
-                    facts_list = []
-                    for fact in user_data["facts"]:
-                        content = fact["content"] if isinstance(fact, dict) and "content" in fact else fact
-                        if content:
-                            facts_list.append(content)
-                    
-                    if facts_list:
-                        user_data_summary = "Facts about this user:\n- " + "\n- ".join(facts_list)
-            except Exception as e:
-                logger.error(f"Error getting user data for prompt: {e}")
-        
-        # Add user data summary
-        user_data_summary = []
-        if user_id and hasattr(self, 'user_data_manager') and self.user_data_manager:
-            try:
-                # Get conversation stats for accurate message count
-                stats = self.user_data_manager.get_conversation_stats(user_id)
-                
-                if stats["total_messages"] > 0:
-                    interaction_info = f"You've talked with this user {stats['total_messages']} times"
-                    if stats["first_interaction"]:
-                        interaction_info += f" since {stats['first_interaction']}"
-                    user_data_summary.append(interaction_info)
-                    
-                # ... existing code for facts ...
-                
-            except Exception as e:
-                logger.error(f"Error getting user data for prompt: {e}")
-        
-        # Add user data knowledge instruction
-        if user_data_summary:
+            # Add the conversation history with emphasis on continuity
             prompt_parts.append(f"""
-            USER KNOWLEDGE (PRIVATE, FOR YOUR CONTEXT ONLY):
-            {user_data_summary}
-            
-            INSTRUCTIONS FOR USER KNOWLEDGE:
-            - You know the above facts about this user
-            - If directly asked about this information, acknowledge and share it naturally
-            - Don't randomly mention these facts unless relevant to the conversation
-            - Act like a real friend who knows facts about their friend - share when asked
-            - Don't be overly formal when sharing this information - keep your usual style
-            - NEVER pretend you don't know information that is in the facts list
-            """)
-        
-        # CRITICAL FIX: Add more conversation history for better context
-        if conversation_history:
-            prompt_parts.append(f"""
-            RECENT CONVERSATION HISTORY:
+            RECENT CONVERSATION CONTEXT:
             {conversation_history}
             
-            NOTES ABOUT CONVERSATION HISTORY:
-            - This is your conversation with the user
-            - Maintain continuity with this history
-            - If they reference something from earlier, you should understand it
-            - If telling a story, remember what you already said
+            IMPORTANT: The conversation is ongoing. The user's current message should be understood
+            in the context of what was just discussed. Maintain topic continuity.
             """)
         
-        # Add current user query
-        prompt_parts.append(f"""
-        CURRENT USER MESSAGE FROM {username}:
-        {query}
+        # Add user query
+        prompt_parts.append(f"User ({username}) just said: \"{query}\"")
         
-        YOUR RESPONSE AS CHRONOCHUNK:
+        # Add response format guidance
+        prompt_parts.append("""
+        Your response as ChronoChunk:
+        - Keep your Gen Z style
+        - STAY ON THE CURRENT TOPIC
+        - DIRECTLY address what the user just asked
+        - If they asked "why" or "why tho", explain YOUR previous statement
+        - If they asked about "which one", tell them your favorite of whatever YOU just mentioned
         """)
-        
-        # Final instruction for exact voice match with adjustments for response type
-        final_instruction = """
-        Respond EXACTLY in ChronoChunk's voice from the examples above.
-        
-        Never repeat yourself or use the same sentence structure twice in a row.
-        
-        Vary your opening phrases and emoji usage.
-        
-        ChronoChunk's response:
-        """
-        
-        # Add special length instruction if needed
-        if needs_longer_response:
-            final_instruction = final_instruction.replace("ChronoChunk's response:", "Provide a detailed yet casual response in ChronoChunk's voice:")
-        elif possible_insult:
-            final_instruction = final_instruction.replace("ChronoChunk's response:", "Provide an absolutely devastating comeback in ChronoChunk's voice:")
-        
-        prompt_parts.append(final_instruction)
         
         return "\n\n".join(prompt_parts)
         
@@ -450,8 +281,73 @@ class AIResponseHandler:
         return ai_response.strip()
 
     async def generate_response(self, query: str, conversation_history: str, username: str, user_id: str = None) -> str:
-        """Generate an AI response with better error handling"""
+        """Generate AI response with better handling of short follow-up questions"""
+        # Add special handling for very short queries that are likely follow-ups
+        if len(query.split()) <= 5 and conversation_history:  # Increased from 3 to 5 words
+            # Extract the last bot message from conversation history
+            last_bot_message = ""
+            last_user_message = ""
+            
+            # Parse the conversation history to find the last messages
+            lines = conversation_history.split('\n')
+            for line in reversed(lines):
+                if line.startswith("BOT (ChronoChunk):") and not last_bot_message:
+                    last_bot_message = line.replace("BOT (ChronoChunk):", "").strip()
+                elif line.startswith("USER") and not last_user_message:
+                    last_user_message = line.split(":", 1)[1].strip()
+                if last_bot_message and last_user_message:
+                    break
+            
+            # Add explicit context for short follow-up questions
+            if last_bot_message:
+                enhanced_context = f"""
+                CRITICAL CONTEXT FOR SHORT FOLLOW-UP:
+                User's previous message: "{last_user_message}"
+                Your previous response: "{last_bot_message}"
+                User's current short follow-up: "{query}"
+                
+                VERY IMPORTANT: The user is directly referring to something in YOUR previous message.
+                If they ask "why" or "why tho" or "more reason", they want more explanation about YOUR last statement.
+                If they ask "which one", they want you to be more specific about options YOU mentioned.
+                ALWAYS maintain the same topic from your previous message.
+                NEVER change the subject when responding to follow-up questions.
+                """
+                conversation_history = enhanced_context + "\n" + conversation_history
+        
+        # Continue with standard response generation
         try:
+            # Build prompt parts
+            prompt_parts = []
+            
+            # Add personality prompt first
+            prompt_parts.append(PERSONALITY_PROMPT)
+            
+            # Add instructions for response style
+            prompt_parts.append("""
+            IMPORTANT INSTRUCTIONS:
+            1. MESSAGES MUST BE SHORT - MAX 1-2 SENTENCES
+            2. Use casual Gen Z style (u instead of you, etc.)
+            3. Use emojis VERY SPARINGLY - max 1 emoji
+            4. DON'T reference user data unless directly relevant to the conversation
+            5. NEVER mention when you first met the user or how many conversations you've had unless they ask
+            6. Focus on responding naturally to the immediate context
+            7. If the user is being argumentative, match their energy
+            8. Be authentic and varied in your responses
+            """)
+            
+            # Add conversation context
+            if conversation_history:
+                prompt_parts.append("CONVERSATION CONTEXT:\n" + conversation_history)
+            
+            # Add the current query
+            if query.startswith('/'):
+                clean_query = query[1:] if len(query) > 1 else query
+                prompt_parts.append(f"User ({username}) just said: \"{clean_query}\"")
+            else:
+                prompt_parts.append(f"User ({username}) just said: \"{query}\"")
+            
+            # Rest of the method remains the same...
+
             # Build prompt with user ID to include user data
             prompt = await self._build_ai_prompt(query, conversation_history, username, user_id)
             

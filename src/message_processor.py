@@ -25,7 +25,7 @@ class MessageProcessor:
         self.command_handler = command_handler  # Add this line to store the command handler
     
     async def process_message(self, message: discord.Message) -> None:
-        """Process an incoming Discord message - ONLY commands and replies"""
+        """Process an incoming Discord message - Properly capture ALL channel messages"""
         try:
             # Skip bot messages
             if message.author.bot:
@@ -37,37 +37,59 @@ class MessageProcessor:
             username = message.author.display_name
             channel_id = str(message.channel.id)
             
-            # Only process these two types of messages:
-            # 1. Messages that start with / (commands)
-            # 2. Direct replies to the bot
+            # IMPORTANT: Always capture message history for EVERY message in the channel
+            # This ensures we have context even for non-command messages
+            recent_messages = [msg async for msg in message.channel.history(limit=15)]
             
-            # Check if this is a command
+            # Store ALL recent messages from the channel for better context
+            for msg in recent_messages:
+                if msg.id != message.id:  # Skip current message as it's handled below
+                    self.message_handler.update_channel_history(
+                        channel_id=channel_id,
+                        user_id=str(msg.author.id),
+                        username=msg.author.display_name,
+                        content=msg.content,
+                        is_bot=msg.author.bot,
+                        is_command=msg.content.startswith('/')
+                    )
+            
+            # Now process the current message
+            self.message_handler.update_channel_history(
+                channel_id=channel_id,
+                user_id=user_id,
+                username=username,
+                content=content,
+                is_bot=False,
+                is_command=content.startswith('/')
+            )
+                
+            # Now handle command processing
             if content.startswith('/'):
-                await self._handle_command_message(message, user_id, username, channel_id, {}, False)
+                # Load user data
+                user_data = self.user_data_manager.load_user_data(user_id, username)
+                
+                # Process as command
+                await self._handle_command_message(message, user_id, username, channel_id, user_data, False)
                 return
                 
             # Check if this is a reply to the bot
             is_reply_to_bot = await self._check_if_reply_to_bot(message)
             if is_reply_to_bot:
                 # Handle as a reply
-                await self._handle_ai_response(message, user_id, username, channel_id, content, None)
+                user_data = self.user_data_manager.load_user_data(user_id, username)
+                conversation_history = await self.message_handler.build_conversation_context(
+                    channel_id=channel_id,
+                    user_data=user_data,
+                    is_correction=False
+                )
+                await self._handle_ai_response(message, user_id, username, channel_id, content, conversation_history)
                 return
                 
             # If we get here, message is neither a command nor a reply to the bot
-            # DO NOTHING - this is the key change
-            
+            # Ignore for processing but we've already captured it in history
+
         except Exception as e:
-            # Error reporting
-            import traceback, sys
-            error_type = type(e).__name__
-            tb = traceback.extract_tb(sys.exc_info()[2])
-            error_file = tb[-1].filename
-            error_line = tb[-1].lineno
-            error_func = tb[-1].name
-            
-            error_msg = f"Error processing message: {error_type}: {e} in {error_file}, line {error_line}, function {error_func}"
-            logger.error(error_msg)
-            logger.error("Full traceback:")
+            logger.error(f"Error processing message: {e}")
             logger.error(traceback.format_exc())
     
     async def _check_if_reply_to_bot(self, message: discord.Message) -> bool:

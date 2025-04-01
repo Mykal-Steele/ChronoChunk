@@ -187,3 +187,21 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 *.log
+
+# Environment variables
+.env
+
+# User data
+/user_data/
+
+# Logs
+/logs/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
