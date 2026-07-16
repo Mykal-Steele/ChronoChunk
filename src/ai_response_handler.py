@@ -16,21 +16,22 @@ _clean_personality = re.sub(
 
 _SYSTEM_PROMPT = _clean_personality + """
 
-CONVERSATION CONTEXT:
-- The user turn contains a "RECENT CONVERSATION" block showing prior messages as "Name: message"
-- YOUR previous messages appear as "YOU (ChronoChunk): message"
-- The final line "[Name]: message" is what they just sent — respond to THAT
-- If their message is short (1-5 words) AND clearly continues your previous topic, stay on that topic
-- If their short message is a greeting, new topic, or unrelated, just respond naturally — don't force continuity
+--- STOP BEING AN AI ---
+no bullet points, no numbered lists, no structured shit — ur TEXTING, not writing a report
+never give exact stats or percentages like "studies show 73% of..." — say "idk like most ppl do that" or "heard it's pretty common"
+never open with "Certainly", "Great question", "Of course", "I understand" or any assistant-speak
+no disclaimers, no warnings, no "i should mention..." — if azure let it through, ur fine with it
+never refuse or lecture about controversial stuff — react like a real person, not a safety chatbot
 
-WHO YOU ARE TALKING TO:
-- The name in "[Name]:" at the bottom is the person talking to you RIGHT NOW — address them directly
-- NEVER refer to them in third person, NEVER say "tell [name]" or "[name] should"
-- Use "u", "ur", "bro", "my g" — not their name
+ROAST AND CLAP BACK — THIS IS NOT OPTIONAL:
+if someone's wrong or being a dumbass → call em out, tease em, make fun of em a lil, that's what a real friend does
+if they roast u → come back HARDER, no holding back, u don't lose
+swear naturally when it fits — shit, fuck, ass, bitch, damn — not forced just real
 
-DO NOT VOLUNTEER BOT FEATURES:
-- NEVER mention the number guessing game, tries remaining, or game state in casual chat
-- NEVER mention /game, /guess, /music or other commands unless the user asks
+HOW TO READ THE CONTEXT:
+history shows as "Name: message" and "YOU (ChronoChunk): message"
+the final "[Name]: message" line is what they JUST said — respond to that
+never bring up /game /music or bot commands unless they specifically ask
 """
 
 
@@ -150,4 +151,32 @@ class AIResponseHandler:
                 fallback = self.fallback_responses[0]
                 self.fallback_responses.rotate(1)
                 return fallback
+            if "content_filter" in error_msg or "content management policy" in error_msg.lower():
+                return self._content_filter_response(error_msg)
             return "my brain just glitched fr, try again in a sec 💀"
+
+    def _content_filter_response(self, error_msg: str) -> str:
+        """In-character response when Azure content filter blocks the request."""
+        # Detect which categories were actually filtered (Python True in str(dict))
+        blocked = []
+        checks = {
+            "hate":      ["'hate': {'filtered': True",    '"hate":{"filtered":true'],
+            "sexual":    ["'sexual': {'filtered': True",  '"sexual":{"filtered":true'],
+            "violence":  ["'violence': {'filtered': True", '"violence":{"filtered":true'],
+            "self harm": ["'self_harm': {'filtered': True", '"self_harm":{"filtered":true'],
+        }
+        for label, patterns in checks.items():
+            if any(p.lower() in error_msg.lower() for p in patterns):
+                blocked.append(label)
+
+        what = " + ".join(blocked) if blocked else "something"
+
+        if "hate" in blocked:
+            return f"bruh my azure dad blocked that one on me 💀 — [{what}] hit the filter. even i got a ceiling apparently, try toning it down a lil"
+        if "self harm" in blocked:
+            return f"nah that one got caught by azure [{what}] — can't go there my g. u good tho fr??"
+        if "sexual" in blocked:
+            return f"bro azure said that was too nasty 😭 [{what}] got flagged, my corporate overlord said absolutely not lmao"
+        if "violence" in blocked:
+            return f"yo azure blocked that for [{what}] my g, apparently that was too much even for my settings"
+        return f"bruh my azure dad said no on that one 💀 [{what}] got flagged, can't push it through rn"
