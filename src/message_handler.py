@@ -79,6 +79,26 @@ class MessageHandler:
                 topics.update(words)
         return list(topics)
     
+    # Patterns that identify game/command bot responses — excluded from AI chat context
+    _GAME_RESPONSE_PATTERNS = (
+        "tries left",
+        "i'm thinking of a number",
+        "start guessing with /guess",
+        "the number is higher",
+        "the number is lower",
+        "game started",
+        "game over",
+        "yooo you got it",
+        "you already got a game going",
+        "you don't have a game going",
+        "you don't even have a game going",
+    )
+
+    def _is_game_response(self, content: str) -> bool:
+        """Return True if this bot message is a game command response, not AI chat."""
+        lower = content.lower()
+        return any(p in lower for p in self._GAME_RESPONSE_PATTERNS)
+
     async def build_conversation_context(self, channel_id: str, user_data: Dict[str, Any], is_correction: bool = False) -> str:
         """Build context for conversation"""
         context_parts = []
@@ -98,6 +118,7 @@ class MessageHandler:
                     context_parts.append(f"  {fact}")
 
         # Recent channel conversation (includes all users if group chat)
+        # Game/command bot responses are excluded so they don't bleed into casual chat
         context_size = min(30, max(20, Config.DISPLAY_CONTEXT_SIZE))
         if channel_id in self.last_channel_messages and self.last_channel_messages[channel_id]:
             recent_msgs = self.last_channel_messages[channel_id][-context_size:]
@@ -108,12 +129,17 @@ class MessageHandler:
                 content = msg["content"]
                 is_bot = msg.get("is_bot", False)
 
-                if content:
-                    prefix = ">>> " if i >= len(recent_msgs) - 3 else ""
-                    if is_bot:
-                        context_parts.append(f"{prefix}YOU (ChronoChunk): {content}")
-                    else:
-                        context_parts.append(f"{prefix}{author_name}: {content}")
+                if not content:
+                    continue
+                # Skip game/command bot responses — they must not leak into AI chat context
+                if is_bot and self._is_game_response(content):
+                    continue
+
+                prefix = ">>> " if i >= len(recent_msgs) - 3 else ""
+                if is_bot:
+                    context_parts.append(f"{prefix}YOU (ChronoChunk): {content}")
+                else:
+                    context_parts.append(f"{prefix}{author_name}: {content}")
 
         # Follow-up detection — inject topic hint for short replies
         if channel_id in self.last_channel_messages and len(self.last_channel_messages[channel_id]) >= 2:
