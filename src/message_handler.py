@@ -79,8 +79,9 @@ class MessageHandler:
                 topics.update(words)
         return list(topics)
     
-    # Patterns that identify game/command bot responses — excluded from AI chat context
-    _GAME_RESPONSE_PATTERNS = (
+    # Bot messages that must never appear in AI context
+    _EXCLUDED_BOT_PATTERNS = (
+        # game/command responses
         "tries left",
         "i'm thinking of a number",
         "start guessing with /guess",
@@ -92,12 +93,25 @@ class MessageHandler:
         "you already got a game going",
         "you don't have a game going",
         "you don't even have a game going",
+        # error / fallback messages — must not be referenced in future turns
+        "brain fried, hit me up again",
+        "neural nets are fried",
+        "rate limited",
+        "quota issues",
+        "brain just glitched",
+        "processor just overheated",
+        "brain bill",
+        "api quota just got clapped",
+        "can't think straight rn",
+        "im lagging so hard",
+        "brain cells just went on strike",
+        "my brain just glitched",
     )
 
-    def _is_game_response(self, content: str) -> bool:
-        """Return True if this bot message is a game command response, not AI chat."""
+    def _is_excluded_bot_message(self, content: str) -> bool:
+        """Return True if this bot message is a game/command/error response that should not feed back into AI context."""
         lower = content.lower()
-        return any(p in lower for p in self._GAME_RESPONSE_PATTERNS)
+        return any(p in lower for p in self._EXCLUDED_BOT_PATTERNS)
 
     async def build_conversation_context(self, channel_id: str, user_data: Dict[str, Any], is_correction: bool = False) -> str:
         """Build context for conversation"""
@@ -131,8 +145,8 @@ class MessageHandler:
 
                 if not content:
                     continue
-                # Skip game/command bot responses — they must not leak into AI chat context
-                if is_bot and self._is_game_response(content):
+                # Skip game/command/error bot messages — must not leak into AI chat context
+                if is_bot and self._is_excluded_bot_message(content):
                     continue
 
                 prefix = ">>> " if i >= len(recent_msgs) - 3 else ""
