@@ -184,7 +184,8 @@ async def test_prompt_uses_direct_address_framing(handler, mock_openai_client):
     call_kwargs = mock_openai_client.chat.completions.create.call_args[1]
     messages = call_kwargs.get("messages", [])
     user_content = next((m["content"] for m in messages if m["role"] == "user"), "")
-    assert "[talking directly to you]" in user_content
+    # Framing must establish direct address — includes the username + instruction to respond directly
+    assert "SomeUser is talking to you right now" in user_content
 
 
 async def test_system_prompt_has_no_hardcoded_names(handler):

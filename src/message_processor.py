@@ -115,20 +115,24 @@ is_correction: bool) -> None:
             
             # Check if we actually have a command handler
             if not self.command_handler:
-                # If no command handler, treat as AI query
-                await self._handle_ai_response(message, user_id, username, channel_id, message.content, None)
+                conversation_history = await self.message_handler.build_conversation_context(
+                    channel_id=channel_id, user_data=user_data, is_correction=False
+                )
+                await self._handle_ai_response(message, user_id, username, channel_id, message.content, conversation_history)
                 return
-                
+
             # Pass to command handler
             cmd_response = await self.command_handler.handle_command(command, args, message, user_id)
-            
+
             # If the command was recognized and handled, send the response
             if cmd_response:
                 await message.channel.send(cmd_response)
             else:
-                # Handle unrecognized commands as AI queries
-                # This preserves your requirement to handle "/yoo bro" as an AI query
-                await self._handle_ai_response(message, user_id, username, channel_id, message.content, None)
+                # Unrecognized slash — treat as chat, but now WITH conversation history
+                conversation_history = await self.message_handler.build_conversation_context(
+                    channel_id=channel_id, user_data=user_data, is_correction=False
+                )
+                await self._handle_ai_response(message, user_id, username, channel_id, message.content, conversation_history)
                 
         except Exception as e:
             logger.error(f"Error handling command: {e}")

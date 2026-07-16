@@ -135,8 +135,8 @@ class AIResponseHandler:
 
             user_parts = []
             if conversation_history:
-                user_parts.append(f"RECENT CONVERSATION:\n{conversation_history}")
-            user_parts.append(f'[talking directly to you]: "{clean_query}"')
+                user_parts.append(conversation_history)
+            user_parts.append(f'[{username} is talking to you right now — respond to THEM directly, use "u"/"ur", never use their name or refer to them in third person]: "{clean_query}"')
 
             messages = [
                 {"role": "system", "content": _SYSTEM_PROMPT},

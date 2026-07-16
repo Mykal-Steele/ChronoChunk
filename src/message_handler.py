@@ -82,58 +82,60 @@ class MessageHandler:
     async def build_conversation_context(self, channel_id: str, user_data: Dict[str, Any], is_correction: bool = False) -> str:
         """Build context for conversation"""
         context_parts = []
-        
-        # Use more context messages
-        context_size = min(30, max(20, Config.DISPLAY_CONTEXT_SIZE))  # More context but not too much
-        
-        # Add channel context with clear formatting
+
+        # Who the bot is currently responding to
+        if user_data:
+            speaker = user_data.get("username", "")
+            if speaker:
+                context_parts.append(f"RESPONDING TO: {speaker} (address them as 'u'/'ur', never in third person)")
+
+        # Known facts about this person
+        if user_data:
+            facts = user_data.get("facts", [])
+            if facts:
+                context_parts.append("\nWHAT YOU KNOW ABOUT THEM:")
+                for fact in facts[-15:]:
+                    context_parts.append(f"  {fact}")
+
+        # Recent channel conversation (includes all users if group chat)
+        context_size = min(30, max(20, Config.DISPLAY_CONTEXT_SIZE))
         if channel_id in self.last_channel_messages and self.last_channel_messages[channel_id]:
-            recent_msgs = self.last_channel_messages[channel_id][-context_size:]  
-            context_parts.append("RECENT CONVERSATION (NEWEST LAST):")
-            
-            # Include all messages with clear attribution
+            recent_msgs = self.last_channel_messages[channel_id][-context_size:]
+            context_parts.append("\nRECENT CONVERSATION (NEWEST LAST):")
+
             for i, msg in enumerate(recent_msgs):
                 author_name = msg["author_name"]
                 content = msg["content"]
                 is_bot = msg.get("is_bot", False)
-                
-                if content and len(content) > 0:
-                    # Mark the 3 most recent messages for emphasis
+
+                if content:
                     prefix = ">>> " if i >= len(recent_msgs) - 3 else ""
                     if is_bot:
-                        context_parts.append(f"{prefix}BOT (ChronoChunk): {content}")
+                        context_parts.append(f"{prefix}YOU (ChronoChunk): {content}")
                     else:
-                        context_parts.append(f"{prefix}USER ({author_name}): {content}")
-        
-        # Add special handling for topic continuity with more explicit instructions
+                        context_parts.append(f"{prefix}{author_name}: {content}")
+
+        # Follow-up detection — inject topic hint for short replies
         if channel_id in self.last_channel_messages and len(self.last_channel_messages[channel_id]) >= 2:
-            # Get the most recent messages
-            bot_messages = [msg for msg in self.last_channel_messages[channel_id][-5:] 
-                           if msg.get("is_bot", True)]
-            user_messages = [msg for msg in self.last_channel_messages[channel_id][-5:] 
-                            if not msg.get("is_bot", True)]
-            
-            # If we have both bot and user messages
-            if bot_messages and user_messages:
-                last_bot_msg = bot_messages[-1].get("content", "").lower()
-                last_user_msg = user_messages[-1].get("content", "").lower()
-                
-                # Check if the user message is a short question/follow-up
+            all_msgs = self.last_channel_messages[channel_id]
+            bot_msgs   = [m for m in all_msgs[-5:] if m.get("is_bot")]
+            user_msgs  = [m for m in all_msgs[-5:] if not m.get("is_bot")]
+
+            if bot_msgs and user_msgs:
+                last_bot_msg  = bot_msgs[-1].get("content", "").lower()
+                last_user_msg = user_msgs[-1].get("content", "").lower()
+
                 if len(last_user_msg.split()) <= 5:
-                    context_parts.append("\nCRITICAL CONTEXT INSTRUCTION:")
-                    context_parts.append("The user's message is a FOLLOW-UP to your previous response.")
-                    context_parts.append("Stay on the EXACT SAME TOPIC you were just discussing.")
-                    
-                    # Extract key topics from the bot's last message to emphasize continuity
-                    topic_words = set()
-                    for word in re.findall(r'\b[a-z]{4,}\b', last_bot_msg):
-                        if word not in ['like', 'dont', 'just', 'with', 'that', 'this', 'have', 'about', 'what', 'when', 'where', 'from', 'your', 'been', 'would', 'could', 'since', 'them', 'they', 'than', 'then', 'some']:
-                            topic_words.add(word)
-                    
+                    context_parts.append("\nNOTE: Short reply — this is a FOLLOW-UP to your last message. Stay on the same topic.")
+                    topic_words = {
+                        w for w in re.findall(r'\b[a-z]{4,}\b', last_bot_msg)
+                        if w not in {'like','dont','just','with','that','this','have','about',
+                                     'what','when','where','from','your','been','would','could',
+                                     'since','them','they','than','then','some'}
+                    }
                     if topic_words:
                         context_parts.append(f"CURRENT TOPIC: {', '.join(topic_words)}")
-                        context_parts.append("DO NOT change the subject - stay on these topics.")
-        
+
         return "\n".join(context_parts)
     
     async def send_response(self, channel, content: str, user_mention: Optional[str] = None, 
