@@ -131,8 +131,10 @@ class MessageHandler:
                 for fact in facts[-15:]:
                     context_parts.append(f"  {fact}")
 
-        # Recent channel conversation — game/error bot messages excluded
-        context_size = min(30, max(20, Config.DISPLAY_CONTEXT_SIZE))
+        # Recent conversation — keep to 14 messages. game/error bot messages excluded.
+        # Older messages get an age label so the model doesn't treat a long answer from
+        # 10 turns ago as the current topic.
+        context_size = 14
         filtered_msgs = []
         if channel_id in self.last_channel_messages:
             for msg in self.last_channel_messages[channel_id][-context_size:]:
@@ -143,21 +145,21 @@ class MessageHandler:
                 filtered_msgs.append(msg)
 
         if filtered_msgs:
-            context_parts.append("\nRECENT CONVERSATION (NEWEST LAST):")
+            context_parts.append("\nRECENT CONVERSATION (respond based on the LAST 2-3 messages, not old ones):")
             n = len(filtered_msgs)
             for i, msg in enumerate(filtered_msgs):
-                prefix = ">>> " if i >= n - 3 else ""
-                if msg.get("is_bot"):
-                    context_parts.append(f"{prefix}YOU (ChronoChunk): {msg['content']}")
-                else:
-                    context_parts.append(f"{prefix}{msg['author_name']}: {msg['content']}")
+                age = n - i          # 1 = most recent exchange, n = oldest
+                is_recent = i >= n - 3
+                age_tag = "" if is_recent else f"[{age} turns ago] "
+                prefix = ">>> " if is_recent else ""
+                speaker = "YOU (ChronoChunk)" if msg.get("is_bot") else msg["author_name"]
+                context_parts.append(f"{prefix}{age_tag}{speaker}: {msg['content']}")
 
-        # Follow-up hint — only fires when the last chat bot message was genuine AI,
-        # and the user's reply is short. Uses filtered messages so game/error content
-        # never becomes an injected "CURRENT TOPIC".
+        # Short-reply hint — only uses the immediately preceding bot message
         if filtered_msgs:
-            bot_msgs  = [m for m in filtered_msgs[-6:] if m.get("is_bot")]
-            user_msgs = [m for m in filtered_msgs[-6:] if not m.get("is_bot")]
+            recent = filtered_msgs[-6:]
+            bot_msgs  = [m for m in recent if m.get("is_bot")]
+            user_msgs = [m for m in recent if not m.get("is_bot")]
 
             if bot_msgs and user_msgs:
                 last_bot_content  = bot_msgs[-1]["content"].lower()
@@ -174,7 +176,7 @@ class MessageHandler:
                         if w not in stopwords
                     }
                     if topic_words:
-                        context_parts.append(f"\nNOTE: short reply — may be a follow-up. Last topic: {', '.join(sorted(topic_words)[:6])}")
+                        context_parts.append(f"\nNOTE: short reply — if it follows the last message, the topic is: {', '.join(sorted(topic_words)[:5])}. if it feels like a topic change, just react naturally.")
 
         return "\n".join(context_parts)
     
