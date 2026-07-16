@@ -146,7 +146,7 @@ class AIResponseHandler:
             resp = await self.ai_client.chat.completions.create(
                 model=self.deployment,
                 messages=messages,
-                max_completion_tokens=2000,
+                max_completion_tokens=2000,  # reasoning model — needs budget for internal thinking + response
             )
             raw = resp.choices[0].message.content or ""
             formatted = self._format_ai_response(raw)
