@@ -1,0 +1,14 @@
+venv/
+.env
+logs/
+user_data/
+__pycache__/
+*.py[cod]
+*.pyo
+.git/
+.gitignore
+tests/
+pytest.ini
+*.log
+.idea/
+.vscode/

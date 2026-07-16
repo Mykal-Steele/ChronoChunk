@@ -134,60 +134,34 @@ is_correction: bool) -> None:
             logger.error(f"Error handling command: {e}")
             await message.channel.send("yo, something went wrong with that command 💀")
     
-    async def _handle_ai_response(self, message: discord.Message, user_id: str, 
+    async def _handle_ai_response(self, message: discord.Message, user_id: str,
                               username: str, channel_id: str, query: str,
                               conversation_history: str) -> None:
         try:
-            # Start typing indicator
+            # Typing indicator covers only the AI generation — stops the moment send() fires
             async with message.channel.typing():
-                # Get AI response
                 ai_response = await self.ai_handler.generate_response(
-                    query, 
-                    conversation_history,
-                    username,
-                    user_id
+                    query, conversation_history, username, user_id
                 )
-                
-                # Send response
-                await message.channel.send(ai_response)
-                
-                # Update message history
-                self.message_handler.update_channel_history(
-                    channel_id=channel_id,
-                    user_id=user_id,
-                    username=username,
-                    content=query,
-                    is_bot=False
-                )
-                
-                # Update message history with bot response
-                self.message_handler.update_channel_history(
-                    channel_id=channel_id,
-                    user_id=self.bot.user.id,
-                    username="ChronoChunk",
-                    content=ai_response,
-                    is_bot=True
-                )
-                
-                # Save to user data
-                if self.user_data_manager:
-                    await self.user_data_manager.add_conversation(
-                        user_id, 
-                        query,
-                        ai_response, 
-                        username
-                    )
-                    
-                    # CRITICAL FIX: Always extract facts for non-command messages
-                    if not query.startswith('/') and len(query.split()) > 2:
-                        await self.user_data_manager.extract_and_save_facts(user_id, query, username)
-                        
-                # Always try to extract facts for non-command, substantive messages
-                if self.user_data_manager and not query.startswith('/') and len(query.split()) > 2:
-                    # Explicitly log this attempt
-                    logger.info(f"Attempting to extract facts from: {query[:30]}...")
+
+            # Send immediately — typing indicator is already gone
+            await message.channel.send(ai_response)
+
+            # Post-processing: happens silently after the message is visible
+            self.message_handler.update_channel_history(
+                channel_id=channel_id, user_id=user_id,
+                username=username, content=query, is_bot=False
+            )
+            self.message_handler.update_channel_history(
+                channel_id=channel_id, user_id=str(self.bot.user.id),
+                username="ChronoChunk", content=ai_response, is_bot=True
+            )
+
+            if self.user_data_manager:
+                await self.user_data_manager.add_conversation(user_id, query, ai_response, username)
+                if not query.startswith('/') and len(query.split()) > 2:
                     await self.user_data_manager.extract_and_save_facts(user_id, query, username)
-                        
+
         except Exception as e:
             logger.error(f"Error generating AI response: {e}")
             await message.channel.send("yo, my brain just glitched. try again?")

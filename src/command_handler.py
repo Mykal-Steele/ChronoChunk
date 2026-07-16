@@ -78,20 +78,12 @@ class CommandHandler:
         }
         
     async def handle_command(self, command: str, args: str, message: discord.Message, user_id: str) -> str:
-        """Handle commands using exact command matching only"""
-        
-        if command == "forget":
-            return await self._handle_forget_command(args, message, user_id)
-        elif command == "remember":
-            return await self._handle_remember_command(args, message, user_id)
-        elif command == "info":
-            return await self._handle_info_command(args, message, user_id)
-        elif command == "game":
-            return await self._handle_game_command(args, message, user_id)
-        # Add all your other command handlers
-        
-        # Default - unknown command
-        return "Command not recognized. Try '/help' for a list of commands."
+        """Route command to the correct handler method via the command_handlers dict."""
+        handler = self.command_handlers.get(command)
+        if handler:
+            return await handler(args, message, user_id)
+        # Unknown command — return None so the caller can fall back to AI
+        return None
 
     async def _handle_my_data(self, args: List[str], message: discord.Message, user_id: str) -> str:
         """show user what data we have about them"""
@@ -172,24 +164,31 @@ class CommandHandler:
     async def _handle_guess(self, args: List[str], message: discord.Message, user_id: str) -> str:
         """process a guess for the game"""
         try:
-            # Try to extract the guess value with AI first
-            guess = await self.intent_detector.extract_guess_value(message.content)
-            
-            # If AI couldn't extract it, try direct number parsing
-            if guess is None and args:
+            guess = None
+
+            # Try direct number from args first (most reliable)
+            if args:
                 try:
                     guess = int(args[0])
                 except ValueError:
                     pass
-                    
+
+            # Fall back to pattern extraction if args didn't give us a number
             if guess is None:
-                return "yo, i need a number to guess! try something like '/guess 40' or just '/40'"
-            
-            # Convert user_id to int as expected by the GameManager
+                raw = await self.intent_detector.extract_guess(message.content)
+                if raw is not None:
+                    try:
+                        guess = int(raw)
+                    except (ValueError, TypeError):
+                        pass
+
+            if guess is None:
+                return "yo, i need a number to guess! try something like '/guess 40'"
+
             user_id_int = int(user_id) if user_id.isdigit() else 0
             success, response = self.game_manager.make_guess(user_id_int, guess)
             return response
-            
+
         except ValueError:
             return "that ain't a number bro, try again"
             

@@ -2,7 +2,6 @@ import asyncio
 import discord
 from discord.ext import commands
 from discord import app_commands
-import google.generativeai as genai
 import logging
 import os
 import sys
@@ -41,7 +40,9 @@ logging.getLogger('discord.ext.commands.bot').setLevel(logging.WARNING)
 # Load environment variables
 load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+AZURE_OPENAI_KEY = os.getenv('AZURE_OPENAI_KEY', '')
+AZURE_OPENAI_ENDPOINT = os.getenv('AZURE_OPENAI_ENDPOINT', '')
+AZURE_OPENAI_DEPLOYMENT = os.getenv('AZURE_OPENAI_DEPLOYMENT', 'gpt-5-mini')
 
 class ChronoChunk(commands.Bot):
     """Main bot class that ties everything together"""
@@ -70,7 +71,9 @@ class ChronoChunk(commands.Bot):
         
         # Create AI response handler
         self.ai_response_handler = AIResponseHandler(
-            api_key=GEMINI_API_KEY,
+            endpoint=AZURE_OPENAI_ENDPOINT,
+            api_key=AZURE_OPENAI_KEY,
+            deployment=AZURE_OPENAI_DEPLOYMENT,
             important_topics=Config.IMPORTANT_TOPICS,
             user_data_manager=self.user_data_manager
         )

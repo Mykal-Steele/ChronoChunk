@@ -4,7 +4,7 @@ import re
 import time
 import logging
 from datetime import datetime
-import google.generativeai as genai
+from openai import AsyncOpenAI
 from typing import Dict, List, Any, Optional, Tuple
 from config.config import Config
 from config.ai_config import FACT_EXTRACTION_PROMPT, TOPIC_EXTRACTION_PROMPT, CONTRADICTION_CHECK_PROMPT, CORRECTION_PROMPT, PERSPECTIVE_CONVERSION_PROMPT
@@ -23,16 +23,15 @@ class UserDataManager:
         
         # Initialize the fact extraction model
         try:
-            # Add this import inside the method to avoid circular imports
-            import google.generativeai as genai
-            from config.config import Config
-            
-            api_key = os.environ.get("GEMINI_API_KEY") or Config.GEMINI_API_KEY
-            genai.configure(api_key=api_key)
-            self.fact_model = genai.GenerativeModel("gemini-1.5-flash-latest")
+            endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+            api_key = os.environ.get("AZURE_OPENAI_KEY", "")
+            self.deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5-mini")
+            self.ai_client = AsyncOpenAI(base_url=endpoint, api_key=api_key)
+            self.fact_model = self.ai_client  # kept for compatibility
             logger.info("Fact extraction model initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize fact extraction model: {e}")
+            self.ai_client = None
             self.fact_model = None
         
         logger.info(f"UserDataManager initialized with data directory: {self.data_dir}")
@@ -186,8 +185,12 @@ class UserDataManager:
             USER MESSAGE: """ + message_content
             
             # Extract facts
-            response = await self.fact_model.generate_content_async(fact_prompt)
-            facts_text = response.text.strip()
+            resp = await self.ai_client.chat.completions.create(
+                model=self.deployment,
+                messages=[{"role": "user", "content": fact_prompt}],
+                max_completion_tokens=1500,
+            )
+            facts_text = (resp.choices[0].message.content or "").strip()
             
             # Handle markdown formatting
             if "```json" in facts_text:
@@ -274,8 +277,12 @@ class UserDataManager:
         )
         
         try:
-            response = await self.fact_model.generate_content_async(contradictions_prompt)
-            result_text = response.text.strip()
+            resp = await self.ai_client.chat.completions.create(
+                model=self.deployment,
+                messages=[{"role": "user", "content": contradictions_prompt}],
+                max_completion_tokens=1000,
+            )
+            result_text = (resp.choices[0].message.content or "").strip()
             
             # Handle markdown formatting
             if "```json" in result_text:
@@ -392,8 +399,12 @@ class UserDataManager:
                 correction_message=correction_message
             )
             
-            response = await self.fact_model.generate_content_async(correction_prompt)
-            correction_text = response.text.strip()
+            resp = await self.ai_client.chat.completions.create(
+                model=self.deployment,
+                messages=[{"role": "user", "content": correction_prompt}],
+                max_completion_tokens=1000,
+            )
+            correction_text = (resp.choices[0].message.content or "").strip()
             
             # Handle markdown formatting
             if "```json" in correction_text:

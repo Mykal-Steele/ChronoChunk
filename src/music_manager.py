@@ -671,31 +671,30 @@ Response: Warframe We All Lift Together soundtrack
 Request: "{query}"
 """
 
-            # Rest of the method remains the same
-            # Import and set up AI only when needed (to avoid circular imports)
-            import google.generativeai as genai
             import os
             from dotenv import load_dotenv
-            
-            # Load API key
+            from openai import AsyncOpenAI
+
             load_dotenv()
-            api_key = os.getenv("GEMINI_API_KEY")
-            
-            if not api_key:
-                logger.warning("No Gemini API key found for AI search enhancement")
+            api_key = os.getenv("AZURE_OPENAI_KEY", "")
+            endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+            deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-5-mini")
+
+            if not api_key or not endpoint:
+                logger.warning("Azure OpenAI credentials not found for AI search enhancement")
                 return query
-                
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-1.5-flash-latest')
-            
-            # Get AI response with a timeout
-            response = await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(
-                    None, 
-                    lambda: model.generate_content(prompt).text
+
+            client = AsyncOpenAI(base_url=endpoint, api_key=api_key)
+
+            resp = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=deployment,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_completion_tokens=500,
                 ),
-                timeout=5.0  # Increased timeout to 5 seconds for better results
+                timeout=5.0
             )
+            response = (resp.choices[0].message.content or "").strip()
             
             # Clean up the response
             enhanced_query = response.strip(' "\'\n')

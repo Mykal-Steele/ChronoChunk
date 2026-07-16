@@ -16,6 +16,9 @@ from dotenv import load_dotenv
 # Import our logging utils before setting up any loggers
 from src.logging_utils import patch_all_loggers
 
+# Ensure logs directory exists before FileHandler tries to open it
+os.makedirs("logs", exist_ok=True)
+
 # Configure logging to file AND console
 logging.basicConfig(
     level=logging.INFO,
@@ -30,9 +33,6 @@ logging.basicConfig(
 patch_all_loggers()
 
 logger = logging.getLogger("ChronoChunk")
-
-# Create logs directory if it doesn't exist
-os.makedirs("logs", exist_ok=True)
 
 # Add project directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
