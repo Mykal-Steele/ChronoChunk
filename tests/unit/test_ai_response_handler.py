@@ -150,13 +150,14 @@ async def test_generate_response_generic_error_returns_fallback(handler, mock_op
 
 
 async def test_generate_response_short_followup_with_history(handler, mock_openai_client):
-    history = "USER (TestUser): whats the best programming language\nBOT (ChronoChunk): python fr"
+    history = "TestUser: whats the best programming language\nYOU (ChronoChunk): python fr"
     await handler.generate_response("why tho", history, "TestUser", "12345")
     assert mock_openai_client.chat.completions.create.called
     call_kwargs = mock_openai_client.chat.completions.create.call_args[1]
     messages = call_kwargs.get("messages", [])
     user_content = next((m["content"] for m in messages if m["role"] == "user"), "")
-    assert "CRITICAL CONTEXT" in user_content or "follow-up" in user_content.lower()
+    # History must be present and the query must be in the user turn
+    assert "python fr" in user_content and "why tho" in user_content
 
 
 async def test_generate_response_cache_does_not_exceed_limit(handler, mock_openai_client):
@@ -179,13 +180,12 @@ async def test_prompt_does_not_use_username_says_pattern(handler, mock_openai_cl
 
 
 async def test_prompt_uses_direct_address_framing(handler, mock_openai_client):
-    """The user message sent to the model must use direct-address framing, not 3rd-person attribution."""
+    """The user turn must identify the speaker with [Name]: format — clean data, no embedded instructions."""
     await handler.generate_response("yo wassup", "", "SomeUser", "11111")
     call_kwargs = mock_openai_client.chat.completions.create.call_args[1]
     messages = call_kwargs.get("messages", [])
     user_content = next((m["content"] for m in messages if m["role"] == "user"), "")
-    # Framing must establish direct address — includes the username + instruction to respond directly
-    assert "SomeUser is talking to you right now" in user_content
+    assert '[SomeUser]:' in user_content
 
 
 async def test_system_prompt_has_no_hardcoded_names(handler):

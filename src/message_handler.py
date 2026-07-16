@@ -117,11 +117,11 @@ class MessageHandler:
         """Build context for conversation"""
         context_parts = []
 
-        # Who the bot is currently responding to
+        # Who is speaking now (pure data — no instructions embedded in this field)
         if user_data:
             speaker = user_data.get("username", "")
             if speaker:
-                context_parts.append(f"RESPONDING TO: {speaker} (address them as 'u'/'ur', never in third person)")
+                context_parts.append(f"RESPONDING TO: {speaker}")
 
         # Known facts about this person
         if user_data:
@@ -131,50 +131,50 @@ class MessageHandler:
                 for fact in facts[-15:]:
                     context_parts.append(f"  {fact}")
 
-        # Recent channel conversation (includes all users if group chat)
-        # Game/command bot responses are excluded so they don't bleed into casual chat
+        # Recent channel conversation — game/error bot messages excluded
         context_size = min(30, max(20, Config.DISPLAY_CONTEXT_SIZE))
-        if channel_id in self.last_channel_messages and self.last_channel_messages[channel_id]:
-            recent_msgs = self.last_channel_messages[channel_id][-context_size:]
+        filtered_msgs = []
+        if channel_id in self.last_channel_messages:
+            for msg in self.last_channel_messages[channel_id][-context_size:]:
+                if not msg.get("content"):
+                    continue
+                if msg.get("is_bot") and self._is_excluded_bot_message(msg["content"]):
+                    continue
+                filtered_msgs.append(msg)
+
+        if filtered_msgs:
             context_parts.append("\nRECENT CONVERSATION (NEWEST LAST):")
-
-            for i, msg in enumerate(recent_msgs):
-                author_name = msg["author_name"]
-                content = msg["content"]
-                is_bot = msg.get("is_bot", False)
-
-                if not content:
-                    continue
-                # Skip game/command/error bot messages — must not leak into AI chat context
-                if is_bot and self._is_excluded_bot_message(content):
-                    continue
-
-                prefix = ">>> " if i >= len(recent_msgs) - 3 else ""
-                if is_bot:
-                    context_parts.append(f"{prefix}YOU (ChronoChunk): {content}")
+            n = len(filtered_msgs)
+            for i, msg in enumerate(filtered_msgs):
+                prefix = ">>> " if i >= n - 3 else ""
+                if msg.get("is_bot"):
+                    context_parts.append(f"{prefix}YOU (ChronoChunk): {msg['content']}")
                 else:
-                    context_parts.append(f"{prefix}{author_name}: {content}")
+                    context_parts.append(f"{prefix}{msg['author_name']}: {msg['content']}")
 
-        # Follow-up detection — inject topic hint for short replies
-        if channel_id in self.last_channel_messages and len(self.last_channel_messages[channel_id]) >= 2:
-            all_msgs = self.last_channel_messages[channel_id]
-            bot_msgs   = [m for m in all_msgs[-5:] if m.get("is_bot")]
-            user_msgs  = [m for m in all_msgs[-5:] if not m.get("is_bot")]
+        # Follow-up hint — only fires when the last chat bot message was genuine AI,
+        # and the user's reply is short. Uses filtered messages so game/error content
+        # never becomes an injected "CURRENT TOPIC".
+        if filtered_msgs:
+            bot_msgs  = [m for m in filtered_msgs[-6:] if m.get("is_bot")]
+            user_msgs = [m for m in filtered_msgs[-6:] if not m.get("is_bot")]
 
             if bot_msgs and user_msgs:
-                last_bot_msg  = bot_msgs[-1].get("content", "").lower()
-                last_user_msg = user_msgs[-1].get("content", "").lower()
+                last_bot_content  = bot_msgs[-1]["content"].lower()
+                last_user_content = user_msgs[-1]["content"].lower()
 
-                if len(last_user_msg.split()) <= 5:
-                    context_parts.append("\nNOTE: Short reply — this is a FOLLOW-UP to your last message. Stay on the same topic.")
+                if len(last_user_content.split()) <= 4:
+                    stopwords = {
+                        'like','dont','just','with','that','this','have','about',
+                        'what','when','where','from','your','been','would','could',
+                        'since','them','they','than','then','some','into','after',
+                    }
                     topic_words = {
-                        w for w in re.findall(r'\b[a-z]{4,}\b', last_bot_msg)
-                        if w not in {'like','dont','just','with','that','this','have','about',
-                                     'what','when','where','from','your','been','would','could',
-                                     'since','them','they','than','then','some'}
+                        w for w in re.findall(r'\b[a-z]{4,}\b', last_bot_content)
+                        if w not in stopwords
                     }
                     if topic_words:
-                        context_parts.append(f"CURRENT TOPIC: {', '.join(topic_words)}")
+                        context_parts.append(f"\nNOTE: short reply — may be a follow-up. Last topic: {', '.join(sorted(topic_words)[:6])}")
 
         return "\n".join(context_parts)
     

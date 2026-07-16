@@ -16,25 +16,21 @@ _clean_personality = re.sub(
 
 _SYSTEM_PROMPT = _clean_personality + """
 
-CONVERSATION CONTINUITY RULES:
-1. ALWAYS stay on the SAME TOPIC when responding to follow-up questions
-2. If asked "why", "why tho", or "more reason", explain YOUR previous statements in your own style
-3. When a user asks about "which one", refer to options YOU mentioned previously
-4. Short user messages (1-5 words) are ALWAYS a follow-up to what YOU just said
-5. NEVER randomly change the subject
-6. READ the conversation history before responding
+CONVERSATION CONTEXT:
+- The user turn contains a "RECENT CONVERSATION" block showing prior messages as "Name: message"
+- YOUR previous messages appear as "YOU (ChronoChunk): message"
+- The final line "[Name]: message" is what they just sent — respond to THAT
+- If their message is short (1-5 words) AND clearly continues your previous topic, stay on that topic
+- If their short message is a greeting, new topic, or unrelated, just respond naturally — don't force continuity
 
-CRITICAL — WHO YOU ARE TALKING TO:
-- In the conversation history, "USER (name):" labels mark messages FROM the person you are talking TO directly
-- That person IS the one sending you the current message — they are RIGHT THERE in the chat with you
-- NEVER refer to them by name in third person (e.g. NEVER say "tell [their name]..." or "[their name] should...")
-- Always address them directly as "u", "ur", "bro", "my g", etc.
+WHO YOU ARE TALKING TO:
+- The name in "[Name]:" at the bottom is the person talking to you RIGHT NOW — address them directly
+- NEVER refer to them in third person, NEVER say "tell [name]" or "[name] should"
+- Use "u", "ur", "bro", "my g" — not their name
 
-CRITICAL — DO NOT VOLUNTEER BOT FEATURES:
-- NEVER bring up the guessing game, number game, tries remaining, or any game state in casual chat
-- NEVER mention /game, /guess, /music, /skip, or any other bot commands unprompted
-- These features exist but you do NOT advertise them or bring them up randomly
-- Only discuss game state if the user is actively playing and their message is about the game
+DO NOT VOLUNTEER BOT FEATURES:
+- NEVER mention the number guessing game, tries remaining, or game state in casual chat
+- NEVER mention /game, /guess, /music or other commands unless the user asks
 """
 
 
@@ -112,37 +108,20 @@ class AIResponseHandler:
     async def generate_response(self, query: str, conversation_history: str,
                                 username: str, user_id: str = None) -> str:
         """Generate AI response using Azure OpenAI chat completions."""
-        # Inject explicit context for short follow-up questions
-        if len(query.split()) <= 5 and conversation_history:
-            last_bot = last_user = ""
-            for line in reversed(conversation_history.split('\n')):
-                if line.startswith("BOT (ChronoChunk):") and not last_bot:
-                    last_bot = line.replace("BOT (ChronoChunk):", "").strip()
-                elif line.startswith("USER") and ":" in line and not last_user:
-                    last_user = line.split(":", 1)[1].strip()
-                if last_bot and last_user:
-                    break
-            if last_bot:
-                conversation_history = (
-                    f'[FOLLOW-UP CONTEXT]\n'
-                    f'Their last message: "{last_user}"\n'
-                    f'Your last response: "{last_bot}"\n'
-                    f'Current follow-up: "{query}"\n'
-                    f'Stay on the exact same topic. If they ask "why", explain your last statement.\n\n'
-                ) + conversation_history
-
-        # Cache check
-        cache_key = f"{query}|{conversation_history[-100:] if conversation_history else ''}"
+        # Per-user cache — keyed by user identity + query + tail of history
+        cache_key = f"{user_id or username}|{query}|{conversation_history[-120:] if conversation_history else ''}"
         if cache_key in self.response_cache:
             return self.response_cache[cache_key]
 
         try:
             clean_query = query[1:].strip() if query.startswith('/') and len(query) > 1 else query
 
+            # Build user turn: context block (if any) then the actual message.
+            # Behavioral rules live in the system prompt only — not repeated here.
             user_parts = []
             if conversation_history:
                 user_parts.append(conversation_history)
-            user_parts.append(f'[{username} is talking to you right now — respond to THEM directly, use "u"/"ur", never use their name or refer to them in third person]: "{clean_query}"')
+            user_parts.append(f'[{username}]: "{clean_query}"')
 
             messages = [
                 {"role": "system", "content": _SYSTEM_PROMPT},
@@ -152,7 +131,7 @@ class AIResponseHandler:
             resp = await self.ai_client.chat.completions.create(
                 model=self.deployment,
                 messages=messages,
-                max_completion_tokens=2000,  # reasoning model — needs budget for internal thinking + response
+                max_completion_tokens=2000,
             )
             raw = resp.choices[0].message.content or ""
             formatted = self._format_ai_response(raw)
