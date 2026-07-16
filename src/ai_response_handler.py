@@ -23,6 +23,12 @@ CONVERSATION CONTINUITY RULES:
 4. Short user messages (1-5 words) are ALWAYS a follow-up to what YOU just said
 5. NEVER randomly change the subject
 6. READ the conversation history before responding
+
+CRITICAL — WHO YOU ARE TALKING TO:
+- In the conversation history, "USER (name):" labels mark messages FROM the person you are talking TO directly
+- That person IS the one sending you the current message — they are RIGHT THERE in the chat with you
+- NEVER refer to them by name in third person (e.g. NEVER say "tell Kruskal..." or "Kruskal should...")
+- Always address them directly as "u", "ur", "bro", "my g", etc.
 """
 
 
@@ -130,7 +136,7 @@ class AIResponseHandler:
             user_parts = []
             if conversation_history:
                 user_parts.append(f"RECENT CONVERSATION:\n{conversation_history}")
-            user_parts.append(f'{username} says: "{clean_query}"')
+            user_parts.append(f'[talking directly to you]: "{clean_query}"')
 
             messages = [
                 {"role": "system", "content": _SYSTEM_PROMPT},
