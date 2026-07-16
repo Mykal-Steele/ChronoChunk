@@ -142,16 +142,13 @@ is_correction: bool) -> None:
                               username: str, channel_id: str, query: str,
                               conversation_history: str) -> None:
         try:
-            # Typing indicator covers only the AI generation — stops the moment send() fires
             async with message.channel.typing():
                 ai_response = await self.ai_handler.generate_response(
                     query, conversation_history, username, user_id
                 )
 
-            # Send immediately — typing indicator is already gone
-            await message.channel.send(ai_response)
+            await self._safe_send(message.channel, ai_response)
 
-            # Post-processing: happens silently after the message is visible
             self.message_handler.update_channel_history(
                 channel_id=channel_id, user_id=user_id,
                 username=username, content=query, is_bot=False
@@ -166,9 +163,44 @@ is_correction: bool) -> None:
                 if not query.startswith('/') and len(query.split()) > 2:
                     await self.user_data_manager.extract_and_save_facts(user_id, query, username)
 
+        except discord.HTTPException as e:
+            logger.error(f"Discord HTTP error sending response: {e} (code {e.code})")
+            await self._discord_error_response(message.channel, e)
         except Exception as e:
             logger.error(f"Error generating AI response: {e}")
-            await message.channel.send("yo, my brain just glitched. try again?")
+            await message.channel.send("my brain just glitched fr, try again in a sec")
+
+    async def _safe_send(self, channel, text: str) -> None:
+        """Send text to Discord, splitting at 1900 chars if needed."""
+        limit = 1900
+        if len(text) <= limit:
+            await channel.send(text)
+            return
+        # Split at last word boundary before the limit
+        chunks = []
+        while len(text) > limit:
+            split_at = text.rfind(' ', 0, limit)
+            if split_at == -1:
+                split_at = limit
+            chunks.append(text[:split_at])
+            text = text[split_at:].lstrip()
+        if text:
+            chunks.append(text)
+        for chunk in chunks:
+            await channel.send(chunk)
+
+    async def _discord_error_response(self, channel, error: discord.HTTPException) -> None:
+        """Natural in-character response for specific Discord API errors."""
+        code = error.code
+        if code == 50035:
+            await channel.send("bro discord said my message was cooked, probably too long or smth weird in it — ask again n ill keep it shorter")
+        elif code == 50013:
+            await channel.send("cant send in here rn, no perms in this channel")
+        elif code == 10003:
+            # Unknown channel — silently ignore
+            logger.warning("Channel not found, skipping response")
+        else:
+            await channel.send(f"discord threw a fit (error {code}), try again")
     
     def _enhance_command_history(self, conversation_history: str) -> str:
         """Enhance conversation history for slash commands"""
