@@ -132,8 +132,6 @@ class MessageHandler:
                     context_parts.append(f"  {fact}")
 
         # Recent conversation — keep to 14 messages. game/error bot messages excluded.
-        # Older messages get an age label so the model doesn't treat a long answer from
-        # 10 turns ago as the current topic.
         context_size = 14
         filtered_msgs = []
         if channel_id in self.last_channel_messages:
@@ -145,13 +143,35 @@ class MessageHandler:
                 filtered_msgs.append(msg)
 
         if filtered_msgs:
-            context_parts.append("\nRECENT CONVERSATION (respond based on the LAST 2-3 messages, not old ones):")
+            context_parts.append(
+                "\nCONVERSATION HISTORY — 3 PRIORITY TIERS:\n"
+                "  >>> TOP (last 5 msgs): what you're actually responding to\n"
+                "  [N msgs ago] SECONDARY (older, same day): only reference if directly relevant\n"
+                "  [yesterday/N days ago] LOW (previous days): almost never bring up unless THEY do"
+            )
             n = len(filtered_msgs)
+            today = datetime.now().date()
             for i, msg in enumerate(filtered_msgs):
-                age = n - i          # 1 = most recent exchange, n = oldest
-                is_recent = i >= n - 3
-                age_tag = "" if is_recent else f"[{age} turns ago] "
-                prefix = ">>> " if is_recent else ""
+                position_from_end = n - i  # 1 = most recent
+
+                # Parse stored timestamp to get the message's date
+                ts = msg.get("timestamp")
+                try:
+                    days_ago = (today - datetime.fromisoformat(ts).date()).days if ts else 0
+                except Exception:
+                    days_ago = 0
+
+                if position_from_end <= 5:
+                    prefix = ">>> "
+                    age_tag = ""
+                elif days_ago >= 1:
+                    day_label = "yesterday" if days_ago == 1 else f"{days_ago} days ago"
+                    prefix = ""
+                    age_tag = f"[{day_label}, LOW priority] "
+                else:
+                    prefix = ""
+                    age_tag = f"[{position_from_end} msgs ago] "
+
                 speaker = "YOU (ChronoChunk)" if msg.get("is_bot") else msg["author_name"]
                 context_parts.append(f"{prefix}{age_tag}{speaker}: {msg['content']}")
 

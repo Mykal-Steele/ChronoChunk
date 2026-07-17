@@ -75,6 +75,9 @@ class AIResponseHandler:
         # Fix space-before-punctuation (e.g. "word , other" → "word, other")
         ai_response = re.sub(r'\s+([.,])', r'\1', ai_response)
 
+        # Strip em dashes and en dashes — model ignores the prompt rule, so enforce it here
+        ai_response = re.sub(r'\s*[—–]\s*', ' ', ai_response)
+
         # Manage emojis — if model drops 3+ emojis, cull to 2 max
         emoji_pattern = re.compile(
             r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF'
