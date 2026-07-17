@@ -252,7 +252,23 @@ class SlashCommandManager:
                 
                 # Send the response
                 await interaction.followup.send(ai_response)
-                
+
+                # Give first-use role
+                if interaction.guild:
+                    role = discord.utils.get(interaction.guild.roles, name="I Love Chrono <3")
+                    if not role:
+                        logger.warning("'I Love Chrono <3' role not found in guild — check the role name matches exactly")
+                    else:
+                        member = interaction.guild.get_member(interaction.user.id)
+                        if member and role not in member.roles:
+                            try:
+                                await member.add_roles(role)
+                                logger.info(f"Assigned 'I Love Chrono <3' role to {member.display_name}")
+                            except discord.Forbidden:
+                                logger.warning("Missing permission to assign 'I Love Chrono <3' role — bot role must be above it in hierarchy")
+                            except Exception as e:
+                                logger.error(f"Error assigning Chrono role: {e}")
+
             except Exception as e:
                 logger.error(f"Error handling chat command: {e}")
                 await interaction.followup.send("damn, something went wrong with the AI. try again?")

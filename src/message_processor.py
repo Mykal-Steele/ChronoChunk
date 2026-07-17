@@ -138,6 +138,29 @@ is_correction: bool) -> None:
             logger.error(f"Error handling command: {e}")
             await message.channel.send("yo, something went wrong with that command 💀")
     
+    async def _maybe_assign_chrono_role(self, message: discord.Message) -> None:
+        """Give the 'I Love Chrono <3' role on a user's first AI interaction."""
+        guild = message.guild
+        if not guild:
+            return
+        role = discord.utils.get(guild.roles, name="I Love Chrono <3")
+        if not role:
+            logger.warning("'I Love Chrono <3' role not found in guild — check the role name matches exactly")
+            return
+        # Resolve to a full Member object so .roles is populated
+        member = guild.get_member(message.author.id)
+        if not member:
+            logger.warning(f"Could not resolve member {message.author.id} from guild cache")
+            return
+        if role not in member.roles:
+            try:
+                await member.add_roles(role)
+                logger.info(f"Assigned 'I Love Chrono <3' role to {member.display_name}")
+            except discord.Forbidden:
+                logger.warning("Missing permission to assign 'I Love Chrono <3' role — bot role must be above it in hierarchy")
+            except Exception as e:
+                logger.error(f"Error assigning Chrono role: {e}")
+
     async def _handle_ai_response(self, message: discord.Message, user_id: str,
                               username: str, channel_id: str, query: str,
                               conversation_history: str) -> None:
@@ -148,6 +171,7 @@ is_correction: bool) -> None:
                 )
 
             await self._safe_send(message.channel, ai_response)
+            await self._maybe_assign_chrono_role(message)
 
             self.message_handler.update_channel_history(
                 channel_id=channel_id, user_id=user_id,
