@@ -1,10 +1,11 @@
 import logging
+import re
 import discord
 from typing import Optional, Tuple
 from src.command_handler import RateLimitError
 from discord.ext.commands.errors import CommandNotFound
 import asyncio
-import sys  # Add this import
+import sys
 import traceback
 from typing import Dict, Any, List, Optional
 
@@ -138,6 +139,45 @@ is_correction: bool) -> None:
             logger.error(f"Error handling command: {e}")
             await message.channel.send("yo, something went wrong with that command 💀")
     
+    _MSG_LINK_RE = re.compile(r'https://discord\.com/channels/(\d+)/(\d+)/(\d+)')
+
+    async def _resolve_message_link(self, content: str) -> str:
+        """
+        Detect a Discord message link in content, fetch it, and return an enhanced
+        query with the referenced message embedded. On fetch failure, appends a note
+        so the AI can react naturally to both the user's text and the broken link.
+        """
+        match = self._MSG_LINK_RE.search(content)
+        if not match:
+            return content
+
+        _, channel_id_str, message_id_str = match.groups()
+        try:
+            channel = self.bot.get_channel(int(channel_id_str))
+            if channel is None:
+                channel = await self.bot.fetch_channel(int(channel_id_str))
+            ref_msg = await channel.fetch_message(int(message_id_str))
+
+            author = ref_msg.author.display_name
+            ref_content = ref_msg.content or ""
+            if ref_msg.attachments:
+                filenames = ", ".join(a.filename for a in ref_msg.attachments)
+                ref_content = (ref_content + f" [{filenames}]").strip() if ref_content else f"[{filenames}]"
+            if not ref_content:
+                ref_content = "[no text]"
+
+            embedded = f'[attached message from {author}: "{ref_content}"]'
+            return self._MSG_LINK_RE.sub(embedded, content, count=1)
+
+        except Exception as e:
+            logger.warning(f"Could not fetch message link: {e}")
+            fail_note = (
+                "\n[system: user attached a discord message link but it couldn't be fetched"
+                " — respond to what they said, and weave in naturally that u can't see/open the link,"
+                " keep it in ur personality, don't use a flat error message]"
+            )
+            return content + fail_note
+
     async def _maybe_assign_chrono_role(self, message: discord.Message) -> None:
         """Give the 'I Love Chrono <3' role on a user's first AI interaction."""
         guild = message.guild
@@ -165,6 +205,7 @@ is_correction: bool) -> None:
                               username: str, channel_id: str, query: str,
                               conversation_history: str) -> None:
         try:
+            query = await self._resolve_message_link(query)
             async with message.channel.typing():
                 ai_response = await self.ai_handler.generate_response(
                     query, conversation_history, username, user_id

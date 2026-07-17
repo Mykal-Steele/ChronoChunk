@@ -1,4 +1,5 @@
 import logging
+import re
 import discord
 from discord import app_commands
 from typing import Dict, Any, List, Optional, Callable, Awaitable
@@ -26,6 +27,41 @@ class SlashCommandManager:
             self.music_manager = music_manager
             
         logger.info("Slash command manager initialized without rate limiting")
+
+    _MSG_LINK_RE = re.compile(r'https://discord\.com/channels/(\d+)/(\d+)/(\d+)')
+
+    async def _resolve_message_link(self, content: str) -> str:
+        """Fetch a Discord message link embedded in content and inline it as context."""
+        match = self._MSG_LINK_RE.search(content)
+        if not match:
+            return content
+
+        _, channel_id_str, message_id_str = match.groups()
+        try:
+            channel = self.bot.get_channel(int(channel_id_str))
+            if channel is None:
+                channel = await self.bot.fetch_channel(int(channel_id_str))
+            ref_msg = await channel.fetch_message(int(message_id_str))
+
+            author = ref_msg.author.display_name
+            ref_content = ref_msg.content or ""
+            if ref_msg.attachments:
+                filenames = ", ".join(a.filename for a in ref_msg.attachments)
+                ref_content = (ref_content + f" [{filenames}]").strip() if ref_content else f"[{filenames}]"
+            if not ref_content:
+                ref_content = "[no text]"
+
+            embedded = f'[attached message from {author}: "{ref_content}"]'
+            return self._MSG_LINK_RE.sub(embedded, content, count=1)
+
+        except Exception as e:
+            logger.warning(f"Could not fetch message link: {e}")
+            fail_note = (
+                "\n[system: user attached a discord message link but it couldn't be fetched"
+                " — respond to what they said, and weave in naturally that u can't see/open the link,"
+                " keep it in ur personality, don't use a flat error message]"
+            )
+            return content + fail_note
     
     async def register_commands(self):
         """Register all slash commands with Discord"""
@@ -214,7 +250,10 @@ class SlashCommandManager:
                 
                 # Build context
                 conversation_history = self.message_handler.build_conversation_context(channel_id, user_data, False)
-                
+
+                # Resolve any Discord message links in the user's message
+                message = await self._resolve_message_link(message)
+
                 # Process through AI
                 ai_response = await self.ai_handler.generate_response(message, conversation_history, username)
                 
