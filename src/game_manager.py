@@ -77,37 +77,3 @@ class GameManager:
         """Get a user's current game state if they have one"""
         return self.active_games.get(user_id)
 
-    async def guess_word(self, user_id: str, channel_id: str, guess: str) -> str:
-        """Process a guess for the currently active game"""
-        # Convert user_id to int to match the internal representation
-        user_id_int = int(user_id) if user_id.isdigit() else 0
-        game = self.get_active_game(user_id_int, channel_id)
-        if not game:
-            return "No active game found. Start one with /game"
-            
-        guess = guess.strip().lower()
-        
-        # Check if this is a word guessing game - we need to adapt the structure
-        # The word guessing feature seems incomplete, just return a placeholder for now
-        # as the GameState doesn't have a target_word attribute
-        return "Word guessing game is coming soon!"
-        
-        # The following code won't work with the current GameState structure
-        # Left here for reference for future implementation
-        """
-        target = game["target_word"].lower()
-        
-        # dynamic difficulty scaling based on word length - more guesses for harder words
-        # this feels way more fair than a fixed number of attempts for all words
-        max_attempts = min(10, max(6, len(target) - 1))
-        
-        # if they already used all their guesses, let them know
-        if len(game["guesses"]) >= max_attempts:
-            return f"You've used all {max_attempts} guesses. The word was '{target}'."
-            
-        # already guessed this exact word
-        if guess in game["guesses"]:
-            return f"You already guessed '{guess}'. Try something else!"
-            
-        game["guesses"].append(guess)
-        """ 

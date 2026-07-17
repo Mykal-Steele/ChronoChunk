@@ -113,7 +113,7 @@ class MessageHandler:
         lower = content.lower()
         return any(p in lower for p in self._EXCLUDED_BOT_PATTERNS)
 
-    async def build_conversation_context(self, channel_id: str, user_data: Dict[str, Any], is_correction: bool = False) -> str:
+    def build_conversation_context(self, channel_id: str, user_data: Dict[str, Any], is_correction: bool = False) -> str:
         """Build context for conversation"""
         context_parts = []
 

@@ -6,31 +6,8 @@ import os
 import time
 from typing import Dict, List, Optional, Tuple
 import yt_dlp
-import sys
 
-# Setup logging with proper encoding handling
 logger = logging.getLogger(__name__)
-
-# Custom handler to handle Unicode characters properly
-class SafeStreamHandler(logging.StreamHandler):
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            stream = self.stream
-            # Safely encode/decode to handle Unicode characters
-            msg = msg.encode(sys.stdout.encoding or 'utf-8', 'replace').decode(sys.stdout.encoding or 'utf-8')
-            stream.write(msg + self.terminator)
-            self.flush()
-        except Exception:
-            self.handleError(record)
-
-# Replace the default handler with our safe handler
-for handler in logger.handlers[:]:
-    logger.removeHandler(handler)
-handler = SafeStreamHandler(sys.stdout)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
 
 # YouTube and Spotify URL regex patterns
 YOUTUBE_REGEX = r'(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)([a-zA-Z0-9_-]+)'

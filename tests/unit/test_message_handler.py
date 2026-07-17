@@ -85,24 +85,24 @@ def test_conversation_memory_strips_slash_from_command(handler):
 
 # ── build_conversation_context ────────────────────────────────────────────────
 
-async def test_build_context_empty_returns_string(handler):
-    result = await handler.build_conversation_context(CHANNEL_ID, {})
+def test_build_context_empty_returns_string(handler):
+    result = handler.build_conversation_context(CHANNEL_ID, {})
     assert isinstance(result, str)
 
 
-async def test_build_context_includes_messages(handler):
+def test_build_context_includes_messages(handler):
     handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "what is python", is_bot=False)
     handler.update_channel_history(CHANNEL_ID, "0", "ChronoChunk", "it's a language fr", is_bot=True)
-    result = await handler.build_conversation_context(CHANNEL_ID, {})
+    result = handler.build_conversation_context(CHANNEL_ID, {})
     assert "Alice" in result or "python" in result
     assert "ChronoChunk" in result or "language" in result
 
 
-async def test_build_context_short_followup_injects_hint(handler):
+def test_build_context_short_followup_injects_hint(handler):
     # Build 2 turns of history so bot_messages and user_messages are detected
     handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "what is python", is_bot=False)
     handler.update_channel_history(CHANNEL_ID, "0", "ChronoChunk", "python is a programming language", is_bot=True)
     handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "why", is_bot=False)
-    result = await handler.build_conversation_context(CHANNEL_ID, {})
-    # Short follow-up (≤5 words) should trigger CRITICAL CONTEXT INSTRUCTION
-    assert "CRITICAL" in result or "FOLLOW-UP" in result or len(result) > 0
+    result = handler.build_conversation_context(CHANNEL_ID, {})
+    # Short follow-up (≤4 words) should inject the NOTE hint with topic words
+    assert "NOTE" in result and "short reply" in result.lower()

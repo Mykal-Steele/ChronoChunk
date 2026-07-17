@@ -84,8 +84,8 @@ class SlashCommandManager:
             
             try:
                 # Get user summary directly
-                summary = await self.user_data_manager.get_user_summary(user_id, username)
-                
+                summary = self.user_data_manager.get_user_summary(user_id, username)
+
                 # If the summary is empty or minimal, provide a friendly message
                 if "I don't have any information" in summary or len(summary.strip().split('\n')) <= 3:
                     await interaction.response.send_message("damn, i don't know much about you yet. hit me up with some convos so i can learn more about you!")
@@ -94,7 +94,7 @@ class SlashCommandManager:
             except Exception as e:
                 logger.error(f"Error handling info command: {e}")
                 await interaction.response.send_message("shit, couldn't get your data right now")
-    
+
     async def _register_mydata_command(self):
         """Register the mydata command (alias for info)"""
         @self.bot.tree.command(name="mydata", description="See what information the bot has about you (alias for /info)")
@@ -102,10 +102,10 @@ class SlashCommandManager:
             # Reuse the info command functionality
             user_id = str(interaction.user.id)
             username = interaction.user.display_name
-            
+
             try:
                 # Get user summary directly
-                summary = await self.user_data_manager.get_user_summary(user_id, username)
+                summary = self.user_data_manager.get_user_summary(user_id, username)
                 
                 # If the summary is empty or minimal, provide a friendly message
                 if "I don't have any information" in summary or len(summary.strip().split('\n')) <= 3:
@@ -213,7 +213,7 @@ class SlashCommandManager:
                 user_data = self.user_data_manager.load_user_data(user_id, username)
                 
                 # Build context
-                conversation_history = await self.message_handler.build_conversation_context(channel_id, user_data, False)
+                conversation_history = self.message_handler.build_conversation_context(channel_id, user_data, False)
                 
                 # Process through AI
                 ai_response = await self.ai_handler.generate_response(message, conversation_history, username)

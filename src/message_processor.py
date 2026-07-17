@@ -77,7 +77,7 @@ class MessageProcessor:
             if is_reply_to_bot:
                 # Handle as a reply
                 user_data = self.user_data_manager.load_user_data(user_id, username)
-                conversation_history = await self.message_handler.build_conversation_context(
+                conversation_history = self.message_handler.build_conversation_context(
                     channel_id=channel_id,
                     user_data=user_data,
                     is_correction=False
@@ -115,7 +115,7 @@ is_correction: bool) -> None:
             
             # Check if we actually have a command handler
             if not self.command_handler:
-                conversation_history = await self.message_handler.build_conversation_context(
+                conversation_history = self.message_handler.build_conversation_context(
                     channel_id=channel_id, user_data=user_data, is_correction=False
                 )
                 await self._handle_ai_response(message, user_id, username, channel_id, message.content, conversation_history)
@@ -129,7 +129,7 @@ is_correction: bool) -> None:
                 await message.channel.send(cmd_response)
             else:
                 # Unrecognized slash — treat as chat, but now WITH conversation history
-                conversation_history = await self.message_handler.build_conversation_context(
+                conversation_history = self.message_handler.build_conversation_context(
                     channel_id=channel_id, user_data=user_data, is_correction=False
                 )
                 await self._handle_ai_response(message, user_id, username, channel_id, message.content, conversation_history)
@@ -202,69 +202,3 @@ is_correction: bool) -> None:
         else:
             await channel.send(f"discord threw a fit (error {code}), try again")
     
-    def _enhance_command_history(self, conversation_history: str) -> str:
-        """Enhance conversation history for slash commands"""
-        # Add special note to help process commands better
-        command_note = "\nNOTE: User tried using a slash command. Treat it as normal message but keep conversation natural.\n"
-        
-        # Add the note at the appropriate position
-        if conversation_history:
-            return conversation_history + command_note
-        else:
-            return command_note
-    
-    async def _handle_message(self, message: discord.Message) -> None:
-        """Process incoming Discord messages"""
-        # Skip bot messages to prevent loops
-        if message.author.bot:
-            return
-        
-        try:
-            # Extract basic info
-            content = message.content
-            user_id = str(message.author.id)
-            username = message.author.name
-            channel_id = str(message.channel.id)
-            
-            # Strip command prefix for better context while keeping original for command detection
-            is_command = content.startswith('/')
-            query = content
-            
-            # Update channel history with the user's message
-            self.message_handler.update_channel_history(
-                channel_id=channel_id,
-                user_id=user_id,
-                username=username,
-                content=content,
-                is_bot=False,
-                is_command=is_command
-            )
-            
-            # Get user data to include in context
-            user_data = await self.user_data_manager.get_user_data(user_id)
-            
-            # Get conversation context - critical for natural back and forth
-            conversation_history = await self.message_handler.build_conversation_context(
-                channel_id=channel_id,
-                user_data=user_data,
-                is_correction=False
-            )
-            
-            # Process the message based on content
-            if is_command:
-                # Strip the command prefix for handlers
-                command_content = content[1:] if len(content) > 1 else ""
-                # Try to handle as a command first, fall back to AI if no command matches
-                command_response = await self._try_handle_command(message, command_content)
-                
-                if command_response is None:
-                    # No matching command, treat as normal message for AI but keep command context
-                    # This is critical - process the command as a regular message but preserve context
-                    await self._handle_ai_response(message, user_id, username, channel_id, query, conversation_history)
-            else:
-                # Regular message, handle with AI
-                await self._handle_ai_response(message, user_id, username, channel_id, query, conversation_history)
-        
-        except Exception as e:
-            logger.error(f"Error processing message: {e}")
-            traceback.print_exc()

@@ -53,9 +53,8 @@ def test_start_game_negative_range_returns_error(gm):
     assert gm.get_active_game(USER_A) is None
 
 
-def test_start_game_range_one_returns_error(gm):
-    # max_range < 1 check — range of 1 means secret == 1 always, borderline
-    # implementation uses `if max_range < 1`, so 1 is allowed
+def test_start_game_range_one_is_valid(gm):
+    # max_range < 1 check — range of 1 is valid (secret will always be 1, but allowed)
     ok, _ = gm.start_game(USER_A, 1)
     assert ok is True
 

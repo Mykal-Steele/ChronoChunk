@@ -98,9 +98,9 @@ class UserDataManager:
             
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
-                logging.info(f"Saved user data for {user_id}")
+                logger.info(f"Saved user data for {user_id}")
         except Exception as e:
-            logging.error(f"Failed to save user data for {user_id}: {e}")
+            logger.error(f"Failed to save user data for {user_id}: {e}")
             
     async def add_conversation(self, user_id: str, message_content: str, bot_response: str, username: str = None) -> None:
         """Add conversation to user data"""
