@@ -51,7 +51,7 @@ class SlashCommandManager:
             if not ref_content:
                 ref_content = "[no text]"
 
-            embedded = f'[attached message from {author}: "{ref_content}"]'
+            embedded = f'[message already fetched — {author} said: "{ref_content}"] (u can read this, do NOT say u cant open links)'
             return self._MSG_LINK_RE.sub(embedded, content, count=1)
 
         except Exception as e:
