@@ -2,6 +2,7 @@ import asyncio
 import re
 import logging
 import discord
+from collections import Counter
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Union
 from config.config import Config
@@ -119,10 +120,63 @@ class MessageHandler:
         "something just broke",
     )
 
+    # Known slang/roast phrases to watch for repetition
+    _TRACKED_SLANG = frozenset({
+        "touch grass", "go outside", "skill issue", "airplane mode", "clown energy",
+        "clown school", "clown behavior", "ratio", "no cap", "stay mad", "cope harder",
+        "down bad", "caught in 4k", "stay losing", "big l", "take the l", "fr fr",
+        "deadass", "on god", "mid af", "dog water", "weak energy", "weak sauce",
+        "glazing", "stop glazing", "npc energy", "npc behavior", "kindergarten",
+        "remedial", "room temp", "brain dead", "cope", "stay cooked", "lowkey cooked",
+        "fully cooked", "clowned", "math class", "calculator", "relearn", "basic math",
+        "doubling down", "clown energy", "dumbass numbers", "six seven", "67",
+    })
+
     def _is_excluded_bot_message(self, content: str) -> bool:
         """Return True if this bot message is a game/command/error response that should not feed back into AI context."""
         lower = content.lower()
         return any(p in lower for p in self._EXCLUDED_BOT_PATTERNS)
+
+    def _get_banned_phrases(self, channel_id: str, n_msgs: int = 5) -> List[str]:
+        """
+        Extract phrases the bot used in its last n_msgs responses so they can be
+        injected as a banned list — prevents the model repeating the same angles.
+        """
+        if channel_id not in self.last_channel_messages:
+            return []
+
+        bot_contents = [
+            m["content"] for m in self.last_channel_messages[channel_id]
+            if m.get("is_bot") and not self._is_excluded_bot_message(m.get("content", ""))
+        ][-n_msgs:]
+
+        if not bot_contents:
+            return []
+
+        combined_lower = " ".join(bot_contents).lower()
+        found: set = set()
+
+        # Check known slang phrases
+        for phrase in self._TRACKED_SLANG:
+            if phrase in combined_lower:
+                found.add(phrase)
+
+        # Find bigrams that appear in 2+ separate messages (catches organic repeats)
+        bigram_counts: Counter = Counter()
+        for msg in bot_contents:
+            words = re.findall(r"\b\w{3,}\b", msg.lower())
+            seen_in_this_msg: set = set()
+            for i in range(len(words) - 1):
+                bg = f"{words[i]} {words[i+1]}"
+                if bg not in seen_in_this_msg:
+                    bigram_counts[bg] += 1
+                    seen_in_this_msg.add(bg)
+
+        for bigram, count in bigram_counts.items():
+            if count >= 2:
+                found.add(bigram)
+
+        return sorted(found)[:12]
 
     def build_conversation_context(self, channel_id: str, user_data: Dict[str, Any], is_correction: bool = False) -> str:
         """Build context for conversation"""
@@ -203,6 +257,12 @@ class MessageHandler:
                     }
                     if topic_words:
                         context_parts.append(f"\n(short reply context hint — likely topic: {', '.join(sorted(topic_words)[:5])})")
+
+        # Inject banned phrases so the model knows what it already said
+        banned = self._get_banned_phrases(channel_id)
+        if banned:
+            quoted = ", ".join(f'"{p}"' for p in banned)
+            context_parts.append(f"\n(BANNED this response — already used recently, find fresh angles: {quoted})")
 
         return "\n".join(context_parts)
     
