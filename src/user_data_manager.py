@@ -215,14 +215,12 @@ class UserDataManager:
                             made_changes = True
                             
             except json.JSONDecodeError:
-                # Silent fail on JSON errors - likely API quota issues
-                pass
-                
+                logger.warning(f"Fact extraction returned invalid JSON (raw: {facts_text[:200]!r})")
+
         except Exception as e:
-            # API quota exceeded or other error - fail silently
             if "429" in str(e):
-                # Quota error, just return without logging spam
-                return False
+                return False  # quota, expected — skip logging spam
+            logger.error(f"Unexpected error in extract_and_save_facts: {e}")
                 
         # Save changes if we made any
         if made_changes:
@@ -304,27 +302,25 @@ class UserDataManager:
                             "content": new_fact,
                             "updated_at": datetime.now().isoformat()
                         }
-                    logging.info(f"Replaced contradicting fact for {user_id}")
+                    logger.info(f"Replaced contradicting fact for {user_id}")
                     self.save_user_data(user_id, user_data)
                     return True
-                    
+
                 elif result.get("action") == "delete_old":
-                    # Delete the old fact
                     user_data["facts"].pop(result["fact_index"])
-                    logging.info(f"Removed contradicting fact for {user_id}")
+                    logger.info(f"Removed contradicting fact for {user_id}")
                     self.save_user_data(user_id, user_data)
-                    return False  # Allow the new fact to be added
-                    
+                    return False
+
                 elif result.get("action") == "ignore_new":
-                    # Ignore the new fact
-                    logging.info(f"Ignored new contradicting fact for {user_id}")
+                    logger.info(f"Ignored new contradicting fact for {user_id}")
                     return True
                     
                 # For "keep_both", we don't need to do anything special
             
             return False
         except Exception as e:
-            logging.error(f"Error checking contradictions: {e}")
+            logger.error(f"Error checking contradictions: {e}")
             return False
     
     def _fact_exists(self, user_data: dict, new_fact: str) -> bool:

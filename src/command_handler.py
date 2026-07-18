@@ -90,7 +90,7 @@ class CommandHandler:
         try:
             # Get username from message
             username = message.author.display_name if message and hasattr(message, 'author') else None
-            summary = await self.user_data_manager.get_user_summary(user_id, username)
+            summary = self.user_data_manager.get_user_summary(user_id, username)
             
             # If the summary is empty or minimal, provide a friendly message
             if "I don't have any information" in summary or len(summary.strip().split('\n')) <= 3:
@@ -199,7 +199,7 @@ class CommandHandler:
     async def _handle_chat(self, args: List[str], message: discord.Message, user_id: str) -> str:
         """Process a general chat command by forwarding to the bot's AI"""
         if not self.bot:
-            return "Can't chat right now - bot connection unavailable"
+            return "my connection is fried rn, try again in a bit"
             
         # Join the arguments to form the complete query
         query = " ".join(args) if args else ""
@@ -222,10 +222,10 @@ class CommandHandler:
                 # Return None to indicate that the bot is handling the response directly
                 return None
             else:
-                return "The bot doesn't support AI chat features yet."
+                return "that aint wired up yet"
         except Exception as e:
             logger.error(f"Error handling chat: {e}")
-            return "Couldn't process that chat request right now."
+            return "couldnt process that, try again?"
 
     async def _handle_info(self, args: List[str], message: discord.Message, user_id: str) -> str:
         """Alias for _handle_my_data - shows user what data we have about them"""

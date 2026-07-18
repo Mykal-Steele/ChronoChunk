@@ -20,11 +20,10 @@ class GameManager:
         
         # check if they already playing
         if user_id in self.active_games:
-            return False, "You already got a game going! Finish it or use /end first."
-            
-        # make sure input ain't dumb
+            return False, "yo u already got a game going, finish it or /end it first"
+
         if max_range < 1:
-            return False, "Bruh give me a number bigger than 1 💀"
+            return False, "bro give me a number bigger than 1 💀"
             
         # set up new game
         secret = random.randint(1, max_range)
@@ -35,7 +34,7 @@ class GameManager:
         )
         
         logger.info(f"Started new game for user {user_id} with range 1-{max_range}")
-        return True, f"Game Started! I'm thinking of a number between 1 and {max_range}. Start guessing with /guess <your number>. You got {Config.MAX_GAME_ATTEMPTS} attempts."
+        return True, f"aight im thinkin of a number between 1 and {max_range}, use /guess to guess it — u got {Config.MAX_GAME_ATTEMPTS} attempts"
         
     def end_game(self, user_id: int) -> Tuple[bool, str]:
         """End a user's game"""
@@ -43,14 +42,14 @@ class GameManager:
             del self.active_games[user_id]
             logger.info(f"Ended game for user {user_id}")
             return True, "gg thanks for playing"
-        return False, "You don't even have a game going rn"
+        return False, "u dont even have a game going rn"
         
     def make_guess(self, user_id: int, guess: int) -> Tuple[bool, str]:
         """Handle a user's guess"""
         
         # check if they playing
         if user_id not in self.active_games:
-            return False, "You don't have a game going. Start one with /game <max_range>"
+            return False, "u dont have a game going, start one with /game"
             
         game = self.active_games[user_id]
         
@@ -58,7 +57,7 @@ class GameManager:
         if guess == game.secret_number:
             del self.active_games[user_id]
             logger.info(f"User {user_id} won their game!")
-            return True, f"YOOO YOU GOT IT! The number was {game.secret_number} 🔥"
+            return True, f"YOOO U GOT IT!! it was {game.secret_number} 🔥"
             
         # wrong guess
         game.attempts_left -= 1
@@ -66,12 +65,12 @@ class GameManager:
         if game.attempts_left > 0:
             # give em a hint
             hint = "higher" if game.secret_number > guess else "lower"
-            return False, f"Nah that ain't it. You got {game.attempts_left} tries left! The number is {hint} than {guess}"
+            return False, f"nah that aint it, {game.attempts_left} tries left — go {hint} than {guess}"
             
         # game over
         del self.active_games[user_id]
         logger.info(f"User {user_id} lost their game")
-        return False, f"RIP GAME OVER! The number was {game.secret_number}. Better luck next time 💀"
+        return False, f"rip game over 💀 it was {game.secret_number}, better luck next time"
         
     def get_active_game(self, user_id: int, channel_id: str = None) -> Optional[GameState]:
         """Get a user's current game state if they have one"""

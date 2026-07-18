@@ -162,11 +162,14 @@ class ChronoChunk(commands.Bot):
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         """Handle errors from slash commands"""
+        logger.error(f"Slash command error: {error}")
         try:
-            await interaction.response.send_message(f"Error executing command: {str(error)}", ephemeral=True)
-            logger.error(f"Slash command error: {error}")
-        except Exception as e:
-            logger.error(f"Error handling command error: {e}")
+            await interaction.response.send_message("something broke on my end, try again?", ephemeral=True)
+        except Exception:
+            try:
+                await interaction.followup.send("something broke on my end, try again?", ephemeral=True)
+            except Exception as e:
+                logger.error(f"Could not send slash command error response: {e}")
     
     async def on_ready(self):
         """Called when the bot is ready to receive events"""
@@ -214,25 +217,11 @@ class ChronoChunk(commands.Bot):
             # Log the error
             logger.error(f"Command error: {error}")
             
-            # Send a friendly error message
-            await ctx.channel.send("damn, something went wrong with that command")
+            await ctx.channel.send("yo something broke, try again")
             
         except Exception as e:
             logger.error(f"Error handling command error: {e}")
     
-    async def process_message(self, message):
-        """Process a message through the message processor"""
-        # This method is incomplete and causing errors
-        # Simply delegate to the message processor which has the correct logic
-        try:
-            user_id = str(message.author.id)
-            # Use the proper message processor instead of trying to handle directly
-            await self.message_processor.process_message(message)
-        except Exception as e:
-            logger.error(f"Error processing message: {e}")
-            # Fallback to a simple response if everything fails
-            await message.channel.send("yo my brain just froze for a sec, try again?")
-
     async def on_error(self, event, *args, **kwargs):
         """Global error handler for all events"""
         error_type, error, tb = sys.exc_info()
@@ -243,14 +232,12 @@ class ChronoChunk(commands.Bot):
         logger.error(f"Error ID {error_id} | Unhandled exception in {event}: {error_type.__name__}: {error}")
         logger.error("".join(traceback.format_tb(tb)))
         
-        # Try to notify channel if possible
         if event == 'on_message' and len(args) > 0:
             message = args[0]
             try:
-                await message.channel.send(f"Encountered an unexpected error (ID: {error_id}). The issue has been logged.")
-            except:
-                # If we can't send to the channel, just log it
-                pass
+                await message.channel.send("something just broke on my end fr, my dev will look at it")
+            except Exception as exc:
+                logger.warning(f"Could not notify channel of error: {exc}")
 
     async def close(self):
         """Ensure proper cleanup when the bot is shutting down"""

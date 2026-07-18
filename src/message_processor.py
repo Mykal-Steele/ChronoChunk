@@ -97,11 +97,12 @@ class MessageProcessor:
         """Check if the message is a reply to one of the bot's messages"""
         if message.reference and message.reference.message_id:
             try:
-                # Try to fetch the message being replied to
                 referenced_msg = await message.channel.fetch_message(message.reference.message_id)
                 return referenced_msg.author.id == self.bot.user.id
             except discord.NotFound:
-                pass  # Message not found
+                pass
+            except discord.HTTPException as e:
+                logger.warning(f"Could not fetch referenced message (code {e.code}): {e}")
         return False
     
     async def _handle_command_message(self, message: discord.Message, user_id: str, 
@@ -137,7 +138,7 @@ is_correction: bool) -> None:
                 
         except Exception as e:
             logger.error(f"Error handling command: {e}")
-            await message.channel.send("yo, something went wrong with that command 💀")
+            await self._safe_send(message.channel, "yo something broke on my end, try again")
     
     _MSG_LINK_RE = re.compile(r'https://discord\.com/channels/(\d+)/(\d+)/(\d+)')
 
@@ -166,15 +167,14 @@ is_correction: bool) -> None:
             if not ref_content:
                 ref_content = "[no text]"
 
-            embedded = f'[message already fetched — {author} said: "{ref_content}"] (u can read this, do NOT say u cant open links)'
+            embedded = f'[message already fetched — {author} said: "{ref_content}"]'
             return self._MSG_LINK_RE.sub(embedded, content, count=1)
 
         except Exception as e:
             logger.warning(f"Could not fetch message link: {e}")
             fail_note = (
-                "\n[system: user attached a discord message link but it couldn't be fetched"
-                " — respond to what they said, and weave in naturally that u can't see/open the link,"
-                " keep it in ur personality, don't use a flat error message]"
+                "\n(heads up: user shared a discord link but it couldnt be loaded —"
+                " react to whatever else they said and drop naturally that u cant see the link, stay in ur personality)"
             )
             return content + fail_note
 
@@ -204,19 +204,21 @@ is_correction: bool) -> None:
     async def _handle_ai_response(self, message: discord.Message, user_id: str,
                               username: str, channel_id: str, query: str,
                               conversation_history: str) -> None:
+        original_query = query  # preserve clean version for history/user data storage
         try:
-            query = await self._resolve_message_link(query)
+            enriched_query = await self._resolve_message_link(query)
             async with message.channel.typing():
                 ai_response = await self.ai_handler.generate_response(
-                    query, conversation_history, username, user_id
+                    enriched_query, conversation_history, username, user_id
                 )
 
             await self._safe_send(message.channel, ai_response)
             await self._maybe_assign_chrono_role(message)
 
+            # Store the original (clean) query so notes/embeds don't pollute history
             self.message_handler.update_channel_history(
                 channel_id=channel_id, user_id=user_id,
-                username=username, content=query, is_bot=False
+                username=username, content=original_query, is_bot=False
             )
             self.message_handler.update_channel_history(
                 channel_id=channel_id, user_id=str(self.bot.user.id),
@@ -224,16 +226,16 @@ is_correction: bool) -> None:
             )
 
             if self.user_data_manager:
-                await self.user_data_manager.add_conversation(user_id, query, ai_response, username)
-                if not query.startswith('/') and len(query.split()) > 2:
-                    await self.user_data_manager.extract_and_save_facts(user_id, query, username)
+                await self.user_data_manager.add_conversation(user_id, original_query, ai_response, username)
+                if not original_query.startswith('/') and len(original_query.split()) > 2:
+                    await self.user_data_manager.extract_and_save_facts(user_id, original_query, username)
 
         except discord.HTTPException as e:
             logger.error(f"Discord HTTP error sending response: {e} (code {e.code})")
             await self._discord_error_response(message.channel, e)
         except Exception as e:
             logger.error(f"Error generating AI response: {e}")
-            await message.channel.send("my brain just glitched fr, try again in a sec")
+            await self._safe_send(message.channel, "my brain just glitched fr, try again in a sec")
 
     async def _safe_send(self, channel, text: str) -> None:
         """Send text to Discord, splitting at 1900 chars if needed."""

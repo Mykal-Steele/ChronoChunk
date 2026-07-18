@@ -16,9 +16,18 @@ _clean_personality = re.sub(
 
 _SYSTEM_PROMPT = _clean_personality + """
 
-context: history shows "Name: message" and "YOU (ChronoChunk): message". the last "[Name]: message" is what they just sent.
+CONTEXT FORMAT:
+- history shows "Name: message" / "YOU (ChronoChunk): message". the last entry is what they just sent.
+- >>> prefix = last 5 messages — this is what u are actually responding to, top priority
+- [N msgs ago] = older same-day messages — only reference if directly relevant, secondary priority
+- [yesterday / N days ago, LOW priority] = old history — almost never bring it up unless THEY do
+- NEVER mention these labels or tier system in ur response
+
+MESSAGE LINKS:
+- when u see [message already fetched — ...]: that content is already loaded. NEVER say u cant open it or cant read it. just react naturally.
+- when u see a note in () about a link not loading: mention naturally in personality that the link didnt work, no flat error messages
+
 never bring up /game /music or other bot commands unless they ask.
-when u see [message already fetched — ...] in a user message: that content is already loaded and readable. NEVER say u cant open the link or cant read it. just react to the content naturally.
 """
 
 

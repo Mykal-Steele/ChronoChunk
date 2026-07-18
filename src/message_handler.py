@@ -84,15 +84,23 @@ class MessageHandler:
         # game/command responses
         "tries left",
         "i'm thinking of a number",
+        "im thinkin of a number",
         "start guessing with /guess",
+        "use /guess to guess it",
         "the number is higher",
         "the number is lower",
+        "go higher than",
+        "go lower than",
         "game started",
         "game over",
         "yooo you got it",
+        "yooo u got it",
         "you already got a game going",
+        "u already got a game going",
         "you don't have a game going",
+        "u dont have a game going",
         "you don't even have a game going",
+        "u dont even have a game going",
         # error / fallback messages — must not be referenced in future turns
         "brain fried, hit me up again",
         "neural nets are fried",
@@ -106,6 +114,9 @@ class MessageHandler:
         "im lagging so hard",
         "brain cells just went on strike",
         "my brain just glitched",
+        "something broke on my end",
+        "something went wrong",
+        "something just broke",
     )
 
     def _is_excluded_bot_message(self, content: str) -> bool:
@@ -143,12 +154,7 @@ class MessageHandler:
                 filtered_msgs.append(msg)
 
         if filtered_msgs:
-            context_parts.append(
-                "\nCONVERSATION HISTORY — 3 PRIORITY TIERS:\n"
-                "  >>> TOP (last 5 msgs): what you're actually responding to\n"
-                "  [N msgs ago] SECONDARY (older, same day): only reference if directly relevant\n"
-                "  [yesterday/N days ago] LOW (previous days): almost never bring up unless THEY do"
-            )
+            context_parts.append("\nCONVERSATION HISTORY:")
             n = len(filtered_msgs)
             today = datetime.now().date()
             for i, msg in enumerate(filtered_msgs):
@@ -196,7 +202,7 @@ class MessageHandler:
                         if w not in stopwords
                     }
                     if topic_words:
-                        context_parts.append(f"\nNOTE: short reply — if it follows the last message, the topic is: {', '.join(sorted(topic_words)[:5])}. if it feels like a topic change, just react naturally.")
+                        context_parts.append(f"\n(short reply context hint — likely topic: {', '.join(sorted(topic_words)[:5])})")
 
         return "\n".join(context_parts)
     
@@ -312,7 +318,7 @@ class MessageHandler:
             try:
                 # Last resort fallback
                 return await channel.send("shit, something went wrong sending that message")
-            except:
-                pass  # If even this fails, just give up
+            except Exception as exc:
+                logger.error(f"Final fallback send also failed: {exc}")
             
             return None

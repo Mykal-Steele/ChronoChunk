@@ -51,15 +51,14 @@ class SlashCommandManager:
             if not ref_content:
                 ref_content = "[no text]"
 
-            embedded = f'[message already fetched — {author} said: "{ref_content}"] (u can read this, do NOT say u cant open links)'
+            embedded = f'[message already fetched — {author} said: "{ref_content}"]'
             return self._MSG_LINK_RE.sub(embedded, content, count=1)
 
         except Exception as e:
             logger.warning(f"Could not fetch message link: {e}")
             fail_note = (
-                "\n[system: user attached a discord message link but it couldn't be fetched"
-                " — respond to what they said, and weave in naturally that u can't see/open the link,"
-                " keep it in ur personality, don't use a flat error message]"
+                "\n(heads up: user shared a discord link but it couldnt be loaded —"
+                " react to whatever else they said and drop naturally that u cant see the link, stay in ur personality)"
             )
             return content + fail_note
     
@@ -251,18 +250,19 @@ class SlashCommandManager:
                 # Build context
                 conversation_history = self.message_handler.build_conversation_context(channel_id, user_data, False)
 
-                # Resolve any Discord message links in the user's message
-                message = await self._resolve_message_link(message)
+                # Resolve any Discord message links — keep original for clean history storage
+                original_message = message
+                enriched_message = await self._resolve_message_link(message)
 
                 # Process through AI
-                ai_response = await self.ai_handler.generate_response(message, conversation_history, username)
-                
-                # Update channel history with user message
+                ai_response = await self.ai_handler.generate_response(enriched_message, conversation_history, username)
+
+                # Update channel history with original (clean) user message
                 self.message_handler.update_channel_history(
                     channel_id=channel_id,
                     user_id=user_id,
                     username=username,
-                    content=message,
+                    content=original_message,
                     is_bot=False
                 )
                 
@@ -279,15 +279,15 @@ class SlashCommandManager:
                 self.message_handler.update_conversation_memory(
                     channel_id=channel_id,
                     username=username,
-                    user_message=message,
+                    user_message=original_message,
                     bot_response=ai_response
                 )
-                
-                # Save to user data
-                await self.user_data_manager.add_conversation(user_id, message, ai_response, username)
-                
+
+                # Save to user data using the original clean message
+                await self.user_data_manager.add_conversation(user_id, original_message, ai_response, username)
+
                 # Extract facts
-                await self.user_data_manager.extract_and_save_facts(user_id, message, username)
+                await self.user_data_manager.extract_and_save_facts(user_id, original_message, username)
                 
                 # Send the response
                 await interaction.followup.send(ai_response)
@@ -470,12 +470,11 @@ class SlashCommandManager:
                     voice_client.stop()
                     
                 voice_client.play(audio_source)
-                await interaction.followup.send("Playing test audio... If you can hear it, your audio setup is working!")
-                    
+                await interaction.followup.send("aight playing test audio, if u can hear it ur setup is good")
+
             except Exception as e:
-                await interaction.followup.send(f"Audio test failed: {str(e)}")
-                import traceback
-                traceback.print_exc()
+                logger.error(f"Audio test failed: {e}", exc_info=True)
+                await interaction.followup.send("audio test broke on my end, check the logs")
 
     async def _register_help_command(self):
         """Register the help command"""
