@@ -64,7 +64,7 @@ def test_start_game_range_one_is_valid(gm):
 def test_make_guess_no_active_game(gm):
     ok, msg = gm.make_guess(USER_A, 5)
     assert ok is False
-    assert "don't have a game" in msg.lower()
+    assert "dont have a game" in msg.lower()
 
 
 def test_make_guess_correct(gm):
@@ -131,7 +131,7 @@ def test_end_game_active(gm):
 def test_end_game_no_active_game(gm):
     ok, msg = gm.end_game(USER_A)
     assert ok is False
-    assert "don't" in msg.lower() or "no game" in msg.lower()
+    assert "dont" in msg.lower() or "no game" in msg.lower()
 
 
 # ── multi-user isolation ───────────────────────────────────────────────────────

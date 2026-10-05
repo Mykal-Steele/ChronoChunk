@@ -104,8 +104,8 @@ def test_build_context_short_followup_injects_hint(handler):
     handler.update_channel_history(CHANNEL_ID, "0", "ChronoChunk", "python is a programming language", is_bot=True)
     handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "why", is_bot=False)
     result = handler.build_conversation_context(CHANNEL_ID, {})
-    # Short follow-up (≤4 words) should inject the NOTE hint with topic words
-    assert "NOTE" in result and "short reply" in result.lower()
+    # Short follow-up (≤4 words) should inject the hint with topic words
+    assert "short reply context hint" in result and "python" in result
 
 
 # ── history snapshots and message age ─────────────────────────────────────────
