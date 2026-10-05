@@ -1,0 +1,28 @@
+# Runs the bot on the Azure VM.
+# On the host this file sits at /opt/chronochunk/docker-compose.yml, next to
+# .env and the git checkout in ./app. User data, logs and the AI spending
+# ledger stay in ./data so a rebuild never touches them.
+services:
+  bot:
+    build: ./app
+    image: chronochunk
+    container_name: chronochunk
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./data/user_data:/app/user_data
+      - ./data/logs:/app/logs
+      - ./data/state:/app/state
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=5)"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 1m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

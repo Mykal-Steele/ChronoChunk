@@ -1,0 +1,25 @@
+name: Tests
+
+on:
+  push:
+    branches: [ai/chat, main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # The bot's own image has pandoc, the fonts and every Python package the tests need
+      - name: Build the bot image
+        run: docker build -t chronochunk:test .
+
+      # The image leaves the tests out, so the checkout is mounted over it
+      - name: Run the tests
+        run: >
+          docker run --rm -e PYTHONDONTWRITEBYTECODE=1 -v "$PWD":/app -w /app chronochunk:test
+          python -m pytest tests/unit tests/integration -q -p no:cacheprovider

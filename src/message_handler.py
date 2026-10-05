@@ -1,0 +1,403 @@
+import asyncio
+import re
+import logging
+import discord
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Any, List, Optional, Union
+from config.config import Config
+
+# Setup logging
+logger = logging.getLogger(__name__)
+
+class MessageHandler:
+    """Handles processing messages and managing conversation history"""
+    
+    def __init__(self, bot=None):
+        """Initialize message handler"""
+        from config.config import Config  # Import at method level to avoid circular imports
+        self.conversation_memory = {}  # channel_id -> list of messages
+        self.last_channel_messages = {}  # channel_id -> list of recent messages
+        self.config = Config  # Add direct reference to Config class
+        self.bot = bot  # Store the bot reference if provided
+    
+    def update_channel_history(self, channel_id: str, user_id: str, username: str, 
+                               content: str, is_bot: bool, is_command: bool = False,
+                               timestamp: Optional[datetime] = None):
+        """Update the channel history with a new message. timestamp is when it was sent, default now."""
+        if channel_id not in self.last_channel_messages:
+            self.last_channel_messages[channel_id] = []
+        
+        # For command-like messages, store without the slash for more natural flow
+        content_to_store = content
+        if is_command and content.startswith('/') and not content.startswith('//'):
+            content_to_store = content[1:] if len(content) > 1 else content
+        
+        # Add this message to the channel history
+        self.last_channel_messages[channel_id].append({
+            "author_id": user_id,
+            "author_name": username,
+            "is_bot": is_bot,
+            "content": content_to_store,
+            "timestamp": (timestamp if isinstance(timestamp, datetime) else datetime.now(timezone.utc)).isoformat()
+        })
+        
+        # Keep only last messages based on config
+        if len(self.last_channel_messages[channel_id]) > Config.CHANNEL_HISTORY_SIZE:
+            self.last_channel_messages[channel_id] = self.last_channel_messages[channel_id][-Config.CHANNEL_HISTORY_SIZE:]
+    
+    def replace_channel_history(self, channel_id: str, messages: List[Dict[str, Any]]) -> None:
+        """
+        Swap the stored history for a fresh snapshot of the channel. messages must be
+        oldest first, each a dict of update_channel_history arguments.
+        """
+        self.last_channel_messages[channel_id] = []
+        for msg in messages:
+            self.update_channel_history(channel_id=channel_id, **msg)
+
+    @staticmethod
+    def _message_age(timestamp: Optional[str]) -> timedelta:
+        """How long ago a stored message was sent. A missing or bad timestamp counts as just now."""
+        try:
+            sent = datetime.fromisoformat(timestamp)
+        except (TypeError, ValueError):
+            return timedelta(0)
+        if sent.tzinfo is None:
+            sent = sent.astimezone()  # naive timestamps are local time
+        return max(datetime.now(timezone.utc) - sent, timedelta(0))
+
+    def update_conversation_memory(self, channel_id: str, username: str, user_message: str, bot_response: str, is_command: bool = False) -> None:
+        """Update the conversation memory for a channel with proper attribution"""
+        # Create conversation memory for this channel if it doesn't exist
+        if channel_id not in self.conversation_memory:
+            self.conversation_memory[channel_id] = []
+        
+        # Don't store slash commands in conversation memory
+        if is_command and user_message.startswith('/'):
+            # Strip the slash for better context
+            clean_message = user_message[1:] if len(user_message) > 1 else user_message
+            self.conversation_memory[channel_id].append(f"USER ({username}): {clean_message}")
+        else:
+            self.conversation_memory[channel_id].append(f"USER ({username}): {user_message}")
+        
+        # Add bot response to memory with clear attribution
+        self.conversation_memory[channel_id].append(f"BOT (ChronoChunk): {bot_response}")
+        
+        # CRITICAL FIX: Keep more context history - at least 20 messages
+        memory_size = max(20, Config.MEMORY_SIZE * 2)
+        if len(self.conversation_memory[channel_id]) > memory_size:
+            # Keep at least the last 20 messages for better context
+            self.conversation_memory[channel_id] = self.conversation_memory[channel_id][-memory_size:]
+    
+    def _extract_recent_topics(self, channel_id: str) -> List[str]:
+        """Extract topics from recent messages for relevance filtering"""
+        # Simple implementation - extract words from recent messages
+        topics = set()
+        if channel_id in self.last_channel_messages:
+            for msg in self.last_channel_messages[channel_id][-5:]:  # Last 5 messages
+                content = msg.get("content", "").lower()
+                # Get meaningful words (exclude common stopwords)
+                words = [w for w in re.findall(r'\b\w+\b', content) if len(w) > 3]
+                topics.update(words)
+        return list(topics)
+    
+    # Bot messages that must never appear in AI context
+    _EXCLUDED_BOT_PATTERNS = (
+        # game/command responses
+        "tries left",
+        "i'm thinking of a number",
+        "im thinkin of a number",
+        "start guessing with /guess",
+        "use /guess to guess it",
+        "the number is higher",
+        "the number is lower",
+        "go higher than",
+        "go lower than",
+        "game started",
+        "game over",
+        "yooo you got it",
+        "yooo u got it",
+        "you already got a game going",
+        "u already got a game going",
+        "you don't have a game going",
+        "u dont have a game going",
+        "you don't even have a game going",
+        "u dont even have a game going",
+        # error / fallback messages — must not be referenced in future turns
+        "brain fried, hit me up again",
+        "neural nets are fried",
+        "rate limited",
+        "quota issues",
+        "brain just glitched",
+        "processor just overheated",
+        "brain bill",
+        "api quota just got clapped",
+        "can't think straight rn",
+        "im lagging so hard",
+        "brain cells just went on strike",
+        "my brain just glitched",
+        "something broke on my end",
+        "something went wrong",
+        "something just broke",
+    )
+
+    # Known slang/roast phrases to watch for repetition
+    _TRACKED_SLANG = frozenset({
+        "touch grass", "go outside", "skill issue", "airplane mode", "clown energy",
+        "clown school", "clown behavior", "ratio", "no cap", "stay mad", "cope harder",
+        "down bad", "caught in 4k", "stay losing", "big l", "take the l", "fr fr",
+        "deadass", "on god", "mid af", "dog water", "weak energy", "weak sauce",
+        "glazing", "stop glazing", "npc energy", "npc behavior", "kindergarten",
+        "remedial", "room temp", "brain dead", "cope", "stay cooked", "lowkey cooked",
+        "fully cooked", "clowned", "math class", "calculator", "relearn", "basic math",
+        "doubling down", "clown energy", "dumbass numbers", "six seven", "67",
+    })
+
+    # Only messages newer than this can be marked as the live conversation
+    _FRESH_WINDOW = timedelta(hours=2)
+
+    def _is_excluded_bot_message(self, content: str) -> bool:
+        """Return True if this bot message is a game/command/error response that should not feed back into AI context."""
+        lower = content.lower()
+        return any(p in lower for p in self._EXCLUDED_BOT_PATTERNS)
+
+    def _get_banned_phrases(self, channel_id: str, n_msgs: int = 5) -> List[str]:
+        """
+        Extract phrases the bot used in its last n_msgs responses so they can be
+        injected as a banned list — prevents the model repeating the same angles.
+        """
+        if channel_id not in self.last_channel_messages:
+            return []
+
+        bot_contents = [
+            m["content"] for m in self.last_channel_messages[channel_id]
+            if m.get("is_bot") and not self._is_excluded_bot_message(m.get("content", ""))
+        ][-n_msgs:]
+
+        if not bot_contents:
+            return []
+
+        combined_lower = " ".join(bot_contents).lower()
+        found: set = set()
+
+        # Check known slang phrases
+        for phrase in self._TRACKED_SLANG:
+            if phrase in combined_lower:
+                found.add(phrase)
+
+        # Find bigrams that appear in 2+ separate messages (catches organic repeats)
+        bigram_counts: Counter = Counter()
+        for msg in bot_contents:
+            words = re.findall(r"\b\w{3,}\b", msg.lower())
+            seen_in_this_msg: set = set()
+            for i in range(len(words) - 1):
+                bg = f"{words[i]} {words[i+1]}"
+                if bg not in seen_in_this_msg:
+                    bigram_counts[bg] += 1
+                    seen_in_this_msg.add(bg)
+
+        for bigram, count in bigram_counts.items():
+            if count >= 2:
+                found.add(bigram)
+
+        return sorted(found)[:12]
+
+    def build_conversation_context(self, channel_id: str, user_data: Dict[str, Any], is_correction: bool = False) -> str:
+        """Build context for conversation"""
+        context_parts = []
+
+        # Who is speaking now (pure data — no instructions embedded in this field)
+        if user_data:
+            speaker = user_data.get("username", "")
+            if speaker:
+                context_parts.append(f"RESPONDING TO: {speaker}")
+
+        # Known facts about this person
+        if user_data:
+            facts = user_data.get("facts", [])
+            if facts:
+                context_parts.append("\nWHAT YOU KNOW ABOUT THEM (background only, dont bring it up unless it matters to what they just said):")
+                for fact in facts[-15:]:
+                    context_parts.append(f"  {fact}")
+
+        # Recent conversation — keep to 14 messages. game/error bot messages excluded.
+        context_size = 14
+        filtered_msgs = []
+        if channel_id in self.last_channel_messages:
+            for msg in self.last_channel_messages[channel_id][-context_size:]:
+                if not msg.get("content"):
+                    continue
+                if msg.get("is_bot") and self._is_excluded_bot_message(msg["content"]):
+                    continue
+                filtered_msgs.append(msg)
+
+        if filtered_msgs:
+            context_parts.append("\nCONVERSATION HISTORY:")
+            n = len(filtered_msgs)
+            for i, msg in enumerate(filtered_msgs):
+                position_from_end = n - i  # 1 = most recent
+                age = self._message_age(msg.get("timestamp"))
+
+                # Old messages are never top priority, even when they are the
+                # last ones in a quiet channel
+                if age.days >= 1:
+                    day_label = "yesterday" if age.days == 1 else f"{age.days} days ago"
+                    prefix = ""
+                    age_tag = f"[{day_label}, LOW priority] "
+                elif position_from_end <= 5 and age <= self._FRESH_WINDOW:
+                    prefix = ">>> "
+                    age_tag = ""
+                else:
+                    prefix = ""
+                    age_tag = f"[{position_from_end} msgs ago] "
+
+                speaker = "YOU (ChronoChunk)" if msg.get("is_bot") else msg["author_name"]
+                context_parts.append(f"{prefix}{age_tag}{speaker}: {msg['content']}")
+
+        # Short-reply hint — only uses the immediately preceding bot message
+        if filtered_msgs:
+            recent = filtered_msgs[-6:]
+            bot_msgs  = [m for m in recent if m.get("is_bot")]
+            user_msgs = [m for m in recent if not m.get("is_bot")]
+
+            if bot_msgs and user_msgs:
+                last_bot_content  = bot_msgs[-1]["content"].lower()
+                last_user_content = user_msgs[-1]["content"].lower()
+
+                if len(last_user_content.split()) <= 4:
+                    stopwords = {
+                        'like','dont','just','with','that','this','have','about',
+                        'what','when','where','from','your','been','would','could',
+                        'since','them','they','than','then','some','into','after',
+                    }
+                    topic_words = {
+                        w for w in re.findall(r'\b[a-z]{4,}\b', last_bot_content)
+                        if w not in stopwords
+                    }
+                    if topic_words:
+                        context_parts.append(f"\n(short reply context hint — likely topic: {', '.join(sorted(topic_words)[:5])})")
+
+        # Inject banned phrases so the model knows what it already said
+        banned = self._get_banned_phrases(channel_id)
+        if banned:
+            quoted = ", ".join(f'"{p}"' for p in banned)
+            context_parts.append(f"\n(BANNED this response — already used recently, find fresh angles: {quoted})")
+
+        return "\n".join(context_parts)
+    
+    async def send_response(self, channel, content: str, user_mention: Optional[str] = None, 
+                           should_mention: bool = True) -> Optional[discord.Message]:
+        """Send a response to a channel, with smart message splitting and mentions"""
+        # Handle empty content case
+        if not content:
+            return await channel.send("...")
+        
+        # Skip mention logic for DMs
+        is_dm = isinstance(channel, discord.DMChannel)
+        if is_dm:
+            should_mention = False
+        
+        # Add user mention if needed in group chat with multiple active users
+        if user_mention and should_mention and not is_dm:
+            # Check for multiple active users in one step
+            recent_messages = [msg async for msg in channel.history(limit=5)]
+            unique_authors = {msg.author.id for msg in recent_messages if not msg.author.bot}
+            
+            # Only add mention if multiple people are talking
+            if len(unique_authors) > 1:
+                content = f"{user_mention} {content}"
+        
+        # Convert Discord emoji codes to actual emojis - improved version
+        if ":" in content and hasattr(channel, "guild") and channel.guild:
+            # More accurate regex that handles emoji patterns at word boundaries
+            emoji_pattern = re.compile(r'(?<!\S):([a-zA-Z0-9_]+):(?!\S)')
+            
+            # Create emoji lookup dictionary
+            if channel.guild.emojis:  # Only process if guild has emojis
+                # Case-insensitive matching for better reliability
+                guild_emojis = {emoji.name.lower(): str(emoji) for emoji in channel.guild.emojis}
+                
+                # First pass: Try exact matches
+                for match in emoji_pattern.finditer(content):
+                    emoji_name = match.group(1)
+                    if emoji_name.lower() in guild_emojis:
+                        content = content.replace(f":{emoji_name}:", guild_emojis[emoji_name.lower()])
+                
+                # Second pass: Try fuzzy matching for any remaining emoji codes
+                remaining_emoji_pattern = re.compile(r':([a-zA-Z0-9_]+):')
+                for match in remaining_emoji_pattern.finditer(content):
+                    emoji_name = match.group(1)
+                    # Try to find closest match if not exact
+                    closest_match = None
+                    for guild_emoji in guild_emojis:
+                        if emoji_name.lower() in guild_emoji or guild_emoji in emoji_name.lower():
+                            closest_match = guild_emoji
+                            break
+                    
+                    if closest_match:
+                        content = content.replace(f":{emoji_name}:", guild_emojis[closest_match])
+        
+        # Fix newlines - remove empty lines
+        content = re.sub(r'\n\s*\n', '\n', content)
+        
+        # Fix multiple spaces - replace with single space
+        content = re.sub(r' +', ' ', content)
+        
+        try:
+            # Split content for longer messages
+            if len(content) <= 1900:  # Discord limit is 2000, leave some room for safety
+                return await channel.send(content)
+            
+            # Intelligently split the message
+            sentences = re.split(r'(?<=[.!?])\s+', content)
+            messages = []
+            current_message = ""
+            
+            # Handle specially for single huge sentences - very rare but possible
+            if len(sentences) == 1 and len(sentences[0]) > 1900:
+                # Split by chunks directly
+                chunks = [sentences[0][i:i+1900] for i in range(0, len(sentences[0]), 1900)]
+                first_message = None
+                
+                for chunk in chunks:
+                    sent = await channel.send(chunk)
+                    if not first_message:
+                        first_message = sent
+                
+                return first_message
+            
+            for sentence in sentences:
+                # If adding this sentence would make the message too long, send current message
+                if len(current_message) + len(sentence) > 1500:
+                    if current_message:  # Only append non-empty messages
+                        messages.append(current_message)
+                    current_message = sentence
+                else:
+                    # Append with space only if current_message isn't empty
+                    current_message = f"{current_message} {sentence}" if current_message else sentence
+            
+            # Add the last message
+            if current_message:
+                messages.append(current_message)
+            
+            # Send messages and return the first one
+            first_message = None
+            for message_content in messages:
+                try:
+                    sent_message = await channel.send(message_content)
+                    if not first_message:
+                        first_message = sent_message
+                except Exception as e:
+                    logger.error(f"Error sending message: {e}")
+            
+            return first_message
+        
+        except Exception as e:
+            logger.error(f"Error in send_response: {e}")
+            try:
+                # Last resort fallback
+                return await channel.send("shit, something went wrong sending that message")
+            except Exception as exc:
+                logger.error(f"Final fallback send also failed: {exc}")
+            
+            return None

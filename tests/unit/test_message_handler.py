@@ -1,0 +1,157 @@
+"""Unit tests for MessageHandler — Discord objects are mocked."""
+import pytest
+from unittest.mock import MagicMock, AsyncMock
+from src.message_handler import MessageHandler
+from config.config import Config
+
+CHANNEL_ID = "99999"
+USER_ID = "12345"
+
+
+@pytest.fixture
+def handler():
+    return MessageHandler(bot=None)
+
+
+# ── update_channel_history ────────────────────────────────────────────────────
+
+def test_update_creates_channel_entry(handler):
+    handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "hello", is_bot=False)
+    assert CHANNEL_ID in handler.last_channel_messages
+    assert len(handler.last_channel_messages[CHANNEL_ID]) == 1
+
+
+def test_update_stores_correct_fields(handler):
+    handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "hello there", is_bot=False)
+    entry = handler.last_channel_messages[CHANNEL_ID][0]
+    assert entry["author_name"] == "Alice"
+    assert entry["content"] == "hello there"
+    assert entry["is_bot"] is False
+
+
+def test_update_bot_message_flagged(handler):
+    handler.update_channel_history(CHANNEL_ID, "0", "ChronoChunk", "beep boop", is_bot=True)
+    entry = handler.last_channel_messages[CHANNEL_ID][0]
+    assert entry["is_bot"] is True
+
+
+def test_update_strips_slash_from_command(handler):
+    handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "/game 10", is_bot=False, is_command=True)
+    entry = handler.last_channel_messages[CHANNEL_ID][0]
+    assert entry["content"] == "game 10"
+
+
+def test_channel_history_size_limit(handler):
+    for i in range(Config.CHANNEL_HISTORY_SIZE + 10):
+        handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", f"msg {i}", is_bot=False)
+    assert len(handler.last_channel_messages[CHANNEL_ID]) == Config.CHANNEL_HISTORY_SIZE
+
+
+def test_channel_history_keeps_most_recent(handler):
+    for i in range(Config.CHANNEL_HISTORY_SIZE + 5):
+        handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", f"msg {i}", is_bot=False)
+    last = handler.last_channel_messages[CHANNEL_ID][-1]["content"]
+    assert last == f"msg {Config.CHANNEL_HISTORY_SIZE + 4}"
+
+
+def test_multiple_channels_isolated(handler):
+    handler.update_channel_history("CH_A", USER_ID, "Alice", "hi A", is_bot=False)
+    handler.update_channel_history("CH_B", USER_ID, "Bob", "hi B", is_bot=False)
+    assert len(handler.last_channel_messages["CH_A"]) == 1
+    assert len(handler.last_channel_messages["CH_B"]) == 1
+
+
+# ── update_conversation_memory ────────────────────────────────────────────────
+
+def test_conversation_memory_stores_user_and_bot(handler):
+    handler.update_conversation_memory(CHANNEL_ID, "Alice", "hello", "hi there!")
+    mem = handler.conversation_memory[CHANNEL_ID]
+    assert any("Alice" in line and "hello" in line for line in mem)
+    assert any("ChronoChunk" in line and "hi there" in line for line in mem)
+
+
+def test_conversation_memory_size_limit(handler):
+    max_size = max(20, Config.MEMORY_SIZE * 2)
+    for i in range(max_size + 10):
+        handler.update_conversation_memory(CHANNEL_ID, "Alice", f"user msg {i}", f"bot resp {i}")
+    assert len(handler.conversation_memory[CHANNEL_ID]) <= max_size
+
+
+def test_conversation_memory_strips_slash_from_command(handler):
+    handler.update_conversation_memory(CHANNEL_ID, "Alice", "/game 10", "Game started!", is_command=True)
+    mem = handler.conversation_memory[CHANNEL_ID]
+    assert any("game 10" in line.lower() for line in mem)
+
+
+# ── build_conversation_context ────────────────────────────────────────────────
+
+def test_build_context_empty_returns_string(handler):
+    result = handler.build_conversation_context(CHANNEL_ID, {})
+    assert isinstance(result, str)
+
+
+def test_build_context_includes_messages(handler):
+    handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "what is python", is_bot=False)
+    handler.update_channel_history(CHANNEL_ID, "0", "ChronoChunk", "it's a language fr", is_bot=True)
+    result = handler.build_conversation_context(CHANNEL_ID, {})
+    assert "Alice" in result or "python" in result
+    assert "ChronoChunk" in result or "language" in result
+
+
+def test_build_context_short_followup_injects_hint(handler):
+    # Build 2 turns of history so bot_messages and user_messages are detected
+    handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "what is python", is_bot=False)
+    handler.update_channel_history(CHANNEL_ID, "0", "ChronoChunk", "python is a programming language", is_bot=True)
+    handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "why", is_bot=False)
+    result = handler.build_conversation_context(CHANNEL_ID, {})
+    # Short follow-up (≤4 words) should inject the hint with topic words
+    assert "short reply context hint" in result and "python" in result
+
+
+# ── history snapshots and message age ─────────────────────────────────────────
+
+def test_replace_channel_history_swaps_the_stored_messages(handler):
+    handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "stale", is_bot=False)
+    handler.replace_channel_history(CHANNEL_ID, [
+        {"user_id": USER_ID, "username": "Alice", "content": "one", "is_bot": False},
+        {"user_id": "0", "username": "ChronoChunk", "content": "two", "is_bot": True},
+    ])
+    assert [m["content"] for m in handler.last_channel_messages[CHANNEL_ID]] == ["one", "two"]
+
+
+def test_update_channel_history_keeps_the_real_send_time(handler):
+    from datetime import datetime, timezone
+    sent = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "hello", is_bot=False, timestamp=sent)
+    assert handler.last_channel_messages[CHANNEL_ID][0]["timestamp"] == sent.isoformat()
+
+
+def test_build_context_marks_fresh_messages_as_live(handler):
+    handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "what is python", is_bot=False)
+    result = handler.build_conversation_context(CHANNEL_ID, {})
+    assert ">>> Alice: what is python" in result
+
+
+def test_build_context_never_marks_day_old_messages_as_live(handler):
+    from datetime import datetime, timedelta, timezone
+    yesterday = datetime.now(timezone.utc) - timedelta(days=1, hours=1)
+    handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "old news", is_bot=False, timestamp=yesterday)
+    result = handler.build_conversation_context(CHANNEL_ID, {})
+    assert "[yesterday, LOW priority] Alice: old news" in result
+    assert ">>>" not in result
+
+
+def test_build_context_same_day_but_hours_old_is_secondary(handler):
+    from datetime import datetime, timedelta, timezone
+    five_hours_ago = datetime.now(timezone.utc) - timedelta(hours=5)
+    handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "earlier today", is_bot=False, timestamp=five_hours_ago)
+    result = handler.build_conversation_context(CHANNEL_ID, {})
+    assert "[1 msgs ago] Alice: earlier today" in result
+
+
+def test_message_age_accepts_old_style_naive_timestamps(handler):
+    from datetime import datetime, timedelta
+    naive = (datetime.now() - timedelta(days=2, hours=1)).isoformat()
+    assert handler._message_age(naive).days == 2
+    assert handler._message_age(None).days == 0
+    assert handler._message_age("not a date").days == 0
