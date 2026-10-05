@@ -27,8 +27,11 @@ PANDOC_TIMEOUT_SECONDS = 60
 PDF_TIMEOUT_SECONDS = 120
 MERMAID_TIMEOUT_SECONDS = 30
 MERMAID_URL = "https://mermaid.ink/img/"
-# Used only when mermaid.ink is down or failing
+# Used only when mermaid.ink is down or failing. kroki.io either answers in a second or
+# two or hangs for half a minute, so it gets a short timeout and a second try.
 KROKI_URL = "https://kroki.io/mermaid/png/"
+KROKI_TIMEOUT_SECONDS = 10
+KROKI_TRIES = 2
 DIAGRAM_WIDTH = 1400
 # A flowchart more than this many times wider than it is tall is a strip of tiny text
 MAX_WIDTH_TO_HEIGHT = 2.5
@@ -353,17 +356,18 @@ async def _request_diagram(source: str) -> bytes:
     settings = MERMAID_CONFIG if source.startswith("sequenceDiagram") else {"theme": MERMAID_CONFIG["theme"]}
     with_settings = "%%{init: " + json.dumps(settings) + "}%%\n" + source
     encoded = base64.urlsafe_b64encode(zlib.compress(with_settings.encode("utf-8"), 9)).decode("ascii")
-    try:
-        return await _fetch_diagram(KROKI_URL + encoded, "kroki.io")
-    except DocumentError as e:
-        logger.warning(f"The backup renderer failed too: {e}")
-        raise down
+    for _ in range(KROKI_TRIES):
+        try:
+            return await _fetch_diagram(KROKI_URL + encoded, "kroki.io", KROKI_TIMEOUT_SECONDS)
+        except DocumentError as e:
+            logger.warning(f"The backup renderer failed too: {e}")
+    raise down
 
 
-async def _fetch_diagram(url: str, service: str) -> bytes:
+async def _fetch_diagram(url: str, service: str, timeout_seconds: int = MERMAID_TIMEOUT_SECONDS) -> bytes:
     """Download one rendered diagram and check that it is a whole PNG."""
     try:
-        timeout = aiohttp.ClientTimeout(total=MERMAID_TIMEOUT_SECONDS)
+        timeout = aiohttp.ClientTimeout(total=timeout_seconds)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(url) as response:
                 body = await response.read()

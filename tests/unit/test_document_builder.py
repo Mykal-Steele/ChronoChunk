@@ -413,6 +413,7 @@ async def test_render_uses_the_backup_service_when_the_first_is_down(monkeypatch
     assert await render_mermaid("sequenceDiagram\n  A->>B: hi") == PNG
     first, second = [call.args for call in fetch.await_args_list]
     assert first[0].startswith("https://mermaid.ink/img/pako:") and second[0].startswith("https://kroki.io/mermaid/png/")
+    assert second[2] == document_builder.KROKI_TIMEOUT_SECONDS  # the backup hangs when it fails, so it gets less time
     sent = zlib.decompress(base64.urlsafe_b64decode(second[0].rsplit("/", 1)[1])).decode("utf-8")
     assert sent.startswith("%%{init: ") and sent.endswith("sequenceDiagram\n  A->>B: hi")
 
@@ -425,12 +426,21 @@ async def test_backup_service_gets_only_the_theme_for_a_flowchart(monkeypatch):
     assert sent.startswith('%%{init: {"theme": "neutral"}}%%\nflowchart TD')
 
 
+async def test_backup_service_gets_a_second_try(monkeypatch):
+    fetch = AsyncMock(side_effect=[DocumentError("down"), DocumentError("the backup hung"), PNG])
+    monkeypatch.setattr(document_builder, "_fetch_diagram", fetch)
+    assert await render_mermaid("flowchart TD\n  A --> B") == PNG
+    assert fetch.await_count == 3
+
+
 async def test_render_reports_the_first_error_when_both_services_fail(monkeypatch):
+    backup_down = DocumentError("the diagram renderer (kroki.io) failed with status 500, try again later")
     fetch = AsyncMock(side_effect=[DocumentError("the diagram renderer (mermaid.ink) could not be reached, try again later"),
-                                   DocumentError("the diagram renderer (kroki.io) failed with status 500, try again later")])
+                                   backup_down, backup_down])
     monkeypatch.setattr(document_builder, "_fetch_diagram", fetch)
     with pytest.raises(DocumentError, match="mermaid.ink"):
         await render_mermaid("flowchart TD\n  A --> B")
+    assert fetch.await_count == 1 + document_builder.KROKI_TRIES
 
 
 async def test_a_syntax_error_does_not_go_to_the_backup_service(monkeypatch):
