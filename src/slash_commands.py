@@ -3,9 +3,10 @@ import logging
 import re
 import discord
 from discord import app_commands
-from typing import Dict, Any, List, Optional, Callable, Awaitable
+from typing import Dict, Any, List, Optional, Callable, Awaitable, Tuple
 from src.exceptions import RateLimitError
-from src.message_context import read_own_attachments
+from src.help_menu import build_help_embed
+from src.message_context import gather_context
 from src.message_processor import MessageProcessor, NO_PINGS
 
 # Setup logging
@@ -34,11 +35,14 @@ class SlashCommandManager:
 
     _MSG_LINK_RE = re.compile(r'https://discord\.com/channels/(\d+)/(\d+)/(\d+)')
 
-    async def _resolve_message_link(self, content: str) -> str:
-        """Fetch a Discord message link embedded in content and inline it as context."""
+    async def _resolve_message_link(self, content: str) -> Tuple[str, Optional[discord.Message]]:
+        """
+        Fetch a Discord message link embedded in content and inline it as context.
+        Also returns the linked message so its files and images can be read.
+        """
         match = self._MSG_LINK_RE.search(content)
         if not match:
-            return content
+            return content, None
 
         _, channel_id_str, message_id_str = match.groups()
         try:
@@ -56,7 +60,7 @@ class SlashCommandManager:
                 ref_content = "[no text]"
 
             embedded = f'[message already fetched — {author} said: "{ref_content}"]'
-            return self._MSG_LINK_RE.sub(embedded, content, count=1)
+            return self._MSG_LINK_RE.sub(embedded, content, count=1), ref_msg
 
         except Exception as e:
             logger.warning(f"Could not fetch message link: {e}")
@@ -64,7 +68,7 @@ class SlashCommandManager:
                 "\n(heads up: user shared a discord link but it couldnt be loaded —"
                 " react to whatever else they said and drop naturally that u cant see the link, stay in ur personality)"
             )
-            return content + fail_note
+            return content + fail_note, None
     
     async def register_commands(self):
         """Register all slash commands with Discord"""
@@ -251,7 +255,7 @@ class SlashCommandManager:
         @self.bot.tree.command(name="chat", description="Chat with ChronoChunk")
         @app_commands.describe(
             message="What you want to say to ChronoChunk",
-            file="An image, PDF or text file for ChronoChunk to read"
+            file="An image (5 MB max), PDF or text file (15 MB max) for ChronoChunk to read"
         )
         async def chat(interaction: discord.Interaction, message: str, file: Optional[discord.Attachment] = None):
             user_id = str(interaction.user.id)
@@ -278,16 +282,19 @@ class SlashCommandManager:
                 
                 # Build context from what is really in the channel right now
                 processor = getattr(self.bot, "message_processor", None)
+                recent = []
                 if processor and interaction.channel:
-                    await processor.sync_channel_history(interaction.channel)
+                    recent = await processor.sync_channel_history(interaction.channel)
                 conversation_history = self.message_handler.build_conversation_context(channel_id, user_data, False)
 
                 # Resolve any Discord message links — keep original for clean history storage
                 original_message = message
-                enriched_message = await self._resolve_message_link(message)
+                enriched_message, linked = await self._resolve_message_link(message)
 
-                # Read the attached image or file, if there is one
-                attached = await read_own_attachments([file] if file else [])
+                # Read the attached image or file and a linked message. With neither,
+                # what was posted in the channel just before is read.
+                attached = await gather_context([file] if file else [], bot_user_id=self.bot.user.id,
+                                                linked=linked, recent=recent)
 
                 # Process through AI. Files it makes count against the per-user daily limit.
                 file_gate = (lambda: rate_limiter.check_rate_limit(user_id, "file")) if rate_limiter else None
@@ -352,15 +359,19 @@ class SlashCommandManager:
 
     async def _register_tldr_command(self):
         """Register the tldr command"""
-        @self.bot.tree.command(name="tldr", description="Sum up the recent messages in this channel")
-        @app_commands.describe(count="How many messages to sum up, 5 to 200 (default 50)")
-        async def tldr(interaction: discord.Interaction, count: Optional[int] = 50):
+        @self.bot.tree.command(name="tldr", description="Sum up the recent messages in this channel, or ask about them")
+        @app_commands.describe(
+            count="How many messages to read, 5 to 200 (default 50)",
+            prompt="What to do with them instead of a recap, like 'what did we decide' or 'make a pdf of the plan'"
+        )
+        async def tldr(interaction: discord.Interaction, count: Optional[int] = 50, prompt: Optional[str] = None):
             try:
                 await interaction.response.defer(thinking=True)
-                summary = await self.bot.command_handler.summarize_channel(
-                    interaction.channel, interaction.user.display_name, str(interaction.user.id), count or 50
+                reply = await self.bot.command_handler.summarize_channel(
+                    interaction.channel, interaction.user.display_name, str(interaction.user.id), count or 50,
+                    prompt=(prompt or "").strip()
                 )
-                await self._send_followup(interaction, summary)
+                await self._send_followup(interaction, reply.text, reply.files)
             except Exception as e:
                 logger.error(f"Error handling tldr command: {e}")
                 await interaction.followup.send("couldnt sum that up, try again?")
@@ -539,72 +550,7 @@ class SlashCommandManager:
         """Register the help command"""
         @self.bot.tree.command(name="help", description="Show all available commands and how to use them")
         async def help(interaction: discord.Interaction):
-            # Create an embed for a nicer-looking help menu
-            embed = discord.Embed(
-                title="ChronoChunk Bot Commands",
-                description="here's all the shit i can do, my g:",
-                color=0x9B59B6  # Purple color
-            )
-            
-            # General commands section
-            general_cmds = [
-                "`/chat <message>` - talk with me directly",
-                "`/info` - see what i know about you",
-                "`/mydata` - same as /info, shows what i remember",
-                "`/forget <info>` - make me forget specific info (empty to wipe all)",
-                "`/code` - get link to my source code"
-            ]
-            embed.add_field(name="💬 general commands", value="\n".join(general_cmds), inline=False)
-
-            # Reading messages and files section
-            reading_cmds = [
-                "reply to any message and type `/` plus what u want, like `/read this` or `/summarize` - i read that message and whatever is attached to it",
-                "works on images, pdfs, and md/txt/code files. attach one to ur own `/` message and i read that too",
-                "`/tldr <count>` - catch up on the last messages in the channel (default 50, max 200)",
-                "pinging me works the same as starting with `/`"
-            ]
-            embed.add_field(name="📎 reading stuff", value="\n".join(reading_cmds), inline=False)
-
-            # Writing and files section
-            writing_cmds = [
-                "ask for an email, proposal, report, cover letter or notes and i write it properly, no slang",
-                "ask for it as a pdf or docx (`/make this a pdf`, `/write a proposal for X as docx`) and i attach the file",
-                "ask for a diagram or flowchart and i send it as an image",
-                "`/usage` - how much of the ai budget is used"
-            ]
-            embed.add_field(name="📝 writing and files", value="\n".join(writing_cmds), inline=False)
-
-            # Game commands section
-            game_cmds = [
-                "`/game <max>` - start a number guessing game (1 to max, default 100)",
-                "`/guess <number>` - make a guess in the game",
-                "`/end` - end the current game"
-            ]
-            embed.add_field(name="🎮 game commands", value="\n".join(game_cmds), inline=False)
-            
-            # Music commands section
-            music_cmds = [
-                "`/music <query>` - play music from YouTube/Spotify. If you type a natural language query instead of a link, the AI will read your response and determine what music you're looking for.",
-                "`/skip` - skip to next song",
-                "`/pause` - pause current playback",
-                "`/resume` - resume playback",
-                "`/stop` - stop music and leave voice channel",
-                "`/queue` - show current song queue",
-                "`/volume <0-100>` - adjust volume",
-                "`/relate` - play a song related to the current one based on YouTube recommendations"
-            ]
-            embed.add_field(name="🎵 music commands", value="\n".join(music_cmds), inline=False)
-            
-            # Fun commands section
-            fun_cmds = [
-                "`/good-boy` - get a smiley face :)"
-            ]
-            embed.add_field(name="😂 other shit", value="\n".join(fun_cmds), inline=False)
-            
-            # Add a footer with extra info
-            embed.set_footer(text="u can also just chat with me normally in any channel by replying to the bot message, no commands needed")
-            
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message(embed=build_help_embed())
 
     async def _register_relate_command(self):
         """Register the relate command"""

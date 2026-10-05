@@ -26,7 +26,7 @@ async def commands(mock_bot_user):
     bot.tree.command = command
     bot.rate_limiter = RateLimiter()
     bot.message_processor.sync_channel_history = AsyncMock()
-    bot.command_handler.summarize_channel = AsyncMock(return_value="alex wants lunch")
+    bot.command_handler.summarize_channel = AsyncMock(return_value=Reply("alex wants lunch"))
     bot.command_handler.usage_summary = MagicMock(return_value="ai budget: $0.10 of $15.00 used this cycle")
 
     user_data_manager = MagicMock()
@@ -42,6 +42,7 @@ async def commands(mock_bot_user):
     await manager._register_chat_command()
     await manager._register_tldr_command()
     await manager._register_usage_command()
+    await manager._register_help_command()
     return registered, bot, ai_handler, user_data_manager
 
 
@@ -128,8 +129,21 @@ async def test_tldr_sums_up_the_channel_with_the_given_count(commands):
 
     await registered["tldr"](interaction, 80)
 
-    bot.command_handler.summarize_channel.assert_awaited_once_with(interaction.channel, "Kruskal", "1", 80)
+    bot.command_handler.summarize_channel.assert_awaited_once_with(interaction.channel, "Kruskal", "1", 80, prompt="")
     assert interaction.followup.send.call_args[0][0] == "alex wants lunch"
+
+
+async def test_tldr_prompt_is_passed_on_and_its_file_is_attached(commands):
+    registered, bot, _, _ = commands
+    bot.command_handler.summarize_channel.return_value = Reply("here u go", [BuiltFile("design.pdf", b"%PDF")])
+    interaction = _interaction()
+
+    await registered["tldr"](interaction, 60, " make a pdf of the design ")
+
+    bot.command_handler.summarize_channel.assert_awaited_once_with(
+        interaction.channel, "Kruskal", "1", 60, prompt="make a pdf of the design")
+    assert interaction.followup.send.call_args[0][0] == "here u go"
+    assert [f.filename for f in interaction.followup.send.call_args[1]["files"]] == ["design.pdf"]
 
 
 async def test_usage_shows_the_budget_line(commands):
@@ -139,3 +153,46 @@ async def test_usage_shows_the_budget_line(commands):
     await registered["usage"](interaction)
 
     assert "ai budget" in interaction.response.send_message.call_args[0][0]
+
+
+# ── /help ─────────────────────────────────────────────────────────────────────
+
+def _embed_text(embed) -> str:
+    parts = [embed.title or "", embed.description or "", embed.footer.text or ""]
+    for field in embed.fields:
+        parts += [field.name, field.value]
+    return "\n".join(parts)
+
+
+async def test_help_states_the_real_limits(commands):
+    from config.config import Config
+    from src import message_context
+    registered, _, _, _ = commands
+    interaction = _interaction()
+
+    await registered["help"](interaction)
+
+    embed = interaction.response.send_message.call_args[1]["embed"]
+    limits = next(field.value for field in embed.fields if "limits" in field.name)
+    assert f"up to {message_context.MAX_IMAGES} images and {message_context.MAX_FILES} files per message" in limits
+    assert f"up to {message_context.MAX_PDF_IMAGES} pictures from inside pdfs" in limits
+    assert f"the first {message_context.MAX_PDF_PAGES} pages" in limits and "30,000 characters" in limits
+    assert f"the newest {message_context.TLDR_MAX_IMAGES} images and {message_context.TLDR_MAX_FILES} files" in limits
+    assert f"{Config.RATE_LIMITS['tldr'][0]} recaps an hour" in limits
+    assert f"chat: {Config.RATE_LIMITS['chat'][0]} messages every 30 min" in limits
+    assert f"files i make: {Config.RATE_LIMITS['file'][0]} a day, 2 per reply" in limits
+
+
+async def test_help_has_no_swearing_and_fits_discords_limits(commands):
+    import re
+    registered, _, _, _ = commands
+    interaction = _interaction()
+
+    await registered["help"](interaction)
+
+    embed = interaction.response.send_message.call_args[1]["embed"]
+    text = _embed_text(embed)
+    assert not re.search(r"\b(shit|fuck\w*|bitch|damn|ass|hell|crap|wtf|piss\w*)\b", text, re.IGNORECASE)
+    assert "my g" in embed.description  # still sounds like the bot
+    assert all(len(field.value) <= 1024 for field in embed.fields)
+    assert len(text) <= 6000

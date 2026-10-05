@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
 from src.ai_response_handler import Reply
-from tests.fakes import fake_attachment, fake_author, fake_channel, fake_message, make_pdf, reply_to
+from tests.fakes import fake_attachment, fake_author, fake_channel, fake_message, make_pdf, make_png, reply_to
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 
@@ -292,13 +292,47 @@ async def test_image_only_messages_show_up_in_history(pipeline):
     assert "Kruskal: [attached: proof.png]" in history
 
 
+# ── things posted right before the message ────────────────────────────────────
+
+async def test_picture_posted_just_before_is_shown_to_the_ai_without_a_reply(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    posted = fake_message(fake_author("Alex", 777), "", message_id=1,
+                          attachments=[fake_attachment("meme.png", make_png(), "image/png")])
+    trigger = fake_message(fake_author("Kruskal"), "/explain this", message_id=2)
+    _channel_with(posted, trigger)
+
+    await processor.process_message(trigger)
+
+    _, _, attached, images = _ai_call(ai_handler)
+    assert "POSTED IN THIS CHANNEL RIGHT BEFORE THEIR MESSAGE" in attached
+    assert "posted by Alex:" in attached and "image: meme.png" in attached
+    assert len(images) == 1
+
+
+async def test_linked_message_attachment_is_read(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    notes = fake_attachment("notes.md", b"# Trip plan\n\nleave at 6am", "text/markdown")
+    linked = fake_message(fake_author("Alex", 777), "the plan", message_id=5, attachments=[notes])
+    elsewhere = fake_channel([linked], channel_id=4242)
+    bot.get_channel = lambda channel_id: elsewhere if channel_id == 4242 else None
+    trigger = fake_message(fake_author("Kruskal"), "/what time do we leave https://discord.com/channels/1/4242/5", message_id=9)
+    _channel_with(trigger)
+
+    await processor.process_message(trigger)
+
+    query, _, attached, _ = _ai_call(ai_handler)
+    assert 'Alex said: "the plan [notes.md]"' in query
+    assert "MESSAGE THEY LINKED (sent by Alex)" in attached
+    assert "leave at 6am" in attached
+
+
 # ── /tldr ─────────────────────────────────────────────────────────────────────
 
 async def test_tldr_sums_up_the_channel(pipeline):
     processor, _, _, _, ai_handler, bot = pipeline
     bot.ai_handler = ai_handler
     processor.command_handler.bot = bot
-    ai_handler.generate_response = AsyncMock(return_value="alex wants lunch, sam said no")
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("alex wants lunch, sam said no"))
     older = [
         fake_message(fake_author("Alex", 777), "lunch at 12?", message_id=1),
         fake_message(fake_author("Sam", 888), "cant, meeting", message_id=2),
@@ -308,12 +342,83 @@ async def test_tldr_sums_up_the_channel(pipeline):
 
     await processor.process_message(trigger)
 
-    _, _, attached, _ = _ai_call(ai_handler, "generate_response")
+    query, _, attached, _ = _ai_call(ai_handler)
+    assert "tldr" in query
     assert "LAST 2 MESSAGES IN THIS CHANNEL" in attached
     assert attached.index("Alex: lunch at 12?") < attached.index("Sam: cant, meeting")
     assert "/tldr" not in attached
-    trigger.channel.send.assert_called_once()
-    assert trigger.channel.send.call_args[0][0] == "alex wants lunch, sam said no"
+    # a plain recap is text only
+    assert ai_handler.generate_reply.call_args[1]["allow_files"] is False
+    trigger.reply.assert_called_once()
+    assert trigger.reply.call_args[0][0] == "alex wants lunch, sam said no"
+
+
+async def test_tldr_shows_the_ai_the_images_posted_in_the_channel(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    bot.ai_handler = ai_handler
+    processor.command_handler.bot = bot
+    shot = fake_attachment("error.png", make_png(), "image/png")
+    older = [fake_message(fake_author("Alex", 777), "anyone seen this before", message_id=1, attachments=[shot])]
+    trigger = fake_message(fake_author("Kruskal"), "/tldr 10", message_id=2)
+    _channel_with(*older, trigger)
+
+    await processor.process_message(trigger)
+
+    _, _, attached, images = _ai_call(ai_handler)
+    assert "Alex: anyone seen this before [attached: error.png (image 1)]" in attached
+    assert len(images) == 1 and images[0].startswith("data:image/jpeg;base64,")
+
+
+async def test_tldr_with_a_question_answers_it_from_the_channel(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    bot.ai_handler = ai_handler
+    processor.command_handler.bot = bot
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("postgres, sam already runs it"))
+    older = [fake_message(fake_author("Alex", 777), f"option {n}", message_id=n) for n in range(1, 9)]
+    trigger = fake_message(fake_author("Kruskal"), "/tldr 6 what is the best option?", message_id=9)
+    _channel_with(*older, trigger)
+
+    await processor.process_message(trigger)
+
+    query, _, attached, _ = _ai_call(ai_handler)
+    assert query == "what is the best option?"
+    assert "LAST 6 MESSAGES IN THIS CHANNEL" in attached
+    assert "option 3" in attached and "option 2" not in attached
+    assert ai_handler.generate_reply.call_args[1]["allow_files"] is True
+    assert trigger.reply.call_args[0][0] == "postgres, sam already runs it"
+
+
+async def test_tldr_request_can_come_back_with_a_file(pipeline):
+    from src.document_builder import BuiltFile
+    processor, _, _, _, ai_handler, bot = pipeline
+    bot.ai_handler = ai_handler
+    processor.command_handler.bot = bot
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("here u go", [BuiltFile("design.pdf", b"%PDF")]))
+    older = [fake_message(fake_author("Alex", 777), "use a queue between the api and the worker", message_id=1)]
+    trigger = fake_message(fake_author("Kruskal"), "/tldr 55 make a pdf of\nthe design discussed here", message_id=2)
+    _channel_with(*older, trigger)
+
+    await processor.process_message(trigger)
+
+    query, _, attached, _ = _ai_call(ai_handler)
+    assert query == "make a pdf of\nthe design discussed here"
+    assert "use a queue between the api and the worker" in attached
+    assert [f.filename for f in trigger.reply.call_args[1]["files"]] == ["design.pdf"]
+
+
+async def test_tldr_file_requests_count_against_the_file_limit(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    bot.ai_handler = ai_handler
+    processor.command_handler.bot = bot
+    older = [fake_message(fake_author("Alex", 777), "lunch at 12?", message_id=1)]
+    trigger = fake_message(fake_author("Kruskal"), "/tldr 20 make a pdf of this", message_id=2)
+    _channel_with(*older, trigger)
+
+    await processor.process_message(trigger)
+
+    limiter = processor.command_handler.rate_limiter
+    ai_handler.generate_reply.call_args[1]["file_gate"]()
+    assert len(limiter._history[str(trigger.author.id)]["file"]) == 1
 
 
 async def test_tldr_as_a_reply_sums_up_that_message_instead(pipeline):
@@ -331,18 +436,33 @@ async def test_tldr_as_a_reply_sums_up_that_message_instead(pipeline):
     assert "a very long story about my weekend" in attached
 
 
-async def test_tldr_rejects_a_non_number(pipeline):
+async def test_tldr_without_a_count_reads_the_default_number_of_messages(pipeline):
     processor, _, _, _, ai_handler, bot = pipeline
     bot.ai_handler = ai_handler
     processor.command_handler.bot = bot
-    trigger = fake_message(fake_author("Kruskal"), "/tldr everything", message_id=1)
-    _channel_with(trigger)
+    older = [fake_message(fake_author("Alex", 777), f"msg {n}", message_id=n) for n in range(1, 61)]
+    trigger = fake_message(fake_author("Kruskal"), "/tldr who is bringing what", message_id=61)
+    _channel_with(*older, trigger)
 
     await processor.process_message(trigger)
 
-    ai_handler.generate_response.assert_not_called()
-    ai_handler.generate_reply.assert_not_called()
-    assert "number" in trigger.channel.send.call_args[0][0]
+    query, _, attached, _ = _ai_call(ai_handler)
+    assert query == "who is bringing what"
+    assert "LAST 50 MESSAGES IN THIS CHANNEL" in attached
+
+
+async def test_tldr_number_inside_a_word_is_part_of_the_request(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    bot.ai_handler = ai_handler
+    processor.command_handler.bot = bot
+    older = [fake_message(fake_author("Alex", 777), "the 3d printer jammed", message_id=1)]
+    trigger = fake_message(fake_author("Kruskal"), "/tldr 3d printer status", message_id=2)
+    _channel_with(*older, trigger)
+
+    await processor.process_message(trigger)
+
+    query, _, _, _ = _ai_call(ai_handler)
+    assert query == "3d printer status"
 
 
 # ── typed /chat, typed commands, limits and files ─────────────────────────────
@@ -414,8 +534,33 @@ async def test_typed_tldr_works_with_the_real_wiring(pipeline):
 
     await processor.process_message(trigger)
 
-    _, _, attached, _ = _ai_call(ai_handler, "generate_response")
+    _, _, attached, _ = _ai_call(ai_handler)
     assert "LAST 1 MESSAGES IN THIS CHANNEL" in attached
+
+
+async def test_typed_help_shows_the_menu_without_calling_the_ai(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    processor.text_commands = {"tldr", "usage", "help"}  # how the real bot is wired
+    trigger = fake_message(fake_author("Kruskal"), "/help", message_id=1)
+    _channel_with(trigger)
+
+    await processor.process_message(trigger)
+
+    ai_handler.generate_reply.assert_not_called()
+    embed = trigger.channel.send.call_args[1]["embed"]
+    assert any("limits" in field.name for field in embed.fields)
+
+
+async def test_help_with_more_words_is_chat(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    processor.text_commands = {"tldr", "usage", "help"}
+    trigger = fake_message(fake_author("Kruskal"), "/help me write an email to my landlord", message_id=1)
+    _channel_with(trigger)
+
+    await processor.process_message(trigger)
+
+    query, _, _, _ = _ai_call(ai_handler)
+    assert query == "/help me write an email to my landlord"
 
 
 async def test_chat_rate_limit_stops_calls_to_the_ai(pipeline):

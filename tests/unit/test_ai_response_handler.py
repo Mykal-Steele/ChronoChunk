@@ -378,6 +378,77 @@ async def test_mermaid_syntax_error_goes_back_to_the_model_for_a_retry(handler, 
     assert "syntax error" in next(m for m in second_request if m["role"] == "tool")["content"]
 
 
+async def test_pasted_mermaid_source_is_rendered_into_an_image(handler, mock_openai_client, built_files):
+    # What the live bot did: two rejected diagrams, then the source pasted into chat
+    from src.document_builder import BuiltFile, DocumentError
+    _, diagram = built_files
+    source = "flowchart TD; A[Input Stream<T>]-->B[Output Stream<R>]"
+    diagram.side_effect = [DocumentError("the mermaid source has a syntax error: Parse error on line 9"),
+                           BuiltFile("diagram.png", b"\x89PNG")]
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("create_diagram", {"title": "Flow", "mermaid": "flowchart TD\n  A[oops"})]),
+        _message(content=f"aight fixed it, paste this into mermaid.live or whatever: {source}"),
+    ]
+    reply = await handler.generate_reply("/make a mermaid diagram of that", "", "Kruskal", "1", allow_files=True)
+    assert [f.filename for f in reply.files] == ["diagram.png"]
+    assert diagram.await_args[0] == ("Diagram", source)
+    assert reply.text == "here u go"
+
+
+async def test_text_around_a_pasted_diagram_is_kept_when_it_says_something(handler, mock_openai_client, built_files):
+    explanation = "each element goes through the mapper and comes out as its own stream. " * 3
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(content=f"{explanation}\n```mermaid\nflowchart TD\n  A --> B\n```"),
+    ]
+    reply = await handler.generate_reply("/draw the flow", "", "Kruskal", "1", allow_files=True)
+    assert len(reply.files) == 1
+    assert "its own stream" in reply.text and "flowchart TD" not in reply.text
+
+
+async def test_pasted_source_stays_when_they_asked_for_the_code(handler, mock_openai_client, built_files):
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(content="```mermaid\nflowchart TD\n  A --> B\n```"),
+    ]
+    reply = await handler.generate_reply("/give me the mermaid code for that", "", "Kruskal", "1", allow_files=True)
+    assert len(reply.files) == 1 and "flowchart TD" in reply.text
+
+
+async def test_pasted_source_stays_as_text_when_it_cannot_be_rendered(handler, mock_openai_client, built_files):
+    from src.document_builder import DocumentError
+    _, diagram = built_files
+    diagram.side_effect = DocumentError("the diagram renderer (mermaid.ink) could not be reached, try again later")
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(content="here:\n```mermaid\nflowchart TD\n  A --> B\n```"),
+    ]
+    reply = await handler.generate_reply("/draw the flow", "", "Kruskal", "1", allow_files=True)
+    assert reply.files == [] and "flowchart TD" in reply.text
+
+
+async def test_pasted_source_counts_against_the_file_limit(handler, mock_openai_client, built_files):
+    from src.exceptions import RateLimitError
+    _, diagram = built_files
+
+    def gate():
+        raise RateLimitError(retry_after=7200)
+
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(content="```mermaid\nflowchart TD\n  A --> B\n```"),
+    ]
+    reply = await handler.generate_reply("/draw the flow", "", "Kruskal", "1", allow_files=True, file_gate=gate)
+    assert reply.files == [] and "flowchart TD" in reply.text
+    diagram.assert_not_awaited()
+
+
+async def test_mermaid_in_a_reply_is_left_alone_when_files_are_off(handler, mock_openai_client, built_files):
+    _, diagram = built_files
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(content="```mermaid\nflowchart TD\n  A --> B\n```"),
+    ]
+    reply = await handler.generate_reply("/draw the flow", "", "Kruskal", "1")
+    assert reply.files == [] and "flowchart TD" in reply.text
+    diagram.assert_not_awaited()
+
+
 async def test_file_limit_stops_the_build_and_tells_the_model(handler, mock_openai_client, built_files):
     from src.exceptions import RateLimitError
     document, _ = built_files

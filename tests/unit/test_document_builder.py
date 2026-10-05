@@ -1,7 +1,10 @@
 """Unit tests for document_builder: Markdown to PDF, DOCX and diagrams. Needs pandoc and WeasyPrint."""
+import base64
 import io
+import json
 import os
 import zipfile
+import zlib
 from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
@@ -11,7 +14,8 @@ from pypdf import PdfReader
 
 from src import document_builder
 from src.document_builder import (
-    DocumentError, build_diagram, build_document, clean_document_text, render_mermaid, slugify,
+    DiagramSyntaxError, DocumentError, build_diagram, build_document, clean_document_text, fix_flowchart_labels,
+    render_mermaid, slugify, split_mermaid,
 )
 
 def _png() -> bytes:
@@ -298,6 +302,88 @@ async def test_render_rejects_a_cut_off_image(monkeypatch):
 async def test_render_refuses_empty_source():
     with pytest.raises(DocumentError, match="empty"):
         await render_mermaid("   ")
+
+
+# ── labels the model writes without quotes ────────────────────────────────────
+
+def test_labels_that_hold_brackets_are_quoted():
+    fixed = fix_flowchart_labels(
+        "flowchart TD\n  A[split -> Arrays.stream(words)] --> B{ok (maybe)?}\n  B --> C(call f(x))\n  C --> D[list[0]]")
+    assert 'A["split -#gt; Arrays.stream(words)"] --> B{"ok (maybe)?"}' in fixed
+    assert 'C("call f(x)")' in fixed
+    assert 'D["list[0]"]' in fixed
+
+
+def test_angle_brackets_are_escaped_and_line_breaks_stay():
+    fixed = fix_flowchart_labels('flowchart TD\n  A[Stream<T>] -->|List<R>| B["Map<K, V><br>done"]')
+    assert fixed == 'flowchart TD\n  A["Stream#lt;T#gt;"] -->|"List#lt;R#gt;"| B["Map#lt;K, V#gt;<br>done"]'
+
+
+def test_statements_on_one_line_are_fixed_too():
+    fixed = fix_flowchart_labels('flowchart TD; A[Input Stream<T>]-->B{mapper: T}; B-->C[say "hi"]')
+    assert fixed == 'flowchart TD; A["Input Stream#lt;T#gt;"]-->B{"mapper: T"}; B-->C["say #quot;hi#quot;"]'
+
+
+def test_every_node_shape_keeps_its_brackets():
+    source = "flowchart LR\n  A([a]) --> B[[b]] --> C[(c)] --> D((d)) --> E{{e}} --> F[/f/] --> G(((g)))"
+    assert fix_flowchart_labels(source) == (
+        'flowchart LR\n  A(["a"]) --> B[["b"]] --> C[("c")] --> D(("d")) --> E{{"e"}} --> F[/"f"/] --> G((("g")))')
+
+
+def test_statements_without_labels_are_left_alone():
+    source = "flowchart TD\n  A --> B\n  style A fill:#f9f,stroke:#333\n  click A call callback()\n  A & B --> C:::big"
+    assert fix_flowchart_labels(source) == source
+
+
+def test_a_label_that_never_closes_is_left_for_the_parser():
+    assert fix_flowchart_labels("flowchart TD\n  A[oops\n  B[fine]") == 'flowchart TD\n  A[oops\n  B["fine"]'
+
+
+def test_other_diagram_types_are_left_alone():
+    source = "sequenceDiagram\n  Alice->>Bob: hello (again)"
+    assert fix_flowchart_labels(source) == source
+
+
+async def test_render_sends_the_fixed_labels(monkeypatch):
+    seen = _fake_session(monkeypatch)
+    await render_mermaid("flowchart TD\n  A[stream(words)] --> B")
+    sent = json.loads(zlib.decompress(base64.urlsafe_b64decode(seen["url"].split("pako:")[1].split("?")[0])))
+    assert sent["code"] == 'flowchart TD\n  A["stream(words)"] --> B'
+
+
+async def test_render_tries_the_source_as_written_when_the_fixed_one_is_refused(monkeypatch):
+    request = AsyncMock(side_effect=[DiagramSyntaxError("refused"), PNG])
+    monkeypatch.setattr(document_builder, "_request_diagram", request)
+    source = "flowchart TD\n  A[stream(words)] --> B"
+    assert await render_mermaid(source) == PNG
+    assert [call.args[0] for call in request.await_args_list] == [fix_flowchart_labels(source), source]
+
+
+async def test_render_reports_the_error_for_the_source_as_written(monkeypatch):
+    request = AsyncMock(side_effect=[DiagramSyntaxError("error in the fixed source"),
+                                     DiagramSyntaxError("error in the source as written")])
+    monkeypatch.setattr(document_builder, "_request_diagram", request)
+    with pytest.raises(DocumentError, match="as written"):
+        await render_mermaid("flowchart TD\n  A[stream(words)] --> B")
+
+
+# ── mermaid source pasted into a chat message ─────────────────────────────────
+
+def test_split_finds_a_diagram_in_a_code_block():
+    assert split_mermaid("here:\n```mermaid\nflowchart TD\n  A --> B\n```\nlmk") == ("flowchart TD\n  A --> B", "here:\n\nlmk")
+    assert split_mermaid("```\nsequenceDiagram\n  A->>B: hi\n```") == ("sequenceDiagram\n  A->>B: hi", "")
+
+
+def test_split_finds_loose_source_at_the_end_of_a_message():
+    text = "aight fixed it, paste this into mermaid.live or whatever: flowchart TD; A[Input]-->B[Output]"
+    assert split_mermaid(text) == ("flowchart TD; A[Input]-->B[Output]",
+                                   "aight fixed it, paste this into mermaid.live or whatever:")
+
+
+def test_split_ignores_ordinary_messages_and_other_code():
+    assert split_mermaid("yo whats good") is None
+    assert split_mermaid("a flowchart TD goes top down, LR goes sideways") is None
+    assert split_mermaid("```python\nprint('graph LR')\n```") is None
 
 
 async def test_build_diagram_names_the_file_from_the_title(fake_renderer):

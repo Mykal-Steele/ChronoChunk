@@ -3,6 +3,7 @@ import logging
 import re
 import discord
 from typing import Optional, Set, Tuple
+from src.ai_response_handler import Reply
 from src.command_handler import RateLimitError
 from src.message_context import build_attached_context, history_text
 from discord.ext.commands.errors import CommandNotFound
@@ -121,15 +122,18 @@ class MessageProcessor:
         stripped = re.sub(rf'<@!?{self.bot.user.id}>', '', content).strip()
         return stripped or NO_TEXT
 
-    async def sync_channel_history(self, channel) -> None:
-        """Replace the stored history with what is really in the channel right now, oldest first."""
+    async def sync_channel_history(self, channel) -> list:
+        """
+        Replace the stored history with what is really in the channel right now.
+        Returns those messages, oldest first.
+        """
         try:
             recent = [msg async for msg in channel.history(limit=HISTORY_FETCH_LIMIT)]
         except discord.HTTPException as e:
             logger.warning(f"Could not fetch channel history (code {e.code}): {e}")
-            return
+            return []
         if not recent:
-            return
+            return []
 
         recent.reverse()  # Discord returns newest first
         self.message_handler.replace_channel_history(str(channel.id), [
@@ -144,6 +148,7 @@ class MessageProcessor:
             }
             for msg in recent
         ])
+        return recent
 
     async def _respond(self, message: discord.Message, user_id: str, username: str,
                        channel_id: str, query: str, user_data: dict,
@@ -157,12 +162,12 @@ class MessageProcessor:
                 await self._safe_send(message.channel, f"slow down, u hit the message limit. try again in about {minutes} min")
                 return
 
-        await self.sync_channel_history(message.channel)
+        recent = await self.sync_channel_history(message.channel)
         conversation_history = self.message_handler.build_conversation_context(
             channel_id=channel_id, user_data=user_data, is_correction=False
         )
         await self._handle_ai_response(message, user_id, username, channel_id, query,
-                                       conversation_history, referenced)
+                                       conversation_history, referenced, recent)
 
     async def _handle_command_message(self, message: discord.Message, user_id: str, 
                               username: str, channel_id: str, user_data: dict,
@@ -189,11 +194,17 @@ is_correction: bool) -> None:
                 await self._respond(message, user_id, username, channel_id, message.content, user_data, referenced)
                 return
 
-            # Pass to command handler
-            cmd_response = await self.command_handler.handle_command(command, args, message, user_id)
+            # Pass to command handler. /tldr reads the channel and calls the AI, which takes a while.
+            async with message.channel.typing():
+                cmd_response = await self.command_handler.handle_command(command, args, message, user_id)
 
             # If the command was recognized and handled, send the response
-            if cmd_response:
+            if isinstance(cmd_response, discord.Embed):
+                await message.channel.send(embed=cmd_response)
+            elif isinstance(cmd_response, Reply):
+                # An answer from the AI, which may come with files
+                await self._send_reply(message, cmd_response.text, cmd_response.files)
+            elif cmd_response:
                 await self._safe_send(message.channel, cmd_response)
             else:
                 # Unrecognized slash: treat as chat, with the channel history and the
@@ -207,15 +218,16 @@ is_correction: bool) -> None:
     
     _MSG_LINK_RE = re.compile(r'https://discord\.com/channels/(\d+)/(\d+)/(\d+)')
 
-    async def _resolve_message_link(self, content: str) -> str:
+    async def _resolve_message_link(self, content: str) -> Tuple[str, Optional[discord.Message]]:
         """
         Detect a Discord message link in content, fetch it, and return an enhanced
-        query with the referenced message embedded. On fetch failure, appends a note
-        so the AI can react naturally to both the user's text and the broken link.
+        query with the referenced message embedded, plus that message so its files
+        and images can be read. On fetch failure, appends a note so the AI can react
+        naturally to both the user's text and the broken link.
         """
         match = self._MSG_LINK_RE.search(content)
         if not match:
-            return content
+            return content, None
 
         _, channel_id_str, message_id_str = match.groups()
         try:
@@ -233,7 +245,7 @@ is_correction: bool) -> None:
                 ref_content = "[no text]"
 
             embedded = f'[message already fetched — {author} said: "{ref_content}"]'
-            return self._MSG_LINK_RE.sub(embedded, content, count=1)
+            return self._MSG_LINK_RE.sub(embedded, content, count=1), ref_msg
 
         except Exception as e:
             logger.warning(f"Could not fetch message link: {e}")
@@ -241,7 +253,7 @@ is_correction: bool) -> None:
                 "\n(heads up: user shared a discord link but it couldnt be loaded —"
                 " react to whatever else they said and drop naturally that u cant see the link, stay in ur personality)"
             )
-            return content + fail_note
+            return content + fail_note, None
 
     async def _maybe_assign_chrono_role(self, message: discord.Message) -> None:
         """Give the 'I Love Chrono <3' role on a user's first AI interaction."""
@@ -269,13 +281,16 @@ is_correction: bool) -> None:
     async def _handle_ai_response(self, message: discord.Message, user_id: str,
                               username: str, channel_id: str, query: str,
                               conversation_history: str,
-                              referenced: Optional[discord.Message] = None) -> None:
+                              referenced: Optional[discord.Message] = None,
+                              recent: Optional[list] = None) -> None:
         original_query = query  # preserve clean version for history/user data storage
         try:
             async with message.channel.typing():
-                enriched_query = await self._resolve_message_link(query)
-                # Read the message they replied to and any files or images involved
-                attached = await build_attached_context(message, referenced, self.bot.user.id)
+                enriched_query, linked = await self._resolve_message_link(query)
+                # Read the message they replied to or linked and any files or images involved.
+                # With none of those, what was posted just before their message is read.
+                attached = await build_attached_context(message, referenced, self.bot.user.id,
+                                                        linked=linked, recent=recent)
                 # Files (documents, diagrams) count against a per-user daily limit
                 file_gate = None
                 if self.rate_limiter:

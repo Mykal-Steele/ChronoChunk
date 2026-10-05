@@ -6,23 +6,27 @@ from typing import List, Optional, Any, Dict
 
 # Try different import approaches to handle both direct and relative imports
 try:
+    from src.ai_response_handler import Reply
     from src.exceptions import RateLimitError
+    from src.help_menu import build_help_embed
     from src.game_manager import GameManager
     from src.user_data_manager import UserDataManager
     from src.rate_limiter import RateLimiter
     from src.intent_detector import IntentDetector
-    from src.message_context import history_text
+    from src.message_context import read_channel_messages
     from src.usage_guard import get_usage_guard
     from src.logger import logger
 except ImportError:
     # Add parent directory to path and try again
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+    from src.ai_response_handler import Reply
     from src.exceptions import RateLimitError
+    from src.help_menu import build_help_embed
     from src.game_manager import GameManager
     from src.user_data_manager import UserDataManager
     from src.rate_limiter import RateLimiter
     from src.intent_detector import IntentDetector
-    from src.message_context import history_text
+    from src.message_context import read_channel_messages
     from src.usage_guard import get_usage_guard
     from src.logger import logger
 
@@ -80,6 +84,7 @@ class CommandHandler:
             "relate": self._handle_relate,
             "tldr": self._handle_tldr,
             "usage": self._handle_usage,
+            "help": self._handle_help,
         }
         
     async def handle_command(self, command: str, args: str, message: discord.Message, user_id: str) -> str:
@@ -201,60 +206,68 @@ class CommandHandler:
         """show github link to bot code"""
         return "check out my code here: https://github.com/Mykal-Steele/ChronoChunk"
 
-    async def _handle_tldr(self, args: List[str], message: discord.Message, user_id: str) -> str:
-        """Sum up the recent messages in this channel, like '/tldr 100'"""
+    async def _handle_tldr(self, args: List[str], message: discord.Message, user_id: str) -> Optional[Reply]:
+        """
+        Sum up the recent messages in this channel, like '/tldr 100'. Words after the
+        count are a request about those messages instead, like '/tldr 60 what did we
+        decide' or '/tldr 60 make a pdf of the design'.
+        """
         # As a reply, /tldr means "sum up that message", which the normal chat path does
         if message.reference:
             return None
 
-        count = 50
-        if args:
-            try:
-                count = int(args[0])
-            except ValueError:
-                return "gimme a number of messages, like '/tldr 100'"
+        # The message is "/tldr", then the count if they gave one, then the request
+        skip = 2 if args and args[0].isdecimal() else 1
+        count = int(args[0]) if skip == 2 else 50
+        pieces = message.content.split(None, skip)
+        prompt = pieces[skip].strip() if len(pieces) > skip else ""
 
         return await self.summarize_channel(
-            message.channel, message.author.display_name, user_id, count, before=message
+            message.channel, message.author.display_name, user_id, count, before=message, prompt=prompt
         )
 
-    async def summarize_channel(self, channel, username: str, user_id: str, count: int = 50, before=None) -> str:
-        """Have the AI sum up the last count messages in a channel (5 to 200)."""
+    async def summarize_channel(self, channel, username: str, user_id: str, count: int = 50,
+                                before=None, prompt: str = "") -> Reply:
+        """
+        Have the AI read the last count messages in a channel (5 to 200). Without a
+        prompt it sums them up. With one it answers the prompt from those messages,
+        which can be a normal chat answer or a document or diagram.
+        """
         ai_handler = getattr(self.bot, "ai_handler", None)
         if not ai_handler:
-            return "that aint wired up yet"
+            return Reply("that aint wired up yet")
 
         try:
             self.rate_limiter.check_rate_limit(user_id, "tldr")
         except RateLimitError as e:
             minutes = max(1, round(e.retry_after / 60))
-            return f"u already got a bunch of recaps, try again in about {minutes} min"
+            return Reply(f"u already got a bunch of recaps, try again in about {minutes} min")
 
         count = max(5, min(count, 200))
         try:
-            lines = []
-            async for msg in channel.history(limit=count, before=before):
-                text = history_text(msg)
-                if text:
-                    lines.append(f"{msg.author.display_name}: {text}")
+            messages = [msg async for msg in channel.history(limit=count, before=before)]
         except discord.HTTPException as e:
             logger.error(f"Error fetching history for tldr: {e}")
-            return "cant read the history in this channel, no perms"
+            return Reply("cant read the history in this channel, no perms")
 
-        if not lines:
-            return "nothing in here to catch up on"
-
-        lines.reverse()  # Discord returns newest first
-        channel_messages = (
-            f"=== LAST {len(lines)} MESSAGES IN THIS CHANNEL, OLDEST FIRST ===\n"
-            + "\n".join(lines)
-            + "\n=== END OF CHANNEL MESSAGES ==="
-        )
-        return await ai_handler.generate_response(
-            "tldr of those channel messages, what did i miss",
+        messages.reverse()  # Discord returns newest first
+        # Reads the pictures and files posted in those messages too
+        channel_messages = await read_channel_messages(messages)
+        if not channel_messages.text:
+            return Reply("nothing in here to catch up on")
+        # A plain recap is chat text. Files are only possible when they asked for something.
+        return await ai_handler.generate_reply(
+            prompt or "tldr of those channel messages, what did i miss",
             "", username, user_id,
-            attached_context=channel_messages
+            attached_context=channel_messages.text,
+            images=channel_messages.images,
+            allow_files=bool(prompt),
+            file_gate=lambda: self.rate_limiter.check_rate_limit(user_id, "file"),
         )
+
+    async def _handle_help(self, args: List[str], message: discord.Message, user_id: str) -> Optional[discord.Embed]:
+        """Show the help menu for a bare '/help'. With more words, like '/help me write this', it is chat."""
+        return None if args else build_help_embed()
 
     async def _handle_usage(self, args: List[str], message: discord.Message, user_id: str) -> str:
         """Show how much of the AI budget is used"""

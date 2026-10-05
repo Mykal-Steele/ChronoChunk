@@ -93,8 +93,8 @@ class ChronoChunk(commands.Bot):
         )
         
         # Create message processor with correct parameter.
-        # Only /tldr and /usage are typed commands. Any other "/word" message is chat,
-        # so "/stop being weird" does not get mistaken for the music command.
+        # Only /tldr, /usage and a bare /help are typed commands. Any other "/word" message
+        # is chat, so "/stop being weird" does not get mistaken for the music command.
         self.message_processor = MessageProcessor(
             bot=self,
             message_handler=self.message_handler,
@@ -103,7 +103,7 @@ class ChronoChunk(commands.Bot):
             game_manager=self.game_manager,
             command_handler=self.command_handler,
             rate_limiter=self.rate_limiter,
-            text_commands={"tldr", "usage"}
+            text_commands={"tldr", "usage", "help"}
         )
         
         # Register event handlers

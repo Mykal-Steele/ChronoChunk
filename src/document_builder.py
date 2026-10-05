@@ -37,6 +37,24 @@ DOCX_TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets
 
 _MERMAID_BLOCK = re.compile(r"^```mermaid[^\n]*\n(.*?)^```[ \t]*$", re.DOTALL | re.MULTILINE)
 
+# Opening words that are Mermaid and nothing else, so they can be spotted in chat text
+_DIAGRAM_HEADER = (r"(?:(?:flowchart|graph)[ \t]+(?:TD|TB|BT|LR|RL)\b"
+                   r"|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram)")
+_FENCED_BLOCK = re.compile(r"```(\w*)[ \t]*\n(.*?)```", re.DOTALL)
+_LOOSE_DIAGRAM = re.compile(rf"\b{_DIAGRAM_HEADER}.*", re.DOTALL)
+
+_FLOWCHART_HEADER = re.compile(r"\s*(?:flowchart|graph)\b")
+# Flowchart node shapes with the brackets that close them, longest opener first
+_NODE_SHAPES = (
+    ("(((", (")))",)), ("((", ("))",)), ("([", ("])",)), ("[[", ("]]",)), ("[(", (")]",)),
+    ("[/", ("/]", "\\]")), ("[\\", ("\\]", "/]")), ("{{", ("}}",)),
+    ("[", ("]",)), ("(", (")",)), ("{", ("}",)),
+)
+# What can follow a node: the end of the statement, another node, a class or a link
+_AFTER_NODE = re.compile(r"[ \t\r]*(?:\Z|[\n;&]|:::|--|-\.|==|~~~|<--|[ox]--|%%)")
+# Tags people put in a label on purpose. Anything else in angle brackets is text, such as List<T>.
+_LABEL_TAG = re.compile(r"(</?(?:[bB][rR]|b|i|u|em|strong|sub|sup|small)\s*/?>)")
+
 # The VM is small, so documents are built one at a time
 _build_lock = asyncio.Lock()
 
@@ -96,6 +114,10 @@ _FILLER_SENTENCES = re.compile(
 
 class DocumentError(Exception):
     """A file could not be built. The message is written so it can be shown to the model."""
+
+
+class DiagramSyntaxError(DocumentError):
+    """The Mermaid parser turned the source down."""
 
 
 @dataclass
@@ -164,6 +186,110 @@ def clean_document_text(markdown: str) -> str:
     return "".join(part if part.startswith("```") else clean(part) for part in parts)
 
 
+def split_mermaid(text: str) -> Optional[Tuple[str, str]]:
+    """
+    Find Mermaid source written into a chat message, in a code block or loose
+    at the end. Returns the source and the text around it, or None.
+    """
+    for block in _FENCED_BLOCK.finditer(text):
+        language, body = block.group(1).lower(), block.group(2).strip()
+        if language == "mermaid" or (not language and re.match(_DIAGRAM_HEADER, body)):
+            return body, (text[:block.start()] + text[block.end():]).strip()
+    loose = _LOOSE_DIAGRAM.search(text)
+    # The arrow check keeps a sentence that only mentions "flowchart TD" out
+    if loose and "```" not in loose.group(0) and re.search(r"--|->", loose.group(0)):
+        return loose.group(0).strip(), text[:loose.start()].strip()
+    return None
+
+
+def _escape_angles(text: str) -> str:
+    """Escape < and > so Mermaid prints them instead of reading them as HTML."""
+    parts = _LABEL_TAG.split(text)
+    return "".join(part if index % 2 else part.replace("<", "#lt;").replace(">", "#gt;")
+                   for index, part in enumerate(parts))
+
+
+def _quote_label(text: str) -> str:
+    text = text.strip()
+    if len(text) >= 2 and text[0] == text[-1] == '"':
+        text = text[1:-1]
+        if text.startswith("`"):
+            return f'"{text}"'  # a Markdown string, left as written
+    else:
+        text = text.replace('"', "#quot;")
+    return f'"{_escape_angles(text)}"'
+
+
+def _line_end(source: str, start: int) -> int:
+    end = source.find("\n", start)
+    return len(source) if end == -1 else end
+
+
+def _node_label(source: str, start: int) -> Optional[Tuple[str, str, str, int]]:
+    """
+    Read the node label whose bracket opens at start. Returns the opener, the
+    label, the closer and the position after it, or None when no label ends on
+    this line.
+    """
+    line_end = _line_end(source, start)
+    for opener, closers in _NODE_SHAPES:
+        if not source.startswith(opener, start):
+            continue
+        body = start + len(opener)
+        if source[body:line_end].lstrip().startswith('"'):
+            return None  # already quoted, the caller handles the string itself
+        for closer in closers:
+            # A label may hold its own closing bracket, as in stream(words), so the
+            # label ends at the first closer that something valid follows
+            end = source.find(closer, body, line_end)
+            while end != -1:
+                if end > body and _AFTER_NODE.match(source, end + len(closer)):
+                    return opener, source[body:end], closer, end + len(closer)
+                end = source.find(closer, end + 1, line_end)
+    return None
+
+
+def fix_flowchart_labels(source: str) -> str:
+    """
+    Quote every flowchart label and escape the characters that break one. The
+    model writes labels such as stream(words) and List<T>. Mermaid rejects the
+    first and drops the <T> from the second unless they are quoted and escaped.
+    Other diagram types come back unchanged.
+    """
+    if not _FLOWCHART_HEADER.match(source):
+        return source
+
+    out = []
+    i = 0
+    while i < len(source):
+        char = source[i]
+        end = -1
+        if char == '"':
+            end = source.find('"', i + 1)
+            if end == -1:
+                break
+            out.append(_quote_label(source[i:end + 1]))
+        elif char == "|":
+            # An edge label sits between two pipes on one line
+            end = source.find("|", i + 1, _line_end(source, i))
+            if end != -1 and source[i + 1:end].strip():
+                out.append(f"|{_quote_label(source[i + 1:end])}|")
+            else:
+                end = -1
+        elif char in "[({" and i > 0 and (source[i - 1].isalnum() or source[i - 1] == "_"):
+            node = _node_label(source, i)
+            if node:
+                opener, label, closer, after = node
+                out.append(opener + _quote_label(label) + closer)
+                end = after - 1
+        if end == -1:
+            out.append(char)
+            end = i
+        i = end + 1
+    out.append(source[i:])
+    return "".join(out)
+
+
 async def render_mermaid(source: str) -> bytes:
     """
     Render Mermaid source to a PNG with the public mermaid.ink service.
@@ -173,6 +299,18 @@ async def render_mermaid(source: str) -> bytes:
     if not source:
         raise DocumentError("the mermaid source is empty")
 
+    fixed = fix_flowchart_labels(source)
+    try:
+        return await _request_diagram(fixed)
+    except DiagramSyntaxError:
+        if fixed == source:
+            raise
+    # The label fix can misread unusual source, so the diagram as written gets a try too.
+    # If that fails as well, the error describes the source the model wrote.
+    return await _request_diagram(source)
+
+
+async def _request_diagram(source: str) -> bytes:
     payload = json.dumps({"code": source, "mermaid": {"theme": "neutral"}})
     encoded = base64.urlsafe_b64encode(zlib.compress(payload.encode("utf-8"), 9)).decode("ascii")
     url = f"{MERMAID_URL}pako:{encoded}?type=png&bgColor=white&width={DIAGRAM_WIDTH}"
@@ -189,7 +327,7 @@ async def render_mermaid(source: str) -> bytes:
 
     if status == 400:
         detail = body.decode("utf-8", errors="replace").strip()[:600]
-        raise DocumentError(f"the mermaid source has a syntax error: {detail}")
+        raise DiagramSyntaxError(f"the mermaid source has a syntax error: {detail}")
     if status != 200 or not body.startswith(b"\x89PNG"):
         logger.warning(f"Mermaid renderer returned status {status}")
         raise DocumentError(f"the diagram renderer (mermaid.ink) failed with status {status}, try again later")

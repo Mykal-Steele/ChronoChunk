@@ -11,7 +11,8 @@ from config.ai_config import PERSONALITY_PROMPT, WRITER_PROMPT
 from config.config import Config
 from collections import deque
 from src.document_builder import (
-    BuiltFile, DocumentError, build_diagram, build_document, clean_document_text, clean_title, strip_filler,
+    BuiltFile, DocumentError, build_diagram, build_document, clean_document_text, clean_title, split_mermaid,
+    strip_filler,
 )
 from src.exceptions import RateLimitError
 from src.usage_guard import BudgetExceededError, guard_client
@@ -39,8 +40,12 @@ STAY ON TOPIC:
 - a normal question or request gets a straight answer. roasting is only for when THEY come at u in the message u are answering.
 
 REPLIED-TO MESSAGES AND FILES:
-- text wrapped in === lines is material already loaded for u: the message they hit reply on, files and images they attached, or channel messages they want summed up.
+- text wrapped in === lines is material already loaded for u: the message they hit reply on or linked, files and images they attached, things posted in the channel just before, or channel messages they want summed up.
 - "=== MESSAGE THEY REPLIED TO" is the exact message they replied to. when they say "this", "that", "it", "this msg", "read", "explain", "summarize" or "what does this say", they mean THAT message and whatever is attached to it. answer about it directly.
+- "=== LAST N MESSAGES IN THIS CHANNEL" is the channel chat they pointed u at. if they only want a tldr, sum it up. if they asked something else (a question about it, a list of what got decided, a pdf or a diagram of it), do exactly that using those messages. "here", "this chat" and "the discussion" mean those messages. a filename marked "(image 2)" is the 2nd image attached to this prompt, so u can see what that person posted. use what the images and opened files show, not only the text.
+- "=== MESSAGE THEY LINKED" is what came with the discord message link they pasted. treat it like a message they replied to.
+- "=== POSTED IN THIS CHANNEL RIGHT BEFORE THEIR MESSAGE" is the pictures and files people dropped in the channel just before they wrote. that is what "this", "that pic", "the screenshot", "the pdf" or "the file" means when they did not reply to anything. if their message is not about those posts, ignore them completely and dont bring them up. if a file there is cut off and they need all of it, tell them to reply to that message.
+- a pdf line that says pictures from it are attached means those pictures are among the images on this prompt. look at them, they are part of the document (charts, photos, scanned pages).
 - pdfs, md, text and code files inside those blocks are already opened, and attached images are right there for u to look at. never say u cant open, load or see them.
 - be accurate first: quote a short message word for word, sum up a long file with its real key points, read the actual text in an image. personality goes in the tone only. these answers can be longer, and line breaks or a short list are fine here.
 - if a file line says it could not be read, say that plainly and say why. dont guess what was in it.
@@ -75,6 +80,7 @@ FILES AND DIAGRAMS:
 - dont use a tool for a normal chat answer or a short piece of text.
 - after a tool works, reply with one short line in ur normal voice. dont repeat whats in the file and never say u cant send files.
 - if a tool returns an error, tell them plainly what went wrong. if it is a mermaid syntax error, fix the diagram and call the tool again.
+- never paste mermaid code into the chat or tell them to render it somewhere themselves. a diagram always goes through create_diagram.
 """
 
 _TOOLS = [
@@ -140,6 +146,8 @@ _TOOLS = [
 MAX_TOOL_ROUNDS = 3
 # One reply carries at most this many generated files
 MAX_FILES_PER_REPLY = 2
+# Text this short beside pasted Mermaid source only introduces it ("paste this into mermaid.live")
+PASTED_DIAGRAM_INTRO_CHARS = 120
 # Room for a few pages plus the model's reasoning. Azure counts this ceiling against
 # the per-minute token limit, so it is not set higher than documents need.
 WRITER_MAX_TOKENS = 8000
@@ -150,6 +158,7 @@ _PAGE_LIMIT = re.compile(r"\b(a|one|single|two|three|four|five|\d{1,2})[\s-]?pag
 
 
 _WANTS_DIAGRAM = re.compile(r"diagram|flow ?chart|แผนภาพ|แผนผัง|ไดอะแกรม", re.IGNORECASE)
+_WANTS_SOURCE = re.compile(r"code|source|syntax|โค้ด", re.IGNORECASE)
 
 
 def page_limit_from(text: str) -> Optional[int]:
@@ -371,6 +380,8 @@ class AIResponseHandler:
                     result = await self._run_tool(call, request, files, file_gate)
                     messages.append({"role": "tool", "tool_call_id": call.id, "content": result})
 
+            if allow_files and not files:
+                raw = await self._render_pasted_diagram(raw, request, files, file_gate)
             if files and not raw.strip():
                 return Reply("here u go", files)
             formatted = self._format_ai_response(raw)
@@ -463,6 +474,31 @@ class AIResponseHandler:
         files.append(built)
         logger.info(f"Built {built.filename} ({len(built.data)} bytes) for {request.username}")
         return f"done: {built.filename} is attached to your reply. Tell them in one short line, do not repeat its contents."
+
+    async def _render_pasted_diagram(self, text: str, request: _Request, files: List[BuiltFile],
+                                     file_gate: Optional[Callable[[], None]]) -> str:
+        """
+        The model sometimes writes Mermaid source into its message instead of calling
+        create_diagram, mostly after the tool turned a diagram down. Render that source
+        so they still get an image. Returns the text to send with it.
+        """
+        found = split_mermaid(text)
+        if not found:
+            return text
+        source, rest = found
+        try:
+            if file_gate:
+                file_gate()
+            built = await build_diagram("Diagram", source)
+        except Exception as e:
+            logger.warning(f"Pasted diagram left as text: {e!r}")
+            return text
+
+        files.append(built)
+        logger.info(f"Built {built.filename} ({len(built.data)} bytes) for {request.username} from pasted source")
+        if _WANTS_SOURCE.search(request.query):
+            return text  # they may want the code itself, so it stays beside the image
+        return rest if len(rest) > PASTED_DIAGRAM_INTRO_CHARS else ""
 
     async def _write_document(self, fmt: str, title: str, brief: str, request: _Request,
                               max_pages: Optional[int] = None) -> str:

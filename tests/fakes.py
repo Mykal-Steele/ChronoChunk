@@ -1,4 +1,5 @@
 """Fake Discord objects for tests: authors, attachments, messages and channels."""
+import io
 from datetime import datetime, timezone
 from typing import List
 from unittest.mock import AsyncMock, MagicMock
@@ -101,6 +102,23 @@ def fake_channel(history=(), channel_id=99999):
     channel.history = MagicMock(side_effect=_history)
     channel.fetch_message = AsyncMock(side_effect=_fetch_message)
     return channel
+
+
+def make_png(width: int = 400, height: int = 300, color="white") -> bytes:
+    """A real PNG that an image library can open."""
+    from PIL import Image
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height), color).save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+def make_picture_pdf(sizes: List[tuple]) -> bytes:
+    """A PDF with no text and one picture per page, the way a scanner makes them. sizes are (width, height)."""
+    from PIL import Image
+    pages = [Image.new("RGB", size, "white") for size in sizes]
+    buffer = io.BytesIO()
+    pages[0].save(buffer, "PDF", save_all=True, append_images=pages[1:])
+    return buffer.getvalue()
 
 
 def make_pdf(pages: List[str]) -> bytes:

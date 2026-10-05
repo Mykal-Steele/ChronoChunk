@@ -54,7 +54,9 @@ python src/bot.py
 - `/mydata` - See what info the bot has about you
 - `/forget <text>` - Make the bot forget specific info
 - `/code` - Format code for Discord (React only rn)
-- `/tldr <count>` - Sum up the last messages in the channel (default 50, max 200)
+- `/help` - Show every command and the limits below
+- `/tldr <count>` - Sum up the last messages in the channel (default 50, max 200). It also looks at the newest images and files posted in them.
+- `/tldr <count> <request>` - Ask about those messages or have the bot make something from them, for example `/tldr 60 what is the best option?` or `/tldr 55 make a pdf of the design discussed here`
 
 ## Reading messages and files
 
@@ -62,10 +64,23 @@ Reply to any message and start your reply with `/`, for example `/read this` or 
 
 - text messages and link previews
 - images (png, jpg, webp)
-- PDFs with selectable text
+- PDFs: the text, and the pictures inside them such as charts, photos and scanned pages
 - markdown, text and code files
 
 You can also attach a file or image to your own `/` message. Pinging the bot works the same as starting with `/`. The `/chat` command takes an optional file too.
+
+You do not have to reply to something that was just posted. If your message points at nothing, the bot reads the images and files from the last 5 messages (up to 30 minutes old), so dropping a screenshot and then typing `/explain this` works. Pasting a link to a Discord message makes the bot read that message's files and images too.
+
+Limits (also shown by `/help`):
+
+- Images up to 5 MB each, files up to 15 MB each.
+- 3 images and 4 files per message, plus up to 10 pictures from inside PDFs.
+- PDFs are read up to 60 pages. Long files are cut at 30,000 characters.
+- From recent posts: the last 5 messages, 30 minutes old at most, 2 images and 1 file (cut at 12,000 characters).
+- `/tldr`: 5 to 200 messages, plus the newest 6 images and 3 files in them (each cut at 6,000 characters), and 6 recaps per hour per user.
+- GIFs, videos, voice messages and Word, Excel or PowerPoint files are not read.
+
+The numbers live at the top of `src/message_context.py` and in `RATE_LIMITS` in `config/config.py`. `/help` reads them from there.
 
 ## Writing, documents and diagrams
 
@@ -95,7 +110,7 @@ The bot stops calling the model when it reaches its spending cap, and starts aga
 
 Set these in `.env`. Costs are estimated from token counts at gpt-5-mini prices and kept in `state/ai_usage.json`. `/usage` shows the current totals.
 
-Per user, the bot answers 50 messages per 30 minutes and makes 15 files per day.
+Per user, the bot answers 50 messages per 30 minutes and makes 15 files per day, 2 per reply.
 
 ## Music Commands
 
