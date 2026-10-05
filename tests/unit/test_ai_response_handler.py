@@ -296,6 +296,20 @@ def built_files(monkeypatch):
     return document, diagram
 
 
+async def test_each_reply_logs_what_it_read_and_what_it_cost(handler, mock_openai_client, caplog):
+    from types import SimpleNamespace
+    response = _message(content="its a cat")
+    response.usage = SimpleNamespace(prompt_tokens=1_000_000, completion_tokens=0, prompt_tokens_details=None)
+    mock_openai_client.chat.completions.create.side_effect = [response]
+    attached = "=== MESSAGE THEY REPLIED TO (sent by Alex) ===\nfile: notes.md\n--- start of notes.md ---\nhi\n=== END ==="
+    with caplog.at_level("INFO", logger="src.ai_response_handler"):
+        await handler.generate_reply("/what is this", "", "Kruskal", "1", attached_context=attached,
+                                     images=["data:image/png;base64,AAAA"])
+    line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("Reply for Kruskal"))
+    assert "read 1 images and 1 files" in line
+    assert "1 model calls, about $0.2500, sent 0 files" in line
+
+
 async def test_tools_are_only_offered_when_files_are_allowed(handler, mock_openai_client):
     await handler.generate_reply("/yo", "", "Kruskal", "1")
     assert "tools" not in mock_openai_client.chat.completions.create.call_args[1]
@@ -363,9 +377,9 @@ async def test_diagram_request_returns_the_image(handler, mock_openai_client, bu
 
 
 async def test_mermaid_syntax_error_goes_back_to_the_model_for_a_retry(handler, mock_openai_client, built_files):
-    from src.document_builder import BuiltFile, DocumentError
+    from src.document_builder import BuiltFile, DiagramSyntaxError
     _, diagram = built_files
-    diagram.side_effect = [DocumentError("the mermaid source has a syntax error: Parse error on line 2"),
+    diagram.side_effect = [DiagramSyntaxError("the mermaid source has a syntax error: Parse error on line 2"),
                            BuiltFile("flow.png", b"\x89PNG")]
     mock_openai_client.chat.completions.create.side_effect = [
         _message(tool_calls=[_tool_call("create_diagram", {"title": "Flow", "mermaid": "flowchart TD\n  A[oops"})]),
@@ -374,8 +388,61 @@ async def test_mermaid_syntax_error_goes_back_to_the_model_for_a_retry(handler, 
     ]
     reply = await handler.generate_reply("/draw the flow", "", "Kruskal", "1", allow_files=True)
     assert reply.text == "fixed it" and len(reply.files) == 1
-    second_request = mock_openai_client.chat.completions.create.call_args_list[1][1]["messages"]
-    assert "syntax error" in next(m for m in second_request if m["role"] == "tool")["content"]
+    calls = mock_openai_client.chat.completions.create.call_args_list
+    tool_result = next(m for m in calls[1][1]["messages"] if m["role"] == "tool")["content"]
+    assert "syntax error" in tool_result
+    assert "Line 2 of your source is: A[oops" in tool_result
+    # the model has to draw it again, it cannot answer in text until a diagram has rendered
+    assert "tool_choice" not in calls[0][1]
+    assert calls[1][1]["tool_choice"]["function"]["name"] == "create_diagram"
+    assert "tool_choice" not in calls[2][1]
+
+
+async def test_diagram_that_never_parses_ends_with_an_honest_message(handler, mock_openai_client, built_files):
+    from src.ai_response_handler import MAX_TOOL_ROUNDS
+    from src.document_builder import DiagramSyntaxError
+    _, diagram = built_files
+    diagram.side_effect = DiagramSyntaxError("the mermaid source has a syntax error: Parse error on line 2")
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("create_diagram", {"title": "Flow", "mermaid": "flowchart TD\n  A[oops"}, f"call_{n}")])
+        for n in range(MAX_TOOL_ROUNDS)
+    ]
+    reply = await handler.generate_reply("/draw the flow", "", "Kruskal", "1", allow_files=True)
+    assert reply.files == [] and "couldnt get that diagram to render" in reply.text
+    # the model is not asked for a closing line, it would say the diagram was sent
+    assert mock_openai_client.chat.completions.create.call_count == MAX_TOOL_ROUNDS
+
+
+async def test_a_diagram_that_failed_to_parse_does_not_use_up_the_file_limit(handler, mock_openai_client, built_files):
+    from src.document_builder import BuiltFile, DiagramSyntaxError
+    _, diagram = built_files
+    diagram.side_effect = [DiagramSyntaxError("the mermaid source has a syntax error: Parse error on line 2"),
+                           BuiltFile("flow.png", b"\x89PNG")]
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("create_diagram", {"title": "Flow", "mermaid": "flowchart TD\n  A[oops"})]),
+        _message(tool_calls=[_tool_call("create_diagram", {"title": "Flow", "mermaid": "flowchart TD\n  A --> B"}, "call_2")]),
+        _message(content="fixed it"),
+    ]
+    counted = []
+    reply = await handler.generate_reply("/draw the flow", "", "Kruskal", "1", allow_files=True,
+                                         file_gate=lambda: counted.append(1))
+    assert len(reply.files) == 1 and len(counted) == 1
+
+
+async def test_diagram_over_the_file_limit_is_not_attached(handler, mock_openai_client, built_files):
+    from src.exceptions import RateLimitError
+
+    def gate():
+        raise RateLimitError(retry_after=7200)
+
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("create_diagram", {"title": "Flow", "mermaid": "flowchart TD\n  A --> B"})]),
+        _message(content="u hit ur file limit for today"),
+    ]
+    reply = await handler.generate_reply("/draw the flow", "", "Kruskal", "1", allow_files=True, file_gate=gate)
+    assert reply.files == []
+    tool_result = next(m for m in mock_openai_client.chat.completions.create.call_args[1]["messages"] if m["role"] == "tool")
+    assert "limit" in tool_result["content"]
 
 
 async def test_pasted_mermaid_source_is_rendered_into_an_image(handler, mock_openai_client, built_files):
@@ -436,7 +503,6 @@ async def test_pasted_source_counts_against_the_file_limit(handler, mock_openai_
     ]
     reply = await handler.generate_reply("/draw the flow", "", "Kruskal", "1", allow_files=True, file_gate=gate)
     assert reply.files == [] and "flowchart TD" in reply.text
-    diagram.assert_not_awaited()
 
 
 async def test_mermaid_in_a_reply_is_left_alone_when_files_are_off(handler, mock_openai_client, built_files):

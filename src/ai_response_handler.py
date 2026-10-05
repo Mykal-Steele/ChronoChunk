@@ -6,16 +6,16 @@ import re
 import logging
 from dataclasses import dataclass, field
 from openai import AsyncOpenAI
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 from config.ai_config import PERSONALITY_PROMPT, WRITER_PROMPT
 from config.config import Config
 from collections import deque
 from src.document_builder import (
-    BuiltFile, DocumentError, build_diagram, build_document, clean_document_text, clean_title, split_mermaid,
-    strip_filler,
+    BuiltFile, DiagramSyntaxError, DocumentError, build_diagram, build_document, clean_document_text, clean_title,
+    split_mermaid, strip_filler,
 )
 from src.exceptions import RateLimitError
-from src.usage_guard import BudgetExceededError, guard_client
+from src.usage_guard import BudgetExceededError, UsageGuard, guard_client
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ STAY ON TOPIC:
 REPLIED-TO MESSAGES AND FILES:
 - text wrapped in === lines is material already loaded for u: the message they hit reply on or linked, files and images they attached, things posted in the channel just before, or channel messages they want summed up.
 - "=== MESSAGE THEY REPLIED TO" is the exact message they replied to. when they say "this", "that", "it", "this msg", "read", "explain", "summarize" or "what does this say", they mean THAT message and whatever is attached to it. answer about it directly.
-- "=== LAST N MESSAGES IN THIS CHANNEL" is the channel chat they pointed u at. if they only want a tldr, sum it up. if they asked something else (a question about it, a list of what got decided, a pdf or a diagram of it), do exactly that using those messages. "here", "this chat" and "the discussion" mean those messages. a filename marked "(image 2)" is the 2nd image attached to this prompt, so u can see what that person posted. use what the images and opened files show, not only the text.
+- "=== LAST N MESSAGES IN THIS CHANNEL" is the channel chat they pointed u at. if they only want a tldr, sum it up. if they asked something else (a question about it, a list of what got decided, a pdf or a diagram of it), do exactly that using those messages. "here", "this chat" and "the discussion" mean those messages. stick to what those messages say: never add a task, an owner, a deadline, a number, a detail or a decision that nobody wrote, and dont pile on advice they didnt ask for. if something they ask about was not said or not decided, say so. keep it in proportion: a recap is always shorter than the chat it sums up, and one or two messages get one line. a filename marked "(image 2)" is the 2nd image attached to this prompt, so u can see what that person posted. use what the images and opened files show, not only the text.
 - "=== MESSAGE THEY LINKED" is what came with the discord message link they pasted. treat it like a message they replied to.
 - "=== POSTED IN THIS CHANNEL RIGHT BEFORE THEIR MESSAGE" is the pictures and files people dropped in the channel just before they wrote. that is what "this", "that pic", "the screenshot", "the pdf" or "the file" means when they did not reply to anything. if their message is not about those posts, ignore them completely and dont bring them up. if a file there is cut off and they need all of it, tell them to reply to that message.
 - a pdf line that says pictures from it are attached means those pictures are among the images on this prompt. look at them, they are part of the document (charts, photos, scanned pages).
@@ -132,7 +132,10 @@ _TOOLS = [
                         "type": "string",
                         "description": (
                             "Valid Mermaid source, for example starting with 'flowchart TD' or 'sequenceDiagram'. "
-                            "Short labels in clean standard wording. Put labels that contain punctuation in double quotes."
+                            "Short labels in clean standard wording, plain text with no markdown such as *stars*. "
+                            "Double quotes around a label are for flowcharts only. Never quote names in a sequenceDiagram. "
+                            "In a sequenceDiagram keep each message under about 40 characters and leave out long URLs "
+                            "and query strings. When one box has more than five arrows going out, use flowchart LR."
                         ),
                     },
                 },
@@ -161,6 +164,16 @@ _WANTS_DIAGRAM = re.compile(r"diagram|flow ?chart|แผนภาพ|แผน�
 _WANTS_SOURCE = re.compile(r"code|source|syntax|โค้ด", re.IGNORECASE)
 
 
+def _source_line(error: str, source: str) -> str:
+    """The line of Mermaid source a parser error points at, so the model fixes the right one."""
+    match = re.search(r"line (\d+)", error)
+    lines = source.strip().splitlines()
+    if not match or not 1 <= int(match.group(1)) <= len(lines):
+        return ""
+    number = int(match.group(1))
+    return f"\nLine {number} of your source is: {lines[number - 1].strip()}"
+
+
 def page_limit_from(text: str) -> Optional[int]:
     """Find a page limit someone asked for in plain words, such as "one page" or "2-page"."""
     match = _PAGE_LIMIT.search(text or "")
@@ -180,12 +193,14 @@ class Reply:
 
 @dataclass
 class _Request:
-    """The material one reply is built from, passed on to the document writer."""
+    """The material one reply is built from, passed on to the document writer, and what it has cost so far."""
     query: str
     username: str
     history: str
     attached: str
     images: List[str]
+    calls: int = 0
+    cost: float = 0.0
 
 
 class AIResponseHandler:
@@ -287,14 +302,23 @@ class AIResponseHandler:
         return content
 
     async def _chat(self, messages: list, max_tokens: int, tools: Optional[list] = None,
-                    reasoning_effort: Optional[str] = None):
-        """Run one chat completion and return the model's message."""
+                    reasoning_effort: Optional[str] = None, force_tool: Optional[str] = None,
+                    request: Optional[_Request] = None):
+        """
+        Run one chat completion and return the model's message. force_tool makes it
+        call that tool. The call and its cost are added to request.
+        """
         kwargs = {"model": self.deployment, "messages": messages, "max_completion_tokens": max_tokens}
         if tools:
             kwargs["tools"] = tools
+            if force_tool:
+                kwargs["tool_choice"] = {"type": "function", "function": {"name": force_tool}}
         if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
         resp = await self.ai_client.chat.completions.create(**kwargs)
+        if request:
+            request.calls += 1
+            request.cost += UsageGuard.cost_of(getattr(resp, "usage", None))
         return resp.choices[0].message
 
     async def generate_reply(self, query: str, conversation_history: str,
@@ -344,12 +368,20 @@ class AIResponseHandler:
             effort = Config.AI_CHAT_REASONING_EFFORT
             files: List[BuiltFile] = []
             raw = ""
+            redraw = False
 
             for round_number in range(MAX_TOOL_ROUNDS + 1):
                 # On the last round no tools are offered, so the model has to answer in text
                 tools = _TOOLS if allow_files and round_number < MAX_TOOL_ROUNDS else None
+                if redraw and not tools:
+                    # Out of tries. Asked to answer now, the model claims the diagram was sent.
+                    break
+                # After a diagram that did not parse, the model has to draw it again. Left to
+                # choose, it pastes the source into chat and tells them to render it themselves.
+                force_tool = "create_diagram" if redraw else None
+                redraw = False
                 try:
-                    message = await self._chat(messages, max_tokens, tools, effort)
+                    message = await self._chat(messages, max_tokens, tools, effort, force_tool, request)
                 except BudgetExceededError:
                     raise
                 except Exception as e:
@@ -359,7 +391,7 @@ class AIResponseHandler:
                     logger.warning(f"Request with images failed, retrying without them: {e}")
                     user_parts.insert(-1, "(the attached images failed to load, tell them u couldnt open the image)")
                     messages[1] = {"role": "user", "content": "\n\n".join(user_parts)}
-                    message = await self._chat(messages, max_tokens, tools, effort)
+                    message = await self._chat(messages, max_tokens, tools, effort, force_tool, request)
 
                 raw = message.content if isinstance(message.content, str) else ""
                 calls = message.tool_calls if isinstance(message.tool_calls, list) else []
@@ -377,23 +409,27 @@ class AIResponseHandler:
                 })
                 # Documents are built first, so a diagram the document already holds can be skipped
                 for call in sorted(calls, key=lambda c: c.function.name != "create_document"):
-                    result = await self._run_tool(call, request, files, file_gate)
+                    result, bad_diagram = await self._run_tool(call, request, files, file_gate)
+                    redraw = redraw or bad_diagram
                     messages.append({"role": "tool", "tool_call_id": call.id, "content": result})
 
-            if allow_files and not files:
-                raw = await self._render_pasted_diagram(raw, request, files, file_gate)
-            if files and not raw.strip():
-                return Reply("here u go", files)
-            formatted = self._format_ai_response(raw)
-            if files:
-                return Reply(formatted, files)
+            if redraw and not files:
+                reply = Reply("couldnt get that diagram to render after a few tries. ask again or make it a bit simpler")
+            else:
+                if allow_files and not files:
+                    raw = await self._render_pasted_diagram(raw, request, files, file_gate)
+                if files and not raw.strip():
+                    reply = Reply("here u go", files)
+                else:
+                    reply = Reply(self._format_ai_response(raw), files)
+                if not files:
+                    self.response_cache[cache_key] = reply.text
+                    if len(self.response_cache) > self.cache_size:
+                        for k in list(self.response_cache.keys())[:-self.cache_size]:
+                            self.response_cache.pop(k, None)
 
-            self.response_cache[cache_key] = formatted
-            if len(self.response_cache) > self.cache_size:
-                for k in list(self.response_cache.keys())[:-self.cache_size]:
-                    self.response_cache.pop(k, None)
-
-            return Reply(formatted)
+            self._log_reply(request, reply)
+            return reply
 
         except BudgetExceededError as e:
             logger.warning(f"AI call skipped: {e}")
@@ -409,6 +445,16 @@ class AIResponseHandler:
                 return Reply(self._content_filter_response(error_msg))
             return Reply("my brain just glitched fr, try again in a sec 💀")
 
+    @staticmethod
+    def _log_reply(request: _Request, reply: Reply) -> None:
+        """One line on what a reply read, made and cost, so a bill can be traced to what caused it."""
+        files_read = len(re.findall(r"^file: ", request.attached, flags=re.MULTILINE))
+        logger.info(
+            f"Reply for {request.username}: read {len(request.images)} images and {files_read} files "
+            f"({len(request.attached)} chars of context), {request.calls} model calls, "
+            f"about ${request.cost:.4f}, sent {len(reply.files)} files"
+        )
+
     async def generate_response(self, query: str, conversation_history: str,
                                 username: str, user_id: str = None,
                                 attached_context: str = "", images: Optional[List[str]] = None) -> str:
@@ -418,35 +464,36 @@ class AIResponseHandler:
         return reply.text
 
     async def _run_tool(self, call, request: _Request, files: List[BuiltFile],
-                        file_gate: Optional[Callable[[], None]]) -> str:
-        """Carry out one tool call. Returns the result text the model reads next."""
+                        file_gate: Optional[Callable[[], None]]) -> Tuple[str, bool]:
+        """
+        Carry out one tool call. Returns the result text the model reads next, and
+        whether it was a diagram that did not parse and has to be drawn again.
+        """
         name = call.function.name
         try:
             args = json.loads(call.function.arguments or "{}")
         except ValueError:
-            return "error: the tool arguments were not valid JSON"
+            return "error: the tool arguments were not valid JSON", False
         if not isinstance(args, dict):
-            return "error: the tool arguments must be a JSON object"
+            return "error: the tool arguments must be a JSON object", False
 
         # The model sometimes asks for the same file twice or for a diagram the document
         # already contains. Those are turned down before they cost anything.
         fmt = str(args.get("format") or "pdf").lower().lstrip(".")
         if len(files) >= MAX_FILES_PER_REPLY:
-            return "error: this reply already has its files. do not make more, just tell them what is attached"
+            return "error: this reply already has its files. do not make more, just tell them what is attached", False
         if name == "create_document" and any(f.filename.endswith(f".{fmt}") for f in files):
-            return f"error: a {fmt} was already made for this reply, do not make it again"
+            return f"error: a {fmt} was already made for this reply, do not make it again", False
         if name == "create_diagram" and any(not f.filename.endswith(".png") for f in files):
-            return "skipped: the document made for this reply already contains its diagrams, so no separate image is needed"
+            return "skipped: the document made for this reply already contains its diagrams, so no separate image is needed", False
 
-        if file_gate:
-            try:
-                file_gate()
-            except RateLimitError as e:
-                hours = max(1, round(e.retry_after / 3600))
-                return f"error: this user reached their limit for generated files, they can try again in about {hours} hours"
-
+        source = ""
         try:
             if name == "create_document":
+                # Checked before the writer runs, because writing is the part that costs money
+                refusal = self._file_limit_refusal(file_gate)
+                if refusal:
+                    return refusal, False
                 title = clean_title(str(args.get("title") or "")) or "Document"
                 brief = str(args.get("brief") or "")
                 max_pages = args.get("max_pages")
@@ -458,22 +505,43 @@ class AIResponseHandler:
                 # A diagram image made earlier in this reply is now inside the document
                 files[:] = [f for f in files if not f.filename.endswith(".png")]
             elif name == "create_diagram":
-                built = await build_diagram(clean_title(str(args.get("title") or "")) or "Diagram", str(args.get("mermaid") or ""))
+                source = str(args.get("mermaid") or "")
+                built = await build_diagram(clean_title(str(args.get("title") or "")) or "Diagram", source)
+                # Counted once it has rendered, so a diagram that failed to parse costs them nothing
+                refusal = self._file_limit_refusal(file_gate)
+                if refusal:
+                    return refusal, False
             else:
-                return f"error: there is no tool called {name}"
+                return f"error: there is no tool called {name}", False
+        except DiagramSyntaxError as e:
+            logger.warning(f"Tool {name} failed: {e}")
+            return (f"error: {e}{_source_line(str(e), source)}\nFix it and call create_diagram again with the whole "
+                    "corrected source. Do not paste the source into the chat."), True
         except DocumentError as e:
             logger.warning(f"Tool {name} failed: {e}")
-            return f"error: {e}"
+            return f"error: {e}", False
         except BudgetExceededError:
             raise
         except Exception as e:
             # A bug in a builder should cost them the file, not the whole reply
             logger.error(f"Tool {name} crashed: {e!r}")
-            return "error: the file could not be made because of an internal error"
+            return "error: the file could not be made because of an internal error", False
 
         files.append(built)
         logger.info(f"Built {built.filename} ({len(built.data)} bytes) for {request.username}")
-        return f"done: {built.filename} is attached to your reply. Tell them in one short line, do not repeat its contents."
+        return f"done: {built.filename} is attached to your reply. Tell them in one short line, do not repeat its contents.", False
+
+    @staticmethod
+    def _file_limit_refusal(file_gate: Optional[Callable[[], None]]) -> Optional[str]:
+        """Count one file against this user's daily limit. Returns what to tell the model when they are over it."""
+        if not file_gate:
+            return None
+        try:
+            file_gate()
+        except RateLimitError as e:
+            hours = max(1, round(e.retry_after / 3600))
+            return f"error: this user reached their limit for generated files, they can try again in about {hours} hours"
+        return None
 
     async def _render_pasted_diagram(self, text: str, request: _Request, files: List[BuiltFile],
                                      file_gate: Optional[Callable[[], None]]) -> str:
@@ -487,11 +555,11 @@ class AIResponseHandler:
             return text
         source, rest = found
         try:
-            if file_gate:
-                file_gate()
             built = await build_diagram("Diagram", source)
         except Exception as e:
             logger.warning(f"Pasted diagram left as text: {e!r}")
+            return text
+        if self._file_limit_refusal(file_gate):
             return text
 
         files.append(built)
@@ -536,6 +604,7 @@ class AIResponseHandler:
                 {"role": "user",   "content": self._user_content("\n\n".join(parts), request.images)}
             ],
             WRITER_MAX_TOKENS,
+            request=request,
         )
         markdown = (message.content if isinstance(message.content, str) else "").strip()
 

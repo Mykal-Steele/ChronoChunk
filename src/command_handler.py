@@ -30,6 +30,15 @@ except ImportError:
     from src.usage_guard import get_usage_guard
     from src.logger import logger
 
+# Sits right under the channel messages, where the model reads it last. In the system
+# prompt alone the same rule was not enough to stop it adding steps and advice of its own.
+CHANNEL_ANSWER_RULE = (
+    "(their request below is about the channel messages above. answer from those messages only. "
+    "no facts, steps, tasks, dates or advice that nobody there wrote, unless they ask for ur own take. "
+    "if the messages dont say, say that. keep it shorter than the chat it covers.)"
+)
+
+
 class CommandHandler:
     """handles all the bot commands"""
     
@@ -259,7 +268,7 @@ class CommandHandler:
         return await ai_handler.generate_reply(
             prompt or "tldr of those channel messages, what did i miss",
             "", username, user_id,
-            attached_context=channel_messages.text,
+            attached_context=f"{channel_messages.text}\n{CHANNEL_ANSWER_RULE}",
             images=channel_messages.images,
             allow_files=bool(prompt),
             file_gate=lambda: self.rate_limiter.check_rate_limit(user_id, "file"),

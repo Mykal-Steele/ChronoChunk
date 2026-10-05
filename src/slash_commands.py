@@ -1,12 +1,12 @@
 import io
 import logging
-import re
 import discord
 from discord import app_commands
 from typing import Dict, Any, List, Optional, Callable, Awaitable, Tuple
 from src.exceptions import RateLimitError
 from src.help_menu import build_help_embed
-from src.message_context import gather_context
+from src.channel_settings import get_channel_settings
+from src.message_context import gather_context, resolve_message_link
 from src.message_processor import MessageProcessor, NO_PINGS
 
 # Setup logging
@@ -33,43 +33,6 @@ class SlashCommandManager:
             
         logger.info("Slash command manager initialized without rate limiting")
 
-    _MSG_LINK_RE = re.compile(r'https://discord\.com/channels/(\d+)/(\d+)/(\d+)')
-
-    async def _resolve_message_link(self, content: str) -> Tuple[str, Optional[discord.Message]]:
-        """
-        Fetch a Discord message link embedded in content and inline it as context.
-        Also returns the linked message so its files and images can be read.
-        """
-        match = self._MSG_LINK_RE.search(content)
-        if not match:
-            return content, None
-
-        _, channel_id_str, message_id_str = match.groups()
-        try:
-            channel = self.bot.get_channel(int(channel_id_str))
-            if channel is None:
-                channel = await self.bot.fetch_channel(int(channel_id_str))
-            ref_msg = await channel.fetch_message(int(message_id_str))
-
-            author = ref_msg.author.display_name
-            ref_content = ref_msg.content or ""
-            if ref_msg.attachments:
-                filenames = ", ".join(a.filename for a in ref_msg.attachments)
-                ref_content = (ref_content + f" [{filenames}]").strip() if ref_content else f"[{filenames}]"
-            if not ref_content:
-                ref_content = "[no text]"
-
-            embedded = f'[message already fetched — {author} said: "{ref_content}"]'
-            return self._MSG_LINK_RE.sub(embedded, content, count=1), ref_msg
-
-        except Exception as e:
-            logger.warning(f"Could not fetch message link: {e}")
-            fail_note = (
-                "\n(heads up: user shared a discord link but it couldnt be loaded —"
-                " react to whatever else they said and drop naturally that u cant see the link, stay in ur personality)"
-            )
-            return content + fail_note, None
-    
     async def register_commands(self):
         """Register all slash commands with Discord"""
         try:
@@ -88,6 +51,7 @@ class SlashCommandManager:
             await self._register_chat_command()
             await self._register_tldr_command()
             await self._register_usage_command()
+            await self._register_recent_posts_command()
             await self._register_help_command()  # Make sure this line is here
             
             # Register music commands
@@ -289,10 +253,13 @@ class SlashCommandManager:
 
                 # Resolve any Discord message links — keep original for clean history storage
                 original_message = message
-                enriched_message, linked = await self._resolve_message_link(message)
+                enriched_message, linked = await resolve_message_link(self.bot, message)
 
                 # Read the attached image or file and a linked message. With neither,
-                # what was posted in the channel just before is read.
+                # what was posted in the channel just before is read, unless that
+                # was switched off for this channel.
+                if not get_channel_settings().reads_recent_posts(channel_id):
+                    recent = []
                 attached = await gather_context([file] if file else [], bot_user_id=self.bot.user.id,
                                                 linked=linked, recent=recent)
 
@@ -375,6 +342,27 @@ class SlashCommandManager:
             except Exception as e:
                 logger.error(f"Error handling tldr command: {e}")
                 await interaction.followup.send("couldnt sum that up, try again?")
+
+    async def _register_recent_posts_command(self):
+        """Register the switch for reading just-posted images and files in a channel"""
+        @self.bot.tree.command(name="recent-posts",
+                               description="Turn my reading of just-posted images and files on or off in this channel")
+        @app_commands.describe(enabled="on: i look at what was posted right before a message. off: only replies, attachments and /tldr")
+        @app_commands.default_permissions(manage_channels=True)
+        async def recent_posts(interaction: discord.Interaction, enabled: bool):
+            # Discord hides the command from people without the permission. This covers the rest.
+            permissions = getattr(interaction, "permissions", None)
+            if interaction.guild and not getattr(permissions, "manage_channels", False):
+                await interaction.response.send_message(
+                    "only someone who can manage this channel can change that", ephemeral=True)
+                return
+            get_channel_settings().set_reads_recent_posts(interaction.channel_id, enabled)
+            if enabled:
+                answer = "aight, in this channel i look at pics and files posted right before a message again"
+            else:
+                answer = ("aight, in this channel i wont look at pics and files unless someone replies to them, "
+                          "attaches them or runs `/tldr`")
+            await interaction.response.send_message(answer)
 
     async def _register_usage_command(self):
         """Register the usage command"""

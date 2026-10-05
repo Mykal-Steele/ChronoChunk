@@ -63,6 +63,7 @@ def build_help_embed() -> discord.Embed:
         "reply to any message and type `/` plus what u want, like `/read this` or `/summarize` - i read that message and whatever is attached to it",
         "works on images, pdfs (the pictures inside them too), and md/txt/code files. attach one to ur own `/` message and i read that too",
         "no reply needed for something that was just posted: drop a pic or file, then type `/explain this`",
+        "`/recent-posts off` - stop me doing that in this channel (needs manage channel). `on` brings it back",
         "paste a link to a discord message and i read that message and its files",
         "`/tldr <count>` - catch up on the last messages in the channel (default 50, max 200). i look at the images and files in them too",
         "`/tldr <count> <what u want>` - ask about those messages or have me make something from them, like `/tldr 60 what did we decide` or `/tldr 60 make a pdf of the design`",

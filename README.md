@@ -55,6 +55,7 @@ python src/bot.py
 - `/forget <text>` - Make the bot forget specific info
 - `/code` - Format code for Discord (React only rn)
 - `/help` - Show every command and the limits below
+- `/recent-posts on|off` - Turn reading of just-posted images and files on or off in a channel (needs Manage Channels)
 - `/tldr <count>` - Sum up the last messages in the channel (default 50, max 200). It also looks at the newest images and files posted in them.
 - `/tldr <count> <request>` - Ask about those messages or have the bot make something from them, for example `/tldr 60 what is the best option?` or `/tldr 55 make a pdf of the design discussed here`
 
@@ -70,6 +71,8 @@ Reply to any message and start your reply with `/`, for example `/read this` or 
 You can also attach a file or image to your own `/` message. Pinging the bot works the same as starting with `/`. The `/chat` command takes an optional file too.
 
 You do not have to reply to something that was just posted. If your message points at nothing, the bot reads the images and files from the last 5 messages (up to 30 minutes old), so dropping a screenshot and then typing `/explain this` works. Pasting a link to a Discord message makes the bot read that message's files and images too.
+
+Reading recent posts means other people's images and files go to the model when someone chats right after them. Someone who can manage a channel can turn that off there with `/recent-posts off`. Replies, attachments and `/tldr` keep working.
 
 Limits (also shown by `/help`):
 
@@ -89,7 +92,8 @@ Ask for an email, a proposal, a report, a cover letter or meeting notes and the 
 - Ask for a file and it attaches one: `/write a one page proposal for X as a pdf`, `/turn this into meeting notes as docx`.
 - Formats are PDF, DOCX and Markdown. Say "one page" and a PDF is fitted to one page when the text allows it.
 - Ask for a diagram or flowchart and it sends a rendered image. Diagrams inside documents are rendered too.
-- Diagrams are rendered by the public service mermaid.ink, so the diagram text leaves your server.
+- Diagrams are rendered by the public service mermaid.ink, so the diagram text leaves your server. When mermaid.ink is down, the public service kroki.io is used instead.
+- A flowchart that comes out as a wide strip is drawn the other way round so the text stays readable.
 
 How documents are written is set by the Markdown files in `skills/`. Edit them to change the voice or the rules:
 
@@ -108,7 +112,7 @@ The bot stops calling the model when it reaches its spending cap, and starts aga
 | `AI_BUDGET_RESET_DAY` | 14 | Day of the month the cycle restarts |
 | `AI_CHAT_REASONING_EFFORT` | low | Reasoning effort for chat replies |
 
-Set these in `.env`. Costs are estimated from token counts at gpt-5-mini prices and kept in `state/ai_usage.json`. `/usage` shows the current totals.
+Set these in `.env`. Costs are estimated from token counts at gpt-5-mini prices and kept in `state/ai_usage.json`. `/usage` shows the current totals. Each reply also writes one log line with the images and files it read, the number of model calls and the estimated cost.
 
 Per user, the bot answers 50 messages per 30 minutes and makes 15 files per day, 2 per reply.
 
@@ -135,7 +139,8 @@ Examples:
 ## Development
 
 - Code is in `src/` directory
-- Tests are in `tests/` directory
+- Tests are in `tests/` directory. They run in the bot's Docker image: `docker build -t chronochunk:dev . && docker run --rm -v "$PWD":/app -w /app chronochunk:dev python -m pytest tests/unit tests/integration -q`
+- GitHub Actions runs the same tests on every push to `ai/chat` and `main` (`.github/workflows/tests.yml`)
 - Config is in `config/` directory
 - User data stored in `data/` directory
 - Logs go to `logs/` directory

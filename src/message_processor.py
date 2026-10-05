@@ -5,7 +5,8 @@ import discord
 from typing import Optional, Set, Tuple
 from src.ai_response_handler import Reply
 from src.command_handler import RateLimitError
-from src.message_context import build_attached_context, history_text
+from src.channel_settings import get_channel_settings
+from src.message_context import build_attached_context, history_text, resolve_message_link
 from discord.ext.commands.errors import CommandNotFound
 import asyncio
 import sys
@@ -216,45 +217,6 @@ is_correction: bool) -> None:
             logger.error(f"Error handling command: {e}")
             await self._safe_send(message.channel, "yo something broke on my end, try again")
     
-    _MSG_LINK_RE = re.compile(r'https://discord\.com/channels/(\d+)/(\d+)/(\d+)')
-
-    async def _resolve_message_link(self, content: str) -> Tuple[str, Optional[discord.Message]]:
-        """
-        Detect a Discord message link in content, fetch it, and return an enhanced
-        query with the referenced message embedded, plus that message so its files
-        and images can be read. On fetch failure, appends a note so the AI can react
-        naturally to both the user's text and the broken link.
-        """
-        match = self._MSG_LINK_RE.search(content)
-        if not match:
-            return content, None
-
-        _, channel_id_str, message_id_str = match.groups()
-        try:
-            channel = self.bot.get_channel(int(channel_id_str))
-            if channel is None:
-                channel = await self.bot.fetch_channel(int(channel_id_str))
-            ref_msg = await channel.fetch_message(int(message_id_str))
-
-            author = ref_msg.author.display_name
-            ref_content = ref_msg.content or ""
-            if ref_msg.attachments:
-                filenames = ", ".join(a.filename for a in ref_msg.attachments)
-                ref_content = (ref_content + f" [{filenames}]").strip() if ref_content else f"[{filenames}]"
-            if not ref_content:
-                ref_content = "[no text]"
-
-            embedded = f'[message already fetched — {author} said: "{ref_content}"]'
-            return self._MSG_LINK_RE.sub(embedded, content, count=1), ref_msg
-
-        except Exception as e:
-            logger.warning(f"Could not fetch message link: {e}")
-            fail_note = (
-                "\n(heads up: user shared a discord link but it couldnt be loaded —"
-                " react to whatever else they said and drop naturally that u cant see the link, stay in ur personality)"
-            )
-            return content + fail_note, None
-
     async def _maybe_assign_chrono_role(self, message: discord.Message) -> None:
         """Give the 'I Love Chrono <3' role on a user's first AI interaction."""
         guild = message.guild
@@ -286,9 +248,12 @@ is_correction: bool) -> None:
         original_query = query  # preserve clean version for history/user data storage
         try:
             async with message.channel.typing():
-                enriched_query, linked = await self._resolve_message_link(query)
+                enriched_query, linked = await resolve_message_link(self.bot, query)
                 # Read the message they replied to or linked and any files or images involved.
-                # With none of those, what was posted just before their message is read.
+                # With none of those, what was posted just before their message is read,
+                # unless that was switched off for this channel.
+                if not get_channel_settings().reads_recent_posts(channel_id):
+                    recent = None
                 attached = await build_attached_context(message, referenced, self.bot.user.id,
                                                         linked=linked, recent=recent)
                 # Files (documents, diagrams) count against a per-user daily limit

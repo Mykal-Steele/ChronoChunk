@@ -108,3 +108,12 @@ def mock_bot_user():
     user.name = "ChronoChunk"
     user.bot = True
     return user
+
+
+@pytest.fixture
+def channel_settings(tmp_path, monkeypatch):
+    """Channel switches kept in a temp file, in place of the bot's real settings."""
+    from src import channel_settings as module
+    settings = module.ChannelSettings(str(tmp_path / "channel_settings.json"))
+    monkeypatch.setattr(module, "_shared_settings", settings)
+    return settings

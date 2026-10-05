@@ -4,6 +4,7 @@ import base64
 import io
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
@@ -434,6 +435,47 @@ async def read_channel_messages(messages: list) -> MessageContext:
         )
     # Pictures from inside pdfs go after the channel images, which are numbered in the text
     return MessageContext(block, images + pdf_pictures)
+
+
+MESSAGE_LINK = re.compile(r'https://discord\.com/channels/(\d+)/(\d+)/(\d+)')
+
+
+async def resolve_message_link(bot, content: str) -> Tuple[str, Optional[discord.Message]]:
+    """
+    Detect a Discord message link in content, fetch it, and return the content with
+    the linked message written in, plus that message so its files and images can be
+    read. On fetch failure, appends a note so the AI can react naturally to both the
+    user's text and the broken link.
+    """
+    match = MESSAGE_LINK.search(content)
+    if not match:
+        return content, None
+
+    _, channel_id_str, message_id_str = match.groups()
+    try:
+        channel = bot.get_channel(int(channel_id_str))
+        if channel is None:
+            channel = await bot.fetch_channel(int(channel_id_str))
+        ref_msg = await channel.fetch_message(int(message_id_str))
+
+        author = ref_msg.author.display_name
+        ref_content = ref_msg.content or ""
+        if ref_msg.attachments:
+            filenames = ", ".join(a.filename for a in ref_msg.attachments)
+            ref_content = (ref_content + f" [{filenames}]").strip() if ref_content else f"[{filenames}]"
+        if not ref_content:
+            ref_content = "[no text]"
+
+        embedded = f'[message already fetched — {author} said: "{ref_content}"]'
+        return MESSAGE_LINK.sub(embedded, content, count=1), ref_msg
+
+    except Exception as e:
+        logger.warning(f"Could not fetch message link: {e}")
+        fail_note = (
+            "\n(heads up: user shared a discord link but it couldnt be loaded —"
+            " react to whatever else they said and drop naturally that u cant see the link, stay in ur personality)"
+        )
+        return content + fail_note, None
 
 
 def _sender(message, bot_user_id: Optional[int]) -> str:

@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import struct
 import tempfile
 import zipfile
 import zlib
@@ -26,7 +27,11 @@ PANDOC_TIMEOUT_SECONDS = 60
 PDF_TIMEOUT_SECONDS = 120
 MERMAID_TIMEOUT_SECONDS = 30
 MERMAID_URL = "https://mermaid.ink/img/"
+# Used only when mermaid.ink is down or failing
+KROKI_URL = "https://kroki.io/mermaid/png/"
 DIAGRAM_WIDTH = 1400
+# A flowchart more than this many times wider than it is tall is a strip of tiny text
+MAX_WIDTH_TO_HEIGHT = 2.5
 
 # gfm is what the model writes. Newlines stay as line breaks so address blocks and
 # signatures keep their shape, and raw HTML is read as plain text.
@@ -44,6 +49,17 @@ _FENCED_BLOCK = re.compile(r"```(\w*)[ \t]*\n(.*?)```", re.DOTALL)
 _LOOSE_DIAGRAM = re.compile(rf"\b{_DIAGRAM_HEADER}.*", re.DOTALL)
 
 _FLOWCHART_HEADER = re.compile(r"\s*(?:flowchart|graph)\b")
+# A sequence diagram prints the quotes around a participant's display name
+_QUOTED_PARTICIPANT = re.compile(r'^([ \t]*(?:participant|actor)[ \t]+\S+[ \t]+as[ \t]+)"([^"\n]*)"[ \t]*$', re.MULTILINE)
+_FLOWCHART_DIRECTION = re.compile(r"\A(?:flowchart|graph)[ \t]+(TD|TB|LR)\b")
+# Sent with every diagram. Notes get dark text on a light box and long text wraps,
+# because the renderer otherwise cuts note text off at the edge of its box. The wide
+# spacing between participants gives long messages room before they have to wrap.
+MERMAID_CONFIG = {
+    "theme": "neutral",
+    "sequence": {"wrap": True, "actorMargin": 140},
+    "themeVariables": {"noteBkgColor": "#fff8c4", "noteTextColor": "#222222", "noteBorderColor": "#c9b458"},
+}
 # Flowchart node shapes with the brackets that close them, longest opener first
 _NODE_SHAPES = (
     ("(((", (")))",)), ("((", ("))",)), ("([", ("])",)), ("[[", ("]]",)), ("[(", (")]",)),
@@ -290,6 +306,16 @@ def fix_flowchart_labels(source: str) -> str:
     return "".join(out)
 
 
+def fix_sequence_names(source: str) -> str:
+    """
+    Take the quotes off participant names in a sequence diagram, where Mermaid
+    prints them as part of the name. Other diagram types come back unchanged.
+    """
+    if not source.lstrip().startswith("sequenceDiagram"):
+        return source
+    return _QUOTED_PARTICIPANT.sub(r"\1\2", source)
+
+
 async def render_mermaid(source: str) -> bytes:
     """
     Render Mermaid source to a PNG with the public mermaid.ink service.
@@ -299,7 +325,7 @@ async def render_mermaid(source: str) -> bytes:
     if not source:
         raise DocumentError("the mermaid source is empty")
 
-    fixed = fix_flowchart_labels(source)
+    fixed = fix_sequence_names(fix_flowchart_labels(source))
     try:
         return await _request_diagram(fixed)
     except DiagramSyntaxError:
@@ -311,10 +337,31 @@ async def render_mermaid(source: str) -> bytes:
 
 
 async def _request_diagram(source: str) -> bytes:
-    payload = json.dumps({"code": source, "mermaid": {"theme": "neutral"}})
+    """Render with mermaid.ink, and with kroki.io when that service is down."""
+    payload = json.dumps({"code": source, "mermaid": MERMAID_CONFIG})
     encoded = base64.urlsafe_b64encode(zlib.compress(payload.encode("utf-8"), 9)).decode("ascii")
-    url = f"{MERMAID_URL}pako:{encoded}?type=png&bgColor=white&width={DIAGRAM_WIDTH}"
+    try:
+        return await _fetch_diagram(f"{MERMAID_URL}pako:{encoded}?type=png&bgColor=white&width={DIAGRAM_WIDTH}", "mermaid.ink")
+    except DiagramSyntaxError:
+        raise
+    except DocumentError as e:
+        down = e  # kept, because this is the error to report if the backup fails as well
+        logger.warning(f"{down}. Trying kroki.io")
 
+    # kroki takes its settings as a line in the source. It rejects the note settings on
+    # anything but a sequence diagram, so the other types only get the theme.
+    settings = MERMAID_CONFIG if source.startswith("sequenceDiagram") else {"theme": MERMAID_CONFIG["theme"]}
+    with_settings = "%%{init: " + json.dumps(settings) + "}%%\n" + source
+    encoded = base64.urlsafe_b64encode(zlib.compress(with_settings.encode("utf-8"), 9)).decode("ascii")
+    try:
+        return await _fetch_diagram(KROKI_URL + encoded, "kroki.io")
+    except DocumentError as e:
+        logger.warning(f"The backup renderer failed too: {e}")
+        raise down
+
+
+async def _fetch_diagram(url: str, service: str) -> bytes:
+    """Download one rendered diagram and check that it is a whole PNG."""
     try:
         timeout = aiohttp.ClientTimeout(total=MERMAID_TIMEOUT_SECONDS)
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -322,23 +369,23 @@ async def _request_diagram(source: str) -> bytes:
                 body = await response.read()
                 status = response.status
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-        logger.warning(f"Mermaid renderer unreachable: {e!r}")
-        raise DocumentError("the diagram renderer (mermaid.ink) could not be reached, try again later")
+        logger.warning(f"Diagram renderer {service} unreachable: {e!r}")
+        raise DocumentError(f"the diagram renderer ({service}) could not be reached, try again later")
 
     if status == 400:
         detail = body.decode("utf-8", errors="replace").strip()[:600]
         raise DiagramSyntaxError(f"the mermaid source has a syntax error: {detail}")
     if status != 200 or not body.startswith(b"\x89PNG"):
-        logger.warning(f"Mermaid renderer returned status {status}")
-        raise DocumentError(f"the diagram renderer (mermaid.ink) failed with status {status}, try again later")
+        logger.warning(f"Diagram renderer {service} returned status {status}")
+        raise DocumentError(f"the diagram renderer ({service}) failed with status {status}, try again later")
 
     # A cut-off download would break the whole document later, so decode it once here
     try:
         from PIL import Image
         Image.open(io.BytesIO(body)).load()
     except Exception as e:
-        logger.warning(f"Mermaid renderer returned a broken image: {e!r}")
-        raise DocumentError("the diagram renderer (mermaid.ink) returned a broken image, try again later")
+        logger.warning(f"Diagram renderer {service} returned a broken image: {e!r}")
+        raise DocumentError(f"the diagram renderer ({service}) returned a broken image, try again later")
     return body
 
 
@@ -495,7 +542,33 @@ async def build_document(fmt: str, title: str, markdown: str, max_pages: Optiona
     return BuiltFile(filename, data)
 
 
+def _width_to_height(png: bytes) -> float:
+    """How many times wider than tall a PNG is, read from its header."""
+    width, height = struct.unpack(">II", png[16:24])
+    return width / max(1, height)
+
+
+def _turned(source: str) -> Optional[str]:
+    """The same flowchart drawn the other way: top-down swapped with left-to-right. None for other diagrams."""
+    direction = _FLOWCHART_DIRECTION.match(source)
+    if not direction:
+        return None
+    other = "TD" if direction.group(1) == "LR" else "LR"
+    return source[:direction.start(1)] + other + source[direction.end(1):]
+
+
 async def build_diagram(title: str, mermaid_source: str) -> BuiltFile:
     """Render one Mermaid diagram to a PNG file."""
     png = await render_mermaid(mermaid_source)
+
+    # A box with a dozen arrows fanning out is drawn as one wide strip, and the text in
+    # it is too small to read. Turned the other way the same chart is usually fine.
+    turned = _turned(mermaid_source.strip())
+    if turned and _width_to_height(png) > MAX_WIDTH_TO_HEIGHT:
+        try:
+            other = await render_mermaid(turned)
+            if _width_to_height(other) < _width_to_height(png):
+                png = other
+        except DocumentError as e:
+            logger.warning(f"Could not draw the diagram the other way: {e}")
     return BuiltFile(f"{slugify(title, 'diagram')}.png", png)

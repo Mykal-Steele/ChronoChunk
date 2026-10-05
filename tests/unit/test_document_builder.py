@@ -15,7 +15,7 @@ from pypdf import PdfReader
 from src import document_builder
 from src.document_builder import (
     DiagramSyntaxError, DocumentError, build_diagram, build_document, clean_document_text, fix_flowchart_labels,
-    render_mermaid, slugify, split_mermaid,
+    fix_sequence_names, render_mermaid, slugify, split_mermaid,
 )
 
 def _png() -> bytes:
@@ -344,6 +344,25 @@ def test_other_diagram_types_are_left_alone():
     assert fix_flowchart_labels(source) == source
 
 
+def test_sequence_participant_names_lose_their_quotes():
+    source = 'sequenceDiagram\n  participant U as User\n  participant A as "Our App (Client)"\n  actor G as "Google"\n  U->>A: click "Sign in"'
+    assert fix_sequence_names(source) == (
+        'sequenceDiagram\n  participant U as User\n  participant A as Our App (Client)\n  actor G as Google\n  U->>A: click "Sign in"')
+
+
+def test_quotes_outside_sequence_diagrams_are_kept():
+    source = 'flowchart TD\n  A["participant X as \\"Y\\""] --> B'
+    assert fix_sequence_names(source) == source
+
+
+async def test_render_asks_for_readable_notes(monkeypatch):
+    seen = _fake_session(monkeypatch)
+    await render_mermaid("sequenceDiagram\n  A->>B: hi\n  Note over A,B: a long note")
+    sent = json.loads(zlib.decompress(base64.urlsafe_b64decode(seen["url"].split("pako:")[1].split("?")[0])))
+    assert sent["mermaid"]["sequence"] == {"wrap": True, "actorMargin": 140}
+    assert sent["mermaid"]["themeVariables"]["noteTextColor"] == "#222222"
+
+
 async def test_render_sends_the_fixed_labels(monkeypatch):
     seen = _fake_session(monkeypatch)
     await render_mermaid("flowchart TD\n  A[stream(words)] --> B")
@@ -384,6 +403,89 @@ def test_split_ignores_ordinary_messages_and_other_code():
     assert split_mermaid("yo whats good") is None
     assert split_mermaid("a flowchart TD goes top down, LR goes sideways") is None
     assert split_mermaid("```python\nprint('graph LR')\n```") is None
+
+
+# ── the backup renderer ───────────────────────────────────────────────────────
+
+async def test_render_uses_the_backup_service_when_the_first_is_down(monkeypatch):
+    fetch = AsyncMock(side_effect=[DocumentError("the diagram renderer (mermaid.ink) failed with status 503, try again later"), PNG])
+    monkeypatch.setattr(document_builder, "_fetch_diagram", fetch)
+    assert await render_mermaid("sequenceDiagram\n  A->>B: hi") == PNG
+    first, second = [call.args for call in fetch.await_args_list]
+    assert first[0].startswith("https://mermaid.ink/img/pako:") and second[0].startswith("https://kroki.io/mermaid/png/")
+    sent = zlib.decompress(base64.urlsafe_b64decode(second[0].rsplit("/", 1)[1])).decode("utf-8")
+    assert sent.startswith("%%{init: ") and sent.endswith("sequenceDiagram\n  A->>B: hi")
+
+
+async def test_backup_service_gets_only_the_theme_for_a_flowchart(monkeypatch):
+    fetch = AsyncMock(side_effect=[DocumentError("down"), PNG])
+    monkeypatch.setattr(document_builder, "_fetch_diagram", fetch)
+    await render_mermaid("flowchart TD\n  A --> B")
+    sent = zlib.decompress(base64.urlsafe_b64decode(fetch.await_args_list[1].args[0].rsplit("/", 1)[1])).decode("utf-8")
+    assert sent.startswith('%%{init: {"theme": "neutral"}}%%\nflowchart TD')
+
+
+async def test_render_reports_the_first_error_when_both_services_fail(monkeypatch):
+    fetch = AsyncMock(side_effect=[DocumentError("the diagram renderer (mermaid.ink) could not be reached, try again later"),
+                                   DocumentError("the diagram renderer (kroki.io) failed with status 500, try again later")])
+    monkeypatch.setattr(document_builder, "_fetch_diagram", fetch)
+    with pytest.raises(DocumentError, match="mermaid.ink"):
+        await render_mermaid("flowchart TD\n  A --> B")
+
+
+async def test_a_syntax_error_does_not_go_to_the_backup_service(monkeypatch):
+    fetch = AsyncMock(side_effect=DiagramSyntaxError("the mermaid source has a syntax error: line 2"))
+    monkeypatch.setattr(document_builder, "_fetch_diagram", fetch)
+    with pytest.raises(DiagramSyntaxError):
+        await render_mermaid("flowchart TD\n  A --> B")
+    assert fetch.await_count == 1
+
+
+# ── wide diagrams ─────────────────────────────────────────────────────────────
+
+def _png_of(width: int, height: int) -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height), "white").save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+async def test_a_wide_flowchart_is_drawn_the_other_way(monkeypatch):
+    strip, tall = _png_of(1400, 175), _png_of(1400, 2300)
+    renderer = AsyncMock(side_effect=[strip, tall])
+    monkeypatch.setattr(document_builder, "render_mermaid", renderer)
+    built = await build_diagram("Flow", "flowchart TD\n  A --> B")
+    assert built.data == tall
+    assert renderer.await_args_list[1].args[0] == "flowchart LR\n  A --> B"
+
+
+async def test_a_long_left_to_right_chain_is_drawn_top_down(monkeypatch):
+    renderer = AsyncMock(side_effect=[_png_of(1400, 120), _png_of(1400, 1900)])
+    monkeypatch.setattr(document_builder, "render_mermaid", renderer)
+    await build_diagram("Flow", "graph LR\n  A --> B")
+    assert renderer.await_args_list[1].args[0] == "graph TD\n  A --> B"
+
+
+async def test_the_first_drawing_is_kept_when_turning_it_does_not_help(monkeypatch):
+    strip = _png_of(1400, 300)
+    renderer = AsyncMock(side_effect=[strip, _png_of(1400, 150)])
+    monkeypatch.setattr(document_builder, "render_mermaid", renderer)
+    assert (await build_diagram("Flow", "flowchart TD\n  A --> B")).data == strip
+
+    renderer = AsyncMock(side_effect=[strip, DocumentError("renderer down")])
+    monkeypatch.setattr(document_builder, "render_mermaid", renderer)
+    assert (await build_diagram("Flow", "flowchart TD\n  A --> B")).data == strip
+
+
+async def test_normal_and_non_flowchart_diagrams_are_drawn_once(monkeypatch):
+    renderer = AsyncMock(return_value=_png_of(1400, 900))
+    monkeypatch.setattr(document_builder, "render_mermaid", renderer)
+    await build_diagram("Flow", "flowchart TD\n  A --> B")
+    assert renderer.await_count == 1
+
+    renderer = AsyncMock(return_value=_png_of(1400, 200))
+    monkeypatch.setattr(document_builder, "render_mermaid", renderer)
+    await build_diagram("Timeline", "gantt\n  title Plan")
+    assert renderer.await_count == 1
 
 
 async def test_build_diagram_names_the_file_from_the_title(fake_renderer):

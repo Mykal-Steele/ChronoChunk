@@ -7,7 +7,7 @@ from src.document_builder import BuiltFile
 from src.message_handler import MessageHandler
 from src.rate_limiter import RateLimiter
 from src.slash_commands import SlashCommandManager
-from tests.fakes import fake_attachment, fake_author, fake_channel
+from tests.fakes import fake_attachment, fake_author, fake_channel, fake_message, make_png
 
 
 @pytest.fixture
@@ -43,6 +43,7 @@ async def commands(mock_bot_user):
     await manager._register_tldr_command()
     await manager._register_usage_command()
     await manager._register_help_command()
+    await manager._register_recent_posts_command()
     return registered, bot, ai_handler, user_data_manager
 
 
@@ -196,3 +197,48 @@ async def test_help_has_no_swearing_and_fits_discords_limits(commands):
     assert "my g" in embed.description  # still sounds like the bot
     assert all(len(field.value) <= 1024 for field in embed.fields)
     assert len(text) <= 6000
+
+
+# ── /recent-posts ─────────────────────────────────────────────────────────────
+
+async def test_recent_posts_can_be_switched_off_by_someone_who_manages_the_channel(commands, channel_settings):
+    registered, _, _, _ = commands
+    interaction = _interaction()
+    interaction.guild = MagicMock()
+    interaction.permissions.manage_channels = True
+
+    await registered["recent-posts"](interaction, False)
+
+    assert channel_settings.reads_recent_posts(interaction.channel_id) is False
+    assert "wont look at pics and files" in interaction.response.send_message.call_args[0][0]
+
+    await registered["recent-posts"](interaction, True)
+    assert channel_settings.reads_recent_posts(interaction.channel_id) is True
+
+
+async def test_recent_posts_switch_is_refused_without_the_permission(commands, channel_settings):
+    registered, _, _, _ = commands
+    interaction = _interaction()
+    interaction.guild = MagicMock()
+    interaction.permissions.manage_channels = False
+
+    await registered["recent-posts"](interaction, False)
+
+    assert channel_settings.reads_recent_posts(interaction.channel_id) is True
+    assert interaction.response.send_message.call_args[1]["ephemeral"] is True
+
+
+async def test_chat_reads_a_just_posted_image_only_while_the_switch_is_on(commands, channel_settings):
+    registered, bot, ai_handler, _ = commands
+    posted = fake_message(fake_author("Alex", 777), "", attachments=[fake_attachment("shot.png", make_png(), "image/png")])
+    bot.message_processor.sync_channel_history = AsyncMock(return_value=[posted])
+
+    interaction = _interaction()
+    await registered["chat"](interaction, "what is this", None)
+    assert "POSTED IN THIS CHANNEL RIGHT BEFORE" in ai_handler.generate_reply.call_args[1]["attached_context"]
+    assert len(ai_handler.generate_reply.call_args[1]["images"]) == 1
+
+    channel_settings.set_reads_recent_posts(interaction.channel_id, False)
+    await registered["chat"](interaction, "and now", None)
+    assert ai_handler.generate_reply.call_args[1]["attached_context"] == ""
+    assert ai_handler.generate_reply.call_args[1]["images"] == []

@@ -309,6 +309,22 @@ async def test_picture_posted_just_before_is_shown_to_the_ai_without_a_reply(pip
     assert len(images) == 1
 
 
+async def test_just_posted_picture_is_left_alone_where_the_channel_switched_it_off(pipeline, channel_settings):
+    processor, _, _, _, ai_handler, bot = pipeline
+    posted = fake_message(fake_author("Alex", 777), "", message_id=1,
+                          attachments=[fake_attachment("meme.png", make_png(), "image/png")])
+    trigger = fake_message(fake_author("Kruskal"), "/explain this", message_id=2)
+    _channel_with(posted, trigger)
+    channel_settings.set_reads_recent_posts(trigger.channel.id, False)
+
+    await processor.process_message(trigger)
+
+    _, history, attached, images = _ai_call(ai_handler)
+    assert attached == "" and images == []
+    assert "[attached: meme.png]" in history  # the filename still shows in the chat history
+    posted.attachments[0].read.assert_not_called()
+
+
 async def test_linked_message_attachment_is_read(pipeline):
     processor, _, _, _, ai_handler, bot = pipeline
     notes = fake_attachment("notes.md", b"# Trip plan\n\nleave at 6am", "text/markdown")
@@ -347,6 +363,7 @@ async def test_tldr_sums_up_the_channel(pipeline):
     assert "LAST 2 MESSAGES IN THIS CHANNEL" in attached
     assert attached.index("Alex: lunch at 12?") < attached.index("Sam: cant, meeting")
     assert "/tldr" not in attached
+    assert attached.rstrip().endswith("keep it shorter than the chat it covers.)")
     # a plain recap is text only
     assert ai_handler.generate_reply.call_args[1]["allow_files"] is False
     trigger.reply.assert_called_once()
