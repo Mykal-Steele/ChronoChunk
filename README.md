@@ -139,6 +139,7 @@ Examples:
 ## Development
 
 - Code is in `src/` directory
+- The version number is in `src/version.py`. Every change is listed in [CHANGELOG.md](CHANGELOG.md). Change both in the same commit and tag it, for example `git tag v2.7.0`.
 - Tests are in `tests/` directory. They run in the bot's Docker image: `docker build -t chronochunk:dev . && docker run --rm -v "$PWD":/app -w /app chronochunk:dev python -m pytest tests/unit tests/integration -q`
 - GitHub Actions runs the same tests on every push to `ai/chat` and `main` (`.github/workflows/tests.yml`)
 - Config is in `config/` directory

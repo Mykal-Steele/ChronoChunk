@@ -58,6 +58,12 @@ async def test_status_endpoint_online(web_client):
     assert data["status"] == "online"
 
 
+async def test_status_reports_the_bots_version(web_client):
+    from src.version import __version__
+    resp = await web_client.get("/status")
+    assert (await resp.json())["version"] == __version__
+
+
 async def test_status_uptime_is_non_negative(web_client):
     resp = await web_client.get("/status")
     data = await resp.json()

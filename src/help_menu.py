@@ -5,6 +5,7 @@ import discord
 
 from config.config import Config
 from src.ai_response_handler import MAX_FILES_PER_REPLY
+from src.version import __version__
 from src.message_context import (
     MAX_FILE_BYTES, MAX_FILE_CHARS, MAX_FILES, MAX_IMAGE_BYTES, MAX_IMAGES, MAX_PDF_IMAGES, MAX_PDF_PAGES,
     RECENT_FILE_CHARS, RECENT_MAX_FILES, RECENT_MAX_IMAGES, RECENT_POST_MINUTES, RECENT_POSTS, TLDR_FILE_CHARS,
@@ -105,5 +106,6 @@ def build_help_embed() -> discord.Embed:
     ]
     embed.add_field(name="😂 other stuff", value="\n".join(fun_cmds), inline=False)
 
-    embed.set_footer(text="u can also just chat with me normally in any channel by replying to the bot message, no commands needed")
+    embed.set_footer(text=f"ChronoChunk v{__version__} | u can also just chat with me normally in any channel "
+                          "by replying to the bot message, no commands needed")
     return embed

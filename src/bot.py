@@ -28,6 +28,7 @@ from src.user_data_manager import UserDataManager
 from src.ai_response_handler import AIResponseHandler
 from src.message_handler import MessageHandler
 from src.slash_commands import SlashCommandManager
+from src.version import __version__
 from src.web_server import WebServer
 from src.message_processor import MessageProcessor
 
@@ -109,7 +110,7 @@ class ChronoChunk(commands.Bot):
         # Register event handlers
         self.setup_event_handlers()
         
-        logger.info("Bot initialized with per-user rate limits and an AI budget guard")
+        logger.info(f"ChronoChunk v{__version__} initialized with per-user rate limits and an AI budget guard")
     
     def setup_event_handlers(self):
         """Setup all event handlers for the bot"""

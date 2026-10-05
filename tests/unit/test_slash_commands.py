@@ -242,3 +242,13 @@ async def test_chat_reads_a_just_posted_image_only_while_the_switch_is_on(comman
     await registered["chat"](interaction, "and now", None)
     assert ai_handler.generate_reply.call_args[1]["attached_context"] == ""
     assert ai_handler.generate_reply.call_args[1]["images"] == []
+
+
+async def test_help_shows_the_version(commands):
+    from src.version import __version__
+    registered, _, _, _ = commands
+    interaction = _interaction()
+
+    await registered["help"](interaction)
+
+    assert f"ChronoChunk v{__version__}" in interaction.response.send_message.call_args[1]["embed"].footer.text

@@ -4,6 +4,8 @@ from aiohttp import web
 import threading
 import time
 
+from src.version import __version__
+
 logger = logging.getLogger(__name__)
 
 class WebServer:
@@ -43,7 +45,7 @@ class WebServer:
             "status": "online",
             "uptime": f"{hours}h {minutes}m {seconds}s",
             "uptime_seconds": uptime,
-            "version": "1.0.0"  # You might want to store this elsewhere
+            "version": __version__
         }
         
         return web.json_response(status)
