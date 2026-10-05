@@ -496,7 +496,16 @@ class SlashCommandManager:
                 "`/code` - get link to my source code"
             ]
             embed.add_field(name="💬 general commands", value="\n".join(general_cmds), inline=False)
-            
+
+            # Reading messages and files section
+            reading_cmds = [
+                "reply to any message and type `/` plus what u want, like `/read this` or `/summarize` - i read that message and whatever is attached to it",
+                "works on images, pdfs, and md/txt/code files. attach one to ur own `/` message and i read that too",
+                "`/tldr <count>` - catch up on the last messages in the channel (default 50, max 200)",
+                "pinging me works the same as starting with `/`"
+            ]
+            embed.add_field(name="📎 reading stuff", value="\n".join(reading_cmds), inline=False)
+
             # Game commands section
             game_cmds = [
                 "`/game <max>` - start a number guessing game (1 to max, default 100)",

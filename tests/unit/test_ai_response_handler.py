@@ -192,3 +192,71 @@ async def test_system_prompt_has_no_hardcoded_names(handler):
     """System prompt must not contain hardcoded usernames like 'Kruskal'."""
     from src.ai_response_handler import _SYSTEM_PROMPT
     assert "Kruskal" not in _SYSTEM_PROMPT
+
+
+# ── attached context and images ──────────────────────────────────────────────
+
+def _user_content(mock_openai_client, call_index=-1):
+    messages = mock_openai_client.chat.completions.create.call_args_list[call_index][1]["messages"]
+    return next(m["content"] for m in messages if m["role"] == "user")
+
+
+async def test_attached_context_sits_between_history_and_the_query(handler, mock_openai_client):
+    block = '=== MESSAGE THEY REPLIED TO (sent by Kruskal) ===\ntext: "hey bau"\n=== END OF REPLIED-TO MESSAGE ==='
+    await handler.generate_response("/read what this msg say", "Kruskal: earlier chat", "Kruskal", "1",
+                                    attached_context=block)
+    content = _user_content(mock_openai_client)
+    assert isinstance(content, str)
+    assert content.index("earlier chat") < content.index("hey bau") < content.index('[Kruskal]: "read what this msg say"')
+
+
+async def test_images_are_sent_as_image_parts(handler, mock_openai_client):
+    await handler.generate_response("/read", "", "Kruskal", "1",
+                                    attached_context="image: proof.png", images=["data:image/png;base64,AAAA"])
+    content = _user_content(mock_openai_client)
+    assert content[0]["type"] == "text" and '[Kruskal]: "read"' in content[0]["text"]
+    assert content[1] == {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+
+
+async def test_same_query_on_different_replied_messages_is_not_served_from_cache(handler, mock_openai_client):
+    await handler.generate_response("/read", "", "Kruskal", "1", attached_context='text: "first message"')
+    await handler.generate_response("/read", "", "Kruskal", "1", attached_context='text: "second message"')
+    assert mock_openai_client.chat.completions.create.call_count == 2
+
+
+async def test_reading_material_gets_a_bigger_token_budget(handler, mock_openai_client):
+    await handler.generate_response("/yo", "", "Kruskal", "1")
+    plain = mock_openai_client.chat.completions.create.call_args[1]["max_completion_tokens"]
+    await handler.generate_response("/summarize", "", "Kruskal", "1", attached_context="file: notes.md")
+    reading = mock_openai_client.chat.completions.create.call_args[1]["max_completion_tokens"]
+    assert reading > plain
+
+
+async def test_bad_image_falls_back_to_a_text_only_request(handler, mock_openai_client, fake_openai_response):
+    mock_openai_client.chat.completions.create.side_effect = [
+        Exception("Error code: 400 - Invalid image data"),
+        fake_openai_response,
+    ]
+    result = await handler.generate_response("/read", "", "Kruskal", "1", images=["data:image/png;base64,AAAA"])
+    assert result == "test ai response"
+    retry_content = _user_content(mock_openai_client)
+    assert isinstance(retry_content, str)
+    assert "images failed to load" in retry_content
+
+
+async def test_system_prompt_covers_replies_and_staying_on_topic(handler):
+    from src.ai_response_handler import _SYSTEM_PROMPT
+    assert "MESSAGE THEY REPLIED TO" in _SYSTEM_PROMPT
+    assert "STAY ON TOPIC" in _SYSTEM_PROMPT
+
+
+def test_format_keeps_number_ranges_readable(handler):
+    result = handler._format_ai_response("office hrs 14:00–16:00, weeks 1 – 3")
+    assert "14:00-16:00" in result
+    assert "weeks 1-3" in result
+
+
+def test_format_still_strips_dashes_between_words(handler):
+    result = handler._format_ai_response("nah — thats cooked")
+    assert "—" not in result and "–" not in result
+    assert "nah thats cooked" in result

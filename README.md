@@ -54,6 +54,18 @@ python src/bot.py
 - `/mydata` - See what info the bot has about you
 - `/forget <text>` - Make the bot forget specific info
 - `/code` - Format code for Discord (React only rn)
+- `/tldr <count>` - Sum up the last messages in the channel (default 50, max 200)
+
+## Reading messages and files
+
+Reply to any message and start your reply with `/`, for example `/read this` or `/summarize`. The bot reads the message you replied to and answers about it. This works for:
+
+- text messages and link previews
+- images (png, jpg, webp)
+- PDFs with selectable text
+- markdown, text and code files
+
+You can also attach a file or image to your own `/` message. Pinging the bot works the same as starting with `/`.
 
 ## Music Commands
 

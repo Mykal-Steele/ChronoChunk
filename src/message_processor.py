@@ -3,6 +3,7 @@ import re
 import discord
 from typing import Optional, Tuple
 from src.command_handler import RateLimitError
+from src.message_context import build_attached_context, history_text
 from discord.ext.commands.errors import CommandNotFound
 import asyncio
 import sys
@@ -11,6 +12,13 @@ from typing import Dict, Any, List, Optional
 
 # Setup logging
 logger = logging.getLogger(__name__)
+
+# How many channel messages to load as context when the bot answers
+HISTORY_FETCH_LIMIT = 15
+
+# The bot quotes and sums up other people's messages, so what it sends must never ping anyone
+NO_PINGS = discord.AllowedMentions.none()
+
 
 class MessageProcessor:
     """Processes incoming Discord messages and handles routing them correctly"""
@@ -38,32 +46,18 @@ class MessageProcessor:
             username = message.author.display_name
             channel_id = str(message.channel.id)
             
-            # IMPORTANT: Always capture message history for EVERY message in the channel
-            # This ensures we have context even for non-command messages
-            recent_messages = [msg async for msg in message.channel.history(limit=15)]
-            
-            # Store ALL recent messages from the channel for better context
-            for msg in recent_messages:
-                if msg.id != message.id:  # Skip current message as it's handled below
-                    self.message_handler.update_channel_history(
-                        channel_id=channel_id,
-                        user_id=str(msg.author.id),
-                        username=msg.author.display_name,
-                        content=msg.content,
-                        is_bot=msg.author.bot,
-                        is_command=msg.content.startswith('/')
-                    )
-            
-            # Now process the current message
+            # Keep a running history of the channel. It gets replaced by a fresh
+            # snapshot from Discord right before the bot answers.
             self.message_handler.update_channel_history(
                 channel_id=channel_id,
                 user_id=user_id,
                 username=username,
-                content=content,
+                content=history_text(message),
                 is_bot=False,
-                is_command=content.startswith('/')
+                is_command=content.startswith('/'),
+                timestamp=getattr(message, "created_at", None)
             )
-                
+
             # Now handle command processing
             if content.startswith('/'):
                 # Load user data
@@ -72,39 +66,84 @@ class MessageProcessor:
                 # Process as command
                 await self._handle_command_message(message, user_id, username, channel_id, user_data, False)
                 return
-                
-            # Check if this is a reply to the bot
-            is_reply_to_bot = await self._check_if_reply_to_bot(message)
-            if is_reply_to_bot:
-                # Handle as a reply
+
+            # Answer when they reply to one of the bot's messages or ping the bot
+            referenced = await self._get_referenced_message(message)
+            is_reply_to_bot = referenced is not None and referenced.author.id == self.bot.user.id
+            if is_reply_to_bot or self._mentions_bot(message):
                 user_data = self.user_data_manager.load_user_data(user_id, username)
-                conversation_history = self.message_handler.build_conversation_context(
-                    channel_id=channel_id,
-                    user_data=user_data,
-                    is_correction=False
-                )
-                await self._handle_ai_response(message, user_id, username, channel_id, content, conversation_history)
+                await self._respond(message, user_id, username, channel_id,
+                                    self._strip_bot_mention(content), user_data, referenced)
                 return
                 
-            # If we get here, message is neither a command nor a reply to the bot
+            # If we get here, message is neither a command, a reply to the bot nor a ping
             # Ignore for processing but we've already captured it in history
 
         except Exception as e:
             logger.error(f"Error processing message: {e}")
             logger.error(traceback.format_exc())
     
-    async def _check_if_reply_to_bot(self, message: discord.Message) -> bool:
-        """Check if the message is a reply to one of the bot's messages"""
-        if message.reference and message.reference.message_id:
-            try:
-                referenced_msg = await message.channel.fetch_message(message.reference.message_id)
-                return referenced_msg.author.id == self.bot.user.id
-            except discord.NotFound:
-                pass
-            except discord.HTTPException as e:
-                logger.warning(f"Could not fetch referenced message (code {e.code}): {e}")
-        return False
-    
+    async def _get_referenced_message(self, message: discord.Message) -> Optional[discord.Message]:
+        """Return the message this one replies to, or None if it is not a reply or it is gone."""
+        reference = message.reference
+        if not reference or not reference.message_id:
+            return None
+        # Discord usually sends the replied-to message along, which saves a fetch
+        if isinstance(reference.resolved, discord.Message):
+            return reference.resolved
+        try:
+            return await message.channel.fetch_message(reference.message_id)
+        except discord.NotFound:
+            pass
+        except discord.HTTPException as e:
+            logger.warning(f"Could not fetch referenced message (code {e.code}): {e}")
+        return None
+
+    def _mentions_bot(self, message: discord.Message) -> bool:
+        """True when the message pings the bot itself (not @everyone or a role)."""
+        mentions = getattr(message, "mentions", None)
+        return isinstance(mentions, list) and any(user.id == self.bot.user.id for user in mentions)
+
+    def _strip_bot_mention(self, content: str) -> str:
+        """Remove the bot's own ping from the text so the AI only sees what they said."""
+        stripped = re.sub(rf'<@!?{self.bot.user.id}>', '', content).strip()
+        return stripped or "(no text, they just pinged u)"
+
+    async def _sync_channel_history(self, message: discord.Message) -> None:
+        """Replace the stored history with what is really in the channel right now, oldest first."""
+        try:
+            recent = [msg async for msg in message.channel.history(limit=HISTORY_FETCH_LIMIT)]
+        except discord.HTTPException as e:
+            logger.warning(f"Could not fetch channel history (code {e.code}): {e}")
+            return
+        if not recent:
+            return
+
+        recent.reverse()  # Discord returns newest first
+        self.message_handler.replace_channel_history(str(message.channel.id), [
+            {
+                "user_id": str(msg.author.id),
+                "username": msg.author.display_name,
+                "content": history_text(msg),
+                # Only our own messages count as the bot. Other bots show up under their own name.
+                "is_bot": msg.author.id == self.bot.user.id,
+                "is_command": isinstance(msg.content, str) and msg.content.startswith('/'),
+                "timestamp": msg.created_at,
+            }
+            for msg in recent
+        ])
+
+    async def _respond(self, message: discord.Message, user_id: str, username: str,
+                       channel_id: str, query: str, user_data: dict,
+                       referenced: Optional[discord.Message] = None) -> None:
+        """Answer a message with the AI, using fresh channel history and whatever the message points at."""
+        await self._sync_channel_history(message)
+        conversation_history = self.message_handler.build_conversation_context(
+            channel_id=channel_id, user_data=user_data, is_correction=False
+        )
+        await self._handle_ai_response(message, user_id, username, channel_id, query,
+                                       conversation_history, referenced)
+
     async def _handle_command_message(self, message: discord.Message, user_id: str, 
                               username: str, channel_id: str, user_data: dict,
 is_correction: bool) -> None:
@@ -117,10 +156,8 @@ is_correction: bool) -> None:
             
             # Check if we actually have a command handler
             if not self.command_handler:
-                conversation_history = self.message_handler.build_conversation_context(
-                    channel_id=channel_id, user_data=user_data, is_correction=False
-                )
-                await self._handle_ai_response(message, user_id, username, channel_id, message.content, conversation_history)
+                referenced = await self._get_referenced_message(message)
+                await self._respond(message, user_id, username, channel_id, message.content, user_data, referenced)
                 return
 
             # Pass to command handler
@@ -128,13 +165,12 @@ is_correction: bool) -> None:
 
             # If the command was recognized and handled, send the response
             if cmd_response:
-                await message.channel.send(cmd_response)
+                await self._safe_send(message.channel, cmd_response)
             else:
-                # Unrecognized slash — treat as chat, but now WITH conversation history
-                conversation_history = self.message_handler.build_conversation_context(
-                    channel_id=channel_id, user_data=user_data, is_correction=False
-                )
-                await self._handle_ai_response(message, user_id, username, channel_id, message.content, conversation_history)
+                # Unrecognized slash: treat as chat, with the channel history and the
+                # message they replied to (if any)
+                referenced = await self._get_referenced_message(message)
+                await self._respond(message, user_id, username, channel_id, message.content, user_data, referenced)
                 
         except Exception as e:
             logger.error(f"Error handling command: {e}")
@@ -203,32 +239,31 @@ is_correction: bool) -> None:
 
     async def _handle_ai_response(self, message: discord.Message, user_id: str,
                               username: str, channel_id: str, query: str,
-                              conversation_history: str) -> None:
+                              conversation_history: str,
+                              referenced: Optional[discord.Message] = None) -> None:
         original_query = query  # preserve clean version for history/user data storage
         try:
-            enriched_query = await self._resolve_message_link(query)
             async with message.channel.typing():
+                enriched_query = await self._resolve_message_link(query)
+                # Read the message they replied to and any files or images involved
+                attached = await build_attached_context(message, referenced, self.bot.user.id)
                 ai_response = await self.ai_handler.generate_response(
-                    enriched_query, conversation_history, username, user_id
+                    enriched_query, conversation_history, username, user_id,
+                    attached_context=attached.text, images=attached.images
                 )
 
-            await self._safe_send(message.channel, ai_response)
+            await self._send_reply(message, ai_response)
             await self._maybe_assign_chrono_role(message)
 
-            # Store the original (clean) query so notes/embeds don't pollute history
-            self.message_handler.update_channel_history(
-                channel_id=channel_id, user_id=user_id,
-                username=username, content=original_query, is_bot=False
-            )
+            # The user's message is already in the history, so only the answer is added
             self.message_handler.update_channel_history(
                 channel_id=channel_id, user_id=str(self.bot.user.id),
                 username="ChronoChunk", content=ai_response, is_bot=True
             )
 
+            # add_conversation also extracts facts from the message
             if self.user_data_manager:
                 await self.user_data_manager.add_conversation(user_id, original_query, ai_response, username)
-                if not original_query.startswith('/') and len(original_query.split()) > 2:
-                    await self.user_data_manager.extract_and_save_facts(user_id, original_query, username)
 
         except discord.HTTPException as e:
             logger.error(f"Discord HTTP error sending response: {e} (code {e.code})")
@@ -237,24 +272,39 @@ is_correction: bool) -> None:
             logger.error(f"Error generating AI response: {e}")
             await self._safe_send(message.channel, "my brain just glitched fr, try again in a sec")
 
-    async def _safe_send(self, channel, text: str) -> None:
-        """Send text to Discord, splitting at 1900 chars if needed."""
-        limit = 1900
-        if len(text) <= limit:
-            await channel.send(text)
-            return
-        # Split at last word boundary before the limit
+    @staticmethod
+    def _split_text(text: str, limit: int = 1900) -> List[str]:
+        """Split text into chunks Discord accepts, breaking at a line or word boundary."""
         chunks = []
         while len(text) > limit:
-            split_at = text.rfind(' ', 0, limit)
-            if split_at == -1:
+            split_at = text.rfind('\n', 0, limit)
+            if split_at <= 0:
+                split_at = text.rfind(' ', 0, limit)
+            if split_at <= 0:
                 split_at = limit
             chunks.append(text[:split_at])
             text = text[split_at:].lstrip()
         if text:
             chunks.append(text)
-        for chunk in chunks:
-            await channel.send(chunk)
+        return chunks
+
+    async def _safe_send(self, channel, text: str) -> None:
+        """Send text to Discord, splitting at 1900 chars if needed."""
+        for chunk in self._split_text(text):
+            await channel.send(chunk, allowed_mentions=NO_PINGS)
+
+    async def _send_reply(self, message: discord.Message, text: str) -> None:
+        """Send the answer as a Discord reply to the message that asked, splitting long text."""
+        chunks = self._split_text(text)
+        if not chunks:
+            return
+        try:
+            await message.reply(chunks[0], mention_author=False, allowed_mentions=NO_PINGS)
+        except discord.HTTPException:
+            # Replying failed (message deleted, or no permission), so send it as a plain message
+            await message.channel.send(chunks[0], allowed_mentions=NO_PINGS)
+        for chunk in chunks[1:]:
+            await message.channel.send(chunk, allowed_mentions=NO_PINGS)
 
     async def _discord_error_response(self, channel, error: discord.HTTPException) -> None:
         """Natural in-character response for specific Discord API errors."""

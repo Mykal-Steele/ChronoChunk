@@ -174,8 +174,20 @@ class UserDataManager:
             
             Example message: "I don't eat meat anymore"
             Example response: ["You do not eat meat"]
-            
+
+            Example message: "wsg"
+            Example response: []
+
+            Example message: "read what this msg say"
+            Example response: []
+
+            Example message: "ur so dumb lol"
+            Example response: []
+
             IMPORTANT RULES:
+            - ONLY lasting facts the user states about their own life: name, age, where they live, school or job, hobbies, likes and dislikes, pets, family and friends, things they own or are building
+            - Return [] for greetings, jokes, insults, trolling, crude or sexual remarks, questions, requests, and anything aimed at the bot
+            - NEVER describe the message itself or how the user behaved. No "You said ...", "You asked ...", "You used ...", "You want the bot to ..."
             - Include any personal facts (preferences, status, relationships, possessions)
             - Use second-person format ("You are", "You have", "You like", "Your friend is")
             - Return as a plain JSON array ["fact 1", "fact 2"]

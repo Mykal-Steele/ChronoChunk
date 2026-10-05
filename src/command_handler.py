@@ -11,6 +11,7 @@ try:
     from src.user_data_manager import UserDataManager
     from src.rate_limiter import RateLimiter
     from src.intent_detector import IntentDetector
+    from src.message_context import history_text
     from src.logger import logger
 except ImportError:
     # Add parent directory to path and try again
@@ -20,6 +21,7 @@ except ImportError:
     from src.user_data_manager import UserDataManager
     from src.rate_limiter import RateLimiter
     from src.intent_detector import IntentDetector
+    from src.message_context import history_text
     from src.logger import logger
 
 class CommandHandler:
@@ -75,6 +77,7 @@ class CommandHandler:
             "queue": self._handle_queue,
             "volume": self._handle_volume,
             "relate": self._handle_relate,
+            "tldr": self._handle_tldr,
         }
         
     async def handle_command(self, command: str, args: str, message: discord.Message, user_id: str) -> str:
@@ -226,6 +229,48 @@ class CommandHandler:
         except Exception as e:
             logger.error(f"Error handling chat: {e}")
             return "couldnt process that, try again?"
+
+    async def _handle_tldr(self, args: List[str], message: discord.Message, user_id: str) -> str:
+        """Sum up the recent messages in this channel, like '/tldr 100'"""
+        # As a reply, /tldr means "sum up that message", which the normal chat path does
+        if message.reference:
+            return None
+
+        ai_handler = getattr(self.bot, "ai_handler", None)
+        if not ai_handler:
+            return "that aint wired up yet"
+
+        count = 50
+        if args:
+            try:
+                count = max(5, min(int(args[0]), 200))
+            except ValueError:
+                return "gimme a number of messages, like '/tldr 100'"
+
+        try:
+            lines = []
+            async for msg in message.channel.history(limit=count, before=message):
+                text = history_text(msg)
+                if text:
+                    lines.append(f"{msg.author.display_name}: {text}")
+        except discord.HTTPException as e:
+            logger.error(f"Error fetching history for tldr: {e}")
+            return "cant read the history in this channel, no perms"
+
+        if not lines:
+            return "nothing in here to catch up on"
+
+        lines.reverse()  # Discord returns newest first
+        channel_messages = (
+            f"=== LAST {len(lines)} MESSAGES IN THIS CHANNEL, OLDEST FIRST ===\n"
+            + "\n".join(lines)
+            + "\n=== END OF CHANNEL MESSAGES ==="
+        )
+        return await ai_handler.generate_response(
+            "tldr of those channel messages, what did i miss",
+            "", message.author.display_name, user_id,
+            attached_context=channel_messages
+        )
 
     async def _handle_info(self, args: List[str], message: discord.Message, user_id: str) -> str:
         """Alias for _handle_my_data - shows user what data we have about them"""

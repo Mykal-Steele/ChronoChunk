@@ -8,68 +8,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
 
-class AsyncIterator:
-    def __init__(self, items=None):
-        self._items = list(items or [])
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        if self._items:
-            return self._items.pop(0)
-        raise StopAsyncIteration
-
-
-@pytest.fixture
-def pipeline(tmp_path, mock_genai_client, mock_bot_user):
-    """Build a fully wired MessageProcessor with mocked externals."""
-    from src.message_handler import MessageHandler
-    from src.game_manager import GameManager
-    from src.message_processor import MessageProcessor
-
-    with patch("src.user_data_manager.AsyncOpenAI") as mock_cls:
-        mock_cls.return_value = mock_genai_client
-        from src.user_data_manager import UserDataManager
-        udm = UserDataManager(data_dir=str(tmp_path))
-    udm.ai_client = mock_genai_client
-    udm.deployment = "gpt-5-mini"
-
-    mh = MessageHandler(bot=None)
-    gm = GameManager()
-
-    ai_handler = MagicMock()
-    ai_handler.generate_response = AsyncMock(return_value="yo what's good")
-    ai_handler.extract_important_topics = MagicMock(return_value=[])
-
-    mock_music = MagicMock()
-    mock_music.skip = AsyncMock(return_value=(False, "Nothing is playing"))
-    mock_music.pause = AsyncMock(return_value=(False, "Nothing is playing"))
-    mock_music.resume = AsyncMock(return_value=(False, "Not paused"))
-    mock_music.leave_voice_channel = AsyncMock(return_value=False)
-    mock_music.clear_queue = MagicMock()
-
-    from src.command_handler import CommandHandler
-    ch = CommandHandler(
-        bot=None,
-        game_manager=gm,
-        user_data_manager=udm,
-        music_manager=mock_music,
-    )
-
-    bot = MagicMock()
-    bot.user = mock_bot_user
-
-    processor = MessageProcessor(
-        bot=bot,
-        message_handler=mh,
-        ai_response_handler=ai_handler,
-        user_data_manager=udm,
-        game_manager=gm,
-        command_handler=ch,
-    )
-
-    return processor, mh, gm, udm, ai_handler, bot
+from tests.fakes import AsyncIterator
 
 
 def _make_message(bot_user, content="hello", is_reply_to_bot=False, is_bot_author=False,
@@ -107,6 +46,7 @@ def _make_message(bot_user, content="hello", is_reply_to_bot=False, is_bot_autho
     msg.content = content
     msg.reference = reference
     msg.id = 54321
+    msg.reply = AsyncMock()
     return msg
 
 
@@ -166,7 +106,8 @@ async def test_reply_to_bot_sends_response(pipeline):
     msg = _make_message(bot.user, content="what do you think?",
                         is_reply_to_bot=True, channel_send=send)
     await processor.process_message(msg)
-    send.assert_called()
+    msg.reply.assert_called_once()
+    assert msg.reply.call_args[0][0] == "here's my take fr"
 
 
 # ── channel history captured ──────────────────────────────────────────────────

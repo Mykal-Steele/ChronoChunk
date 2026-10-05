@@ -3,7 +3,7 @@ import re
 import logging
 import discord
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional, Union
 from config.config import Config
 
@@ -22,8 +22,9 @@ class MessageHandler:
         self.bot = bot  # Store the bot reference if provided
     
     def update_channel_history(self, channel_id: str, user_id: str, username: str, 
-                               content: str, is_bot: bool, is_command: bool = False):
-        """Update the channel history with a new message"""
+                               content: str, is_bot: bool, is_command: bool = False,
+                               timestamp: Optional[datetime] = None):
+        """Update the channel history with a new message. timestamp is when it was sent, default now."""
         if channel_id not in self.last_channel_messages:
             self.last_channel_messages[channel_id] = []
         
@@ -38,13 +39,33 @@ class MessageHandler:
             "author_name": username,
             "is_bot": is_bot,
             "content": content_to_store,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": (timestamp if isinstance(timestamp, datetime) else datetime.now(timezone.utc)).isoformat()
         })
         
         # Keep only last messages based on config
         if len(self.last_channel_messages[channel_id]) > Config.CHANNEL_HISTORY_SIZE:
             self.last_channel_messages[channel_id] = self.last_channel_messages[channel_id][-Config.CHANNEL_HISTORY_SIZE:]
     
+    def replace_channel_history(self, channel_id: str, messages: List[Dict[str, Any]]) -> None:
+        """
+        Swap the stored history for a fresh snapshot of the channel. messages must be
+        oldest first, each a dict of update_channel_history arguments.
+        """
+        self.last_channel_messages[channel_id] = []
+        for msg in messages:
+            self.update_channel_history(channel_id=channel_id, **msg)
+
+    @staticmethod
+    def _message_age(timestamp: Optional[str]) -> timedelta:
+        """How long ago a stored message was sent. A missing or bad timestamp counts as just now."""
+        try:
+            sent = datetime.fromisoformat(timestamp)
+        except (TypeError, ValueError):
+            return timedelta(0)
+        if sent.tzinfo is None:
+            sent = sent.astimezone()  # naive timestamps are local time
+        return max(datetime.now(timezone.utc) - sent, timedelta(0))
+
     def update_conversation_memory(self, channel_id: str, username: str, user_message: str, bot_response: str, is_command: bool = False) -> None:
         """Update the conversation memory for a channel with proper attribution"""
         # Create conversation memory for this channel if it doesn't exist
@@ -132,6 +153,9 @@ class MessageHandler:
         "doubling down", "clown energy", "dumbass numbers", "six seven", "67",
     })
 
+    # Only messages newer than this can be marked as the live conversation
+    _FRESH_WINDOW = timedelta(hours=2)
+
     def _is_excluded_bot_message(self, content: str) -> bool:
         """Return True if this bot message is a game/command/error response that should not feed back into AI context."""
         lower = content.lower()
@@ -192,7 +216,7 @@ class MessageHandler:
         if user_data:
             facts = user_data.get("facts", [])
             if facts:
-                context_parts.append("\nWHAT YOU KNOW ABOUT THEM:")
+                context_parts.append("\nWHAT YOU KNOW ABOUT THEM (background only, dont bring it up unless it matters to what they just said):")
                 for fact in facts[-15:]:
                     context_parts.append(f"  {fact}")
 
@@ -210,24 +234,19 @@ class MessageHandler:
         if filtered_msgs:
             context_parts.append("\nCONVERSATION HISTORY:")
             n = len(filtered_msgs)
-            today = datetime.now().date()
             for i, msg in enumerate(filtered_msgs):
                 position_from_end = n - i  # 1 = most recent
+                age = self._message_age(msg.get("timestamp"))
 
-                # Parse stored timestamp to get the message's date
-                ts = msg.get("timestamp")
-                try:
-                    days_ago = (today - datetime.fromisoformat(ts).date()).days if ts else 0
-                except Exception:
-                    days_ago = 0
-
-                if position_from_end <= 5:
-                    prefix = ">>> "
-                    age_tag = ""
-                elif days_ago >= 1:
-                    day_label = "yesterday" if days_ago == 1 else f"{days_ago} days ago"
+                # Old messages are never top priority, even when they are the
+                # last ones in a quiet channel
+                if age.days >= 1:
+                    day_label = "yesterday" if age.days == 1 else f"{age.days} days ago"
                     prefix = ""
                     age_tag = f"[{day_label}, LOW priority] "
+                elif position_from_end <= 5 and age <= self._FRESH_WINDOW:
+                    prefix = ">>> "
+                    age_tag = ""
                 else:
                     prefix = ""
                     age_tag = f"[{position_from_end} msgs ago] "

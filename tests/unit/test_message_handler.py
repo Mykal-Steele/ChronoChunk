@@ -106,3 +106,52 @@ def test_build_context_short_followup_injects_hint(handler):
     result = handler.build_conversation_context(CHANNEL_ID, {})
     # Short follow-up (≤4 words) should inject the NOTE hint with topic words
     assert "NOTE" in result and "short reply" in result.lower()
+
+
+# ── history snapshots and message age ─────────────────────────────────────────
+
+def test_replace_channel_history_swaps_the_stored_messages(handler):
+    handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "stale", is_bot=False)
+    handler.replace_channel_history(CHANNEL_ID, [
+        {"user_id": USER_ID, "username": "Alice", "content": "one", "is_bot": False},
+        {"user_id": "0", "username": "ChronoChunk", "content": "two", "is_bot": True},
+    ])
+    assert [m["content"] for m in handler.last_channel_messages[CHANNEL_ID]] == ["one", "two"]
+
+
+def test_update_channel_history_keeps_the_real_send_time(handler):
+    from datetime import datetime, timezone
+    sent = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "hello", is_bot=False, timestamp=sent)
+    assert handler.last_channel_messages[CHANNEL_ID][0]["timestamp"] == sent.isoformat()
+
+
+def test_build_context_marks_fresh_messages_as_live(handler):
+    handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "what is python", is_bot=False)
+    result = handler.build_conversation_context(CHANNEL_ID, {})
+    assert ">>> Alice: what is python" in result
+
+
+def test_build_context_never_marks_day_old_messages_as_live(handler):
+    from datetime import datetime, timedelta, timezone
+    yesterday = datetime.now(timezone.utc) - timedelta(days=1, hours=1)
+    handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "old news", is_bot=False, timestamp=yesterday)
+    result = handler.build_conversation_context(CHANNEL_ID, {})
+    assert "[yesterday, LOW priority] Alice: old news" in result
+    assert ">>>" not in result
+
+
+def test_build_context_same_day_but_hours_old_is_secondary(handler):
+    from datetime import datetime, timedelta, timezone
+    five_hours_ago = datetime.now(timezone.utc) - timedelta(hours=5)
+    handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "earlier today", is_bot=False, timestamp=five_hours_ago)
+    result = handler.build_conversation_context(CHANNEL_ID, {})
+    assert "[1 msgs ago] Alice: earlier today" in result
+
+
+def test_message_age_accepts_old_style_naive_timestamps(handler):
+    from datetime import datetime, timedelta
+    naive = (datetime.now() - timedelta(days=2, hours=1)).isoformat()
+    assert handler._message_age(naive).days == 2
+    assert handler._message_age(None).days == 0
+    assert handler._message_age("not a date").days == 0
