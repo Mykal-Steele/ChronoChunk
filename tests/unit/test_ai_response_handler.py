@@ -260,3 +260,321 @@ def test_format_still_strips_dashes_between_words(handler):
     result = handler._format_ai_response("nah — thats cooked")
     assert "—" not in result and "–" not in result
     assert "nah thats cooked" in result
+
+
+# ── code blocks, tools and the document writer ───────────────────────────────
+
+def test_format_leaves_code_blocks_exactly_as_written(handler):
+    code = "```js\nitems\n    .filter(x => x , y)\n    .map(f)\n```"
+    result = handler._format_ai_response(f"here , look\n{code}\nok !!!!")
+    assert code in result
+    assert result.startswith("here, look")
+
+
+def _message(content=None, tool_calls=None):
+    """A model response holding one message, the way the OpenAI client returns it."""
+    from types import SimpleNamespace
+    message = SimpleNamespace(content=content, tool_calls=tool_calls)
+    return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=None)
+
+
+def _tool_call(name, arguments, call_id="call_1"):
+    import json
+    from types import SimpleNamespace
+    return SimpleNamespace(id=call_id, function=SimpleNamespace(name=name, arguments=json.dumps(arguments)))
+
+
+@pytest.fixture
+def built_files(monkeypatch):
+    """Replace the real file builders so no pandoc or network is needed."""
+    from src import ai_response_handler
+    from src.document_builder import BuiltFile
+    document = AsyncMock(return_value=BuiltFile("proposal.pdf", b"%PDF"))
+    diagram = AsyncMock(return_value=BuiltFile("flow.png", b"\x89PNG"))
+    monkeypatch.setattr(ai_response_handler, "build_document", document)
+    monkeypatch.setattr(ai_response_handler, "build_diagram", diagram)
+    return document, diagram
+
+
+async def test_tools_are_only_offered_when_files_are_allowed(handler, mock_openai_client):
+    await handler.generate_reply("/yo", "", "Kruskal", "1")
+    assert "tools" not in mock_openai_client.chat.completions.create.call_args[1]
+    await handler.generate_reply("/make a pdf", "", "Kruskal", "1", allow_files=True)
+    offered = mock_openai_client.chat.completions.create.call_args[1]["tools"]
+    assert {tool["function"]["name"] for tool in offered} == {"create_document", "create_diagram"}
+
+
+async def test_chat_uses_the_configured_reasoning_effort(handler, mock_openai_client):
+    await handler.generate_reply("/yo", "", "Kruskal", "1")
+    assert mock_openai_client.chat.completions.create.call_args[1]["reasoning_effort"] == "low"
+
+
+async def test_document_request_runs_the_writer_and_returns_the_file(handler, mock_openai_client, built_files):
+    from config.ai_config import WRITER_PROMPT
+    document, _ = built_files
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("create_document", {"format": "pdf", "title": "Proposal", "brief": "A proposal for Acme"})]),
+        _message(content="# Proposal\n\nWe will rebuild the site — fast."),
+        _message(content="done, check the pdf"),
+    ]
+
+    reply = await handler.generate_reply("/write a proposal for acme as a pdf", "Kruskal: earlier chat", "Kruskal", "1",
+                                         attached_context="=== MESSAGE THEY REPLIED TO ===\nbudget is 5000", allow_files=True)
+
+    assert reply.text == "done, check the pdf"
+    assert [f.filename for f in reply.files] == ["proposal.pdf"]
+
+    calls = mock_openai_client.chat.completions.create.call_args_list
+    writer = calls[1][1]
+    assert writer["messages"][0]["content"] == WRITER_PROMPT
+    assert "A proposal for Acme" in writer["messages"][1]["content"]
+    assert "budget is 5000" in writer["messages"][1]["content"]
+    assert writer["messages"][1]["content"].rstrip().endswith("heading, list, table and code block.")
+    assert "tools" not in writer
+
+    # the writer's markdown reaches the builder with the dash cleaned out
+    fmt, title, markdown, max_pages = document.await_args[0]
+    assert (fmt, title, max_pages) == ("pdf", "Proposal", None)
+    assert markdown == "# Proposal\n\nWe will rebuild the site, fast."
+
+    # the model is told the file was made
+    tool_result = next(m for m in calls[2][1]["messages"] if m["role"] == "tool")
+    assert tool_result["tool_call_id"] == "call_1" and "proposal.pdf" in tool_result["content"]
+
+
+async def test_writer_prompt_is_the_professional_one_not_the_chat_persona(handler):
+    from config.ai_config import WRITER_PROMPT
+    from src.ai_response_handler import _SYSTEM_PROMPT
+    assert "Document writer" in WRITER_PROMPT and "No slang" in WRITER_PROMPT
+    assert "delve" in WRITER_PROMPT          # the banned word list is loaded
+    assert "ya boi" not in WRITER_PROMPT     # none of the chat persona leaks in
+    assert "REAL WORK" in _SYSTEM_PROMPT
+
+
+async def test_diagram_request_returns_the_image(handler, mock_openai_client, built_files):
+    _, diagram = built_files
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("create_diagram", {"title": "Flow", "mermaid": "flowchart TD\n  A --> B"})]),
+        _message(content="there u go"),
+    ]
+    reply = await handler.generate_reply("/draw the flow", "", "Kruskal", "1", allow_files=True)
+    assert [f.filename for f in reply.files] == ["flow.png"]
+    assert diagram.await_args[0] == ("Flow", "flowchart TD\n  A --> B")
+
+
+async def test_mermaid_syntax_error_goes_back_to_the_model_for_a_retry(handler, mock_openai_client, built_files):
+    from src.document_builder import BuiltFile, DocumentError
+    _, diagram = built_files
+    diagram.side_effect = [DocumentError("the mermaid source has a syntax error: Parse error on line 2"),
+                           BuiltFile("flow.png", b"\x89PNG")]
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("create_diagram", {"title": "Flow", "mermaid": "flowchart TD\n  A[oops"})]),
+        _message(tool_calls=[_tool_call("create_diagram", {"title": "Flow", "mermaid": "flowchart TD\n  A --> B"}, "call_2")]),
+        _message(content="fixed it"),
+    ]
+    reply = await handler.generate_reply("/draw the flow", "", "Kruskal", "1", allow_files=True)
+    assert reply.text == "fixed it" and len(reply.files) == 1
+    second_request = mock_openai_client.chat.completions.create.call_args_list[1][1]["messages"]
+    assert "syntax error" in next(m for m in second_request if m["role"] == "tool")["content"]
+
+
+async def test_file_limit_stops_the_build_and_tells_the_model(handler, mock_openai_client, built_files):
+    from src.exceptions import RateLimitError
+    document, _ = built_files
+
+    def gate():
+        raise RateLimitError(retry_after=7200)
+
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("create_document", {"format": "pdf", "title": "X", "brief": "x"})]),
+        _message(content="u hit ur file limit for today"),
+    ]
+    reply = await handler.generate_reply("/make a pdf", "", "Kruskal", "1", allow_files=True, file_gate=gate)
+    assert reply.files == []
+    document.assert_not_awaited()
+    assert mock_openai_client.chat.completions.create.call_count == 2  # the writer was never called
+    tool_result = next(m for m in mock_openai_client.chat.completions.create.call_args[1]["messages"] if m["role"] == "tool")
+    assert "limit" in tool_result["content"] and "2 hours" in tool_result["content"]
+
+
+async def test_model_cannot_loop_on_tools_forever(handler, mock_openai_client, built_files):
+    from src.ai_response_handler import MAX_FILES_PER_REPLY, MAX_TOOL_ROUNDS
+    looping = [_message(tool_calls=[_tool_call("create_diagram", {"title": "Flow", "mermaid": "flowchart TD\n  A --> B"})])
+               for _ in range(MAX_TOOL_ROUNDS)]
+    mock_openai_client.chat.completions.create.side_effect = looping + [_message(content="ok thats enough")]
+    reply = await handler.generate_reply("/draw", "", "Kruskal", "1", allow_files=True)
+    assert reply.text == "ok thats enough"
+    assert len(reply.files) == MAX_FILES_PER_REPLY
+    assert "tools" not in mock_openai_client.chat.completions.create.call_args[1]
+
+
+async def test_same_document_is_not_built_twice_in_one_reply(handler, mock_openai_client, built_files):
+    document, _ = built_files
+    gate = MagicMock()
+    make_pdf_call = {"format": "pdf", "title": "Proposal", "brief": "A proposal"}
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("create_document", make_pdf_call)]),
+        _message(content="# Proposal\n\nBody."),
+        _message(tool_calls=[_tool_call("create_document", make_pdf_call, "call_2")]),
+        _message(content="its attached"),
+    ]
+    reply = await handler.generate_reply("/proposal as pdf", "", "Kruskal", "1", allow_files=True, file_gate=gate)
+    assert len(reply.files) == 1
+    assert document.await_count == 1
+    assert gate.call_count == 1  # the refused call does not use up the user's file limit
+    last_request = mock_openai_client.chat.completions.create.call_args[1]["messages"]
+    assert "already made" in [m for m in last_request if m["role"] == "tool"][-1]["content"]
+
+
+async def test_separate_diagram_is_skipped_when_a_document_was_made(handler, mock_openai_client, built_files):
+    document, diagram = built_files
+    mock_openai_client.chat.completions.create.side_effect = [
+        # the model asks for both at once, with the diagram listed first
+        _message(tool_calls=[
+            _tool_call("create_diagram", {"title": "Flow", "mermaid": "flowchart TD\n  A --> B"}, "call_a"),
+            _tool_call("create_document", {"format": "pdf", "title": "Deploy", "brief": "Deploy steps with a diagram"}, "call_b"),
+        ]),
+        _message(content="# Deploy\n\nSteps."),
+        _message(content="pdf attached"),
+    ]
+    reply = await handler.generate_reply("/deploy doc with a diagram as pdf", "", "Kruskal", "1", allow_files=True)
+    assert [f.filename for f in reply.files] == ["proposal.pdf"]
+    diagram.assert_not_awaited()
+    results = {m["tool_call_id"]: m["content"] for m in mock_openai_client.chat.completions.create.call_args[1]["messages"] if m["role"] == "tool"}
+    assert results["call_a"].startswith("skipped") and results["call_b"].startswith("done")
+
+
+async def test_replies_with_files_are_not_cached(handler, mock_openai_client, built_files):
+    def responses():
+        return [_message(tool_calls=[_tool_call("create_diagram", {"title": "Flow", "mermaid": "flowchart TD\n  A --> B"})]),
+                _message(content="there u go")]
+    mock_openai_client.chat.completions.create.side_effect = responses() + responses()
+    await handler.generate_reply("/draw", "", "Kruskal", "1", allow_files=True)
+    second = await handler.generate_reply("/draw", "", "Kruskal", "1", allow_files=True)
+    assert len(second.files) == 1
+
+
+async def test_budget_cap_gives_a_clear_message_and_is_not_cached(handler, mock_openai_client):
+    from datetime import date
+    from src.usage_guard import BudgetExceededError
+    mock_openai_client.chat.completions.create.side_effect = BudgetExceededError("monthly", date(2026, 10, 14))
+    reply = await handler.generate_reply("/yo", "", "Kruskal", "1")
+    assert "budget" in reply.text and "Oct 14" in reply.text
+    assert handler.response_cache == {}
+
+
+async def test_daily_cap_says_tomorrow(handler, mock_openai_client):
+    from datetime import date
+    from src.usage_guard import BudgetExceededError
+    mock_openai_client.chat.completions.create.side_effect = BudgetExceededError("daily", date(2026, 10, 6))
+    reply = await handler.generate_reply("/yo", "", "Kruskal", "1")
+    assert "tomorrow" in reply.text
+
+
+async def test_generate_response_still_returns_plain_text(handler, fake_openai_response):
+    fake_openai_response.choices[0].message.content = "yo what's good"
+    assert await handler.generate_response("hello", "", "TestUser", "12345") == "yo what's good"
+
+
+async def test_page_limit_reaches_the_writer_and_the_builder(handler, mock_openai_client, built_files):
+    document, _ = built_files
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("create_document", {"format": "pdf", "title": "CV", "brief": "A CV", "max_pages": 1})]),
+        _message(content="# CV\n\nBody."),
+        _message(content="done"),
+    ]
+    await handler.generate_reply("/one page cv as pdf", "", "Kruskal", "1", allow_files=True)
+    writer_request = mock_openai_client.chat.completions.create.call_args_list[1][1]["messages"][1]["content"]
+    assert "PAGE LIMIT: 1" in writer_request
+    assert document.await_args[0][3] == 1
+
+
+def test_chat_text_loses_stock_filler_sentences(handler):
+    result = handler._format_ai_response("Dear Dr. Narin,\n\nI hope you are well. I was sick this week.")
+    assert "I hope you are well" not in result
+    assert "I was sick this week." in result
+
+
+async def test_a_crash_while_building_a_file_does_not_lose_the_reply(handler, mock_openai_client, built_files):
+    document, _ = built_files
+    document.side_effect = RuntimeError("pandoc exploded")
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("create_document", {"format": "pdf", "title": "X", "brief": "x"})]),
+        _message(content="# X\n\nBody."),
+        _message(content="couldnt make the file, something broke on my end"),
+    ]
+    reply = await handler.generate_reply("/make a pdf", "", "Kruskal", "1", allow_files=True)
+    assert reply.files == []
+    assert reply.text == "couldnt make the file, something broke on my end"
+    tool_result = next(m for m in mock_openai_client.chat.completions.create.call_args[1]["messages"] if m["role"] == "tool")
+    assert "internal error" in tool_result["content"]
+
+
+def test_page_limit_is_read_from_plain_words():
+    from src.ai_response_handler import page_limit_from
+    assert page_limit_from("write a one page proposal as a pdf") == 1
+    assert page_limit_from("a 2-page report on sales") == 2
+    assert page_limit_from("keep it to three pages") == 3
+    assert page_limit_from("single page cv") == 1
+    assert page_limit_from("เขียนรายงาน 2 หน้า") == 2
+
+
+def test_page_limit_is_not_invented():
+    from src.ai_response_handler import page_limit_from
+    assert page_limit_from("write a proposal as a pdf") is None
+    assert page_limit_from("redesign the landing pages for me") is None
+    assert page_limit_from("summarize page 3 of this") is None
+    assert page_limit_from("") is None
+
+
+async def test_page_limit_is_taken_from_the_request_when_the_model_leaves_it_out(handler, mock_openai_client, built_files):
+    document, _ = built_files
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("create_document", {"format": "pdf", "title": "Proposal", "brief": "A proposal"})]),
+        _message(content="# Proposal\n\nBody."),
+        _message(content="done"),
+    ]
+    await handler.generate_reply("/write a one page proposal as a pdf", "", "Kruskal", "1", allow_files=True)
+    assert document.await_args[0][3] == 1
+    writer_request = mock_openai_client.chat.completions.create.call_args_list[1][1]["messages"][1]["content"]
+    assert "PAGE LIMIT: 1" in writer_request
+
+
+async def test_documents_default_to_about_a_page(handler, mock_openai_client, built_files):
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("create_document", {"format": "pdf", "title": "Deploy", "brief": "Deploy steps"})]),
+        _message(content="# Deploy\n\nBody."),
+        _message(content="done"),
+    ]
+    await handler.generate_reply("/document our deploy process as a pdf", "", "Kruskal", "1", allow_files=True)
+    writer_request = mock_openai_client.chat.completions.create.call_args_list[1][1]["messages"][1]["content"]
+    assert "LENGTH: about one page" in writer_request and "PAGE LIMIT" not in writer_request
+
+
+async def test_earlier_diagram_image_is_dropped_once_the_document_holds_it(handler, mock_openai_client, built_files):
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("create_diagram", {"title": "Flow", "mermaid": "flowchart TD\n  A --> B"})]),
+        _message(tool_calls=[_tool_call("create_document", {"format": "pdf", "title": "Deploy", "brief": "Deploy steps with a diagram"}, "call_2")]),
+        _message(content="# Deploy\n\nSteps."),
+        _message(content="pdf attached"),
+    ]
+    reply = await handler.generate_reply("/deploy doc with a diagram as pdf", "", "Kruskal", "1", allow_files=True)
+    assert [f.filename for f in reply.files] == ["proposal.pdf"]
+
+
+async def test_diagram_is_only_forced_when_the_user_asked_for_one(handler, mock_openai_client, built_files):
+    def responses(brief):
+        return [_message(tool_calls=[_tool_call("create_document", {"format": "pdf", "title": "Doc", "brief": brief})]),
+                _message(content="# Doc\n\nBody."), _message(content="done")]
+
+    def writer_request():
+        return mock_openai_client.chat.completions.create.call_args_list[-2][1]["messages"][1]["content"]
+
+    mock_openai_client.chat.completions.create.side_effect = responses("Cover the flow")
+    await handler.generate_reply("/document the deploy with a diagram, as pdf", "", "Kruskal", "1", allow_files=True)
+    assert "DIAGRAM: they asked for one" in writer_request()
+
+    # the model's brief mentions a timeline and a diagram, the user did not
+    mock_openai_client.chat.completions.create.side_effect = responses("Include a timeline and a diagram")
+    await handler.generate_reply("/write a one page proposal as pdf", "", "Kruskal", "2", allow_files=True)
+    assert "DIAGRAM: none" in writer_request()

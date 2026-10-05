@@ -48,7 +48,7 @@ class ChronoChunk(commands.Bot):
     """Main bot class that ties everything together"""
     
     def __init__(self):
-        """Initialize the bot without rate limiting or intent detection"""
+        """Initialize the bot and wire its components together"""
         # Initialize Discord bot with required parameters
         intents = discord.Intents.default()
         intents.message_content = True  # This is a privileged intent
@@ -81,26 +81,35 @@ class ChronoChunk(commands.Bot):
         # Store a reference as ai_handler for compatibility
         self.ai_handler = self.ai_response_handler
         
+        # One rate limiter for typed messages and slash commands, so the limits are shared
+        self.rate_limiter = RateLimiter()
+
         # Create command handler
         self.command_handler = CommandHandler(
             bot=self,
             user_data_manager=self.user_data_manager,
-            game_manager=self.game_manager
+            game_manager=self.game_manager,
+            rate_limiter=self.rate_limiter
         )
         
-        # Create message processor with correct parameter
+        # Create message processor with correct parameter.
+        # Only /tldr and /usage are typed commands. Any other "/word" message is chat,
+        # so "/stop being weird" does not get mistaken for the music command.
         self.message_processor = MessageProcessor(
             bot=self,
             message_handler=self.message_handler,
             ai_response_handler=self.ai_response_handler,  # CHANGE THIS LINE - use ai_response_handler instead of ai_handler
             user_data_manager=self.user_data_manager,
-            game_manager=self.game_manager
+            game_manager=self.game_manager,
+            command_handler=self.command_handler,
+            rate_limiter=self.rate_limiter,
+            text_commands={"tldr", "usage"}
         )
         
         # Register event handlers
         self.setup_event_handlers()
         
-        logger.info("Bot initialized without rate limiting")
+        logger.info("Bot initialized with per-user rate limits and an AI budget guard")
     
     def setup_event_handlers(self):
         """Setup all event handlers for the bot"""
@@ -137,13 +146,13 @@ class ChronoChunk(commands.Bot):
         await self.slash_commands.register_commands()
     
     async def on_message(self, message):
-        """Handle incoming Discord messages with NO rate limiting"""
+        """Handle incoming Discord messages"""
         # Skip our own messages
         if message.author == self.user:
             return
         
         try:
-            # Process ALL messages immediately without any rate limiting
+            # Rate limits are applied inside the processor, only to messages the bot answers
             await self.message_processor.process_message(message)
                 
         except Exception as e:

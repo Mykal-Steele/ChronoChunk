@@ -38,6 +38,20 @@ class Config:
     BASE_DIR = Path(__file__).parent.parent
     USER_DATA_DIR = os.path.join(BASE_DIR, "user_data")
     LOG_DIR = os.path.join(BASE_DIR, "logs")
+    STATE_DIR = os.path.join(BASE_DIR, "state")  # small files that must survive a restart
+
+    # AI spending caps. Once a cap is hit the bot stops calling the model until it resets.
+    AI_MONTHLY_BUDGET_USD = float(os.getenv("AI_MONTHLY_BUDGET_USD", 15))
+    AI_DAILY_BUDGET_USD = float(os.getenv("AI_DAILY_BUDGET_USD", 2))
+    AI_BUDGET_RESET_DAY = int(os.getenv("AI_BUDGET_RESET_DAY", 14))  # the Azure credit renews on the 14th
+
+    # Reasoning effort for chat replies. "low" answers about twice as fast and costs less than the default.
+    AI_CHAT_REASONING_EFFORT = os.getenv("AI_CHAT_REASONING_EFFORT", "low")
+
+    # gpt-5-mini prices in USD per 1M tokens, used to estimate what each call costs
+    AI_PRICE_INPUT_PER_M = float(os.getenv("AI_PRICE_INPUT_PER_M", 0.25))
+    AI_PRICE_CACHED_INPUT_PER_M = float(os.getenv("AI_PRICE_CACHED_INPUT_PER_M", 0.025))
+    AI_PRICE_OUTPUT_PER_M = float(os.getenv("AI_PRICE_OUTPUT_PER_M", 2.00))
     LOG_FILE = os.path.join(LOG_DIR, "bot.log")
     
     # Web server settings for health checks
@@ -52,6 +66,8 @@ class Config:
         "forget": (20, 3600),  # 20 forget requests per hour
         "default": (30, 1800), # 30 requests per 30 minutes (fallback)
         "mydata": (10, 1800),  # 10 data requests per 30 minutes
+        "file": (15, 86400),   # 15 generated documents or diagrams per day
+        "tldr": (6, 3600),     # 6 channel summaries per hour
     }
     
     # Important topics requiring special handling
@@ -91,7 +107,7 @@ class Config:
         # lazy initialization ftw - only create the dirs when actually needed
         # this avoids file system operations during import time which can be slow
         # and might cause issues in some environments (like read-only file systems)
-        for directory in (cls.USER_DATA_DIR, cls.LOG_DIR):
+        for directory in (cls.USER_DATA_DIR, cls.LOG_DIR, cls.STATE_DIR):
             os.makedirs(directory, exist_ok=True)
         
     @classmethod

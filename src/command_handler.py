@@ -12,6 +12,7 @@ try:
     from src.rate_limiter import RateLimiter
     from src.intent_detector import IntentDetector
     from src.message_context import history_text
+    from src.usage_guard import get_usage_guard
     from src.logger import logger
 except ImportError:
     # Add parent directory to path and try again
@@ -22,6 +23,7 @@ except ImportError:
     from src.rate_limiter import RateLimiter
     from src.intent_detector import IntentDetector
     from src.message_context import history_text
+    from src.usage_guard import get_usage_guard
     from src.logger import logger
 
 class CommandHandler:
@@ -59,7 +61,6 @@ class CommandHandler:
         # mapping command text to handler methods - this way we can easily add new commands
         # without giant if-else blocks that get messy real quick
         self.command_handlers = {
-            "chat": self._handle_chat,
             "game": self._handle_game,
             "info": self._handle_info,
             "forget": self._handle_forget,
@@ -78,6 +79,7 @@ class CommandHandler:
             "volume": self._handle_volume,
             "relate": self._handle_relate,
             "tldr": self._handle_tldr,
+            "usage": self._handle_usage,
         }
         
     async def handle_command(self, command: str, args: str, message: discord.Message, user_id: str) -> str:
@@ -199,57 +201,39 @@ class CommandHandler:
         """show github link to bot code"""
         return "check out my code here: https://github.com/Mykal-Steele/ChronoChunk"
 
-    async def _handle_chat(self, args: List[str], message: discord.Message, user_id: str) -> str:
-        """Process a general chat command by forwarding to the bot's AI"""
-        if not self.bot:
-            return "my connection is fried rn, try again in a bit"
-            
-        # Join the arguments to form the complete query
-        query = " ".join(args) if args else ""
-        
-        try:
-            # Get username for personalization
-            username = message.author.display_name if message and hasattr(message, 'author') else None
-            
-            # Get user data for context
-            user_data = self.user_data_manager.load_user_data(user_id, username)
-            
-            # If the bot has the necessary method to process chat
-            if hasattr(self.bot, 'build_conversation_context') and hasattr(self.bot, 'process_ai_message'):
-                # Build context from past conversations
-                conversation_history = await self.bot.build_conversation_context(str(message.channel.id), user_data)
-                
-                # Process the AI message
-                await self.bot.process_ai_message(message, query, conversation_history)
-                
-                # Return None to indicate that the bot is handling the response directly
-                return None
-            else:
-                return "that aint wired up yet"
-        except Exception as e:
-            logger.error(f"Error handling chat: {e}")
-            return "couldnt process that, try again?"
-
     async def _handle_tldr(self, args: List[str], message: discord.Message, user_id: str) -> str:
         """Sum up the recent messages in this channel, like '/tldr 100'"""
         # As a reply, /tldr means "sum up that message", which the normal chat path does
         if message.reference:
             return None
 
+        count = 50
+        if args:
+            try:
+                count = int(args[0])
+            except ValueError:
+                return "gimme a number of messages, like '/tldr 100'"
+
+        return await self.summarize_channel(
+            message.channel, message.author.display_name, user_id, count, before=message
+        )
+
+    async def summarize_channel(self, channel, username: str, user_id: str, count: int = 50, before=None) -> str:
+        """Have the AI sum up the last count messages in a channel (5 to 200)."""
         ai_handler = getattr(self.bot, "ai_handler", None)
         if not ai_handler:
             return "that aint wired up yet"
 
-        count = 50
-        if args:
-            try:
-                count = max(5, min(int(args[0]), 200))
-            except ValueError:
-                return "gimme a number of messages, like '/tldr 100'"
+        try:
+            self.rate_limiter.check_rate_limit(user_id, "tldr")
+        except RateLimitError as e:
+            minutes = max(1, round(e.retry_after / 60))
+            return f"u already got a bunch of recaps, try again in about {minutes} min"
 
+        count = max(5, min(count, 200))
         try:
             lines = []
-            async for msg in message.channel.history(limit=count, before=message):
+            async for msg in channel.history(limit=count, before=before):
                 text = history_text(msg)
                 if text:
                     lines.append(f"{msg.author.display_name}: {text}")
@@ -268,8 +252,21 @@ class CommandHandler:
         )
         return await ai_handler.generate_response(
             "tldr of those channel messages, what did i miss",
-            "", message.author.display_name, user_id,
+            "", username, user_id,
             attached_context=channel_messages
+        )
+
+    async def _handle_usage(self, args: List[str], message: discord.Message, user_id: str) -> str:
+        """Show how much of the AI budget is used"""
+        return self.usage_summary()
+
+    def usage_summary(self) -> str:
+        """One line on AI spending so far against the caps."""
+        usage = get_usage_guard().summary()
+        return (
+            f"ai budget: ${usage['cycle_cost']:.2f} of ${usage['monthly_budget']:.2f} used this cycle "
+            f"({usage['requests']} requests), ${usage['day_cost']:.2f} of ${usage['daily_budget']:.2f} today. "
+            f"resets on {usage['resets_on']}"
         )
 
     async def _handle_info(self, args: List[str], message: discord.Message, user_id: str) -> str:

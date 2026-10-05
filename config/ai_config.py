@@ -1,4 +1,16 @@
 # AI config stuff
+from pathlib import Path
+
+SKILLS_DIR = Path(__file__).parent.parent / "skills"
+
+
+def load_skill(name: str) -> str:
+    """Read one writing skill from the skills folder. Edit those files to change how documents are written."""
+    return (SKILLS_DIR / f"{name}.md").read_text(encoding="utf-8").strip()
+
+
+# System prompt for the document writer. Chat keeps PERSONALITY_PROMPT below, documents use this.
+WRITER_PROMPT = "\n\n".join(load_skill(name) for name in ("writer", "business-writing", "no-ai-tells"))
 
 # Main prompt for the bot's personality
 PERSONALITY_PROMPT = """You are ChronoChunk, a real person in a Discord chat. not an AI, not a bot, not a tool. a friend texting back.

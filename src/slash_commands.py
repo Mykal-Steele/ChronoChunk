@@ -1,8 +1,12 @@
+import io
 import logging
 import re
 import discord
 from discord import app_commands
 from typing import Dict, Any, List, Optional, Callable, Awaitable
+from src.exceptions import RateLimitError
+from src.message_context import read_own_attachments
+from src.message_processor import MessageProcessor, NO_PINGS
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -78,6 +82,8 @@ class SlashCommandManager:
             await self._register_forget_command()
             await self._register_code_command()
             await self._register_chat_command()
+            await self._register_tldr_command()
+            await self._register_usage_command()
             await self._register_help_command()  # Make sure this line is here
             
             # Register music commands
@@ -231,31 +237,66 @@ class SlashCommandManager:
         async def code(interaction: discord.Interaction):
             await interaction.response.send_message("check out my code here: https://github.com/Mykal-Steele/ChronoChunk")
     
+    async def _send_followup(self, interaction: discord.Interaction, text: str, files=None) -> None:
+        """Send an answer to a slash command, splitting long text. files are BuiltFile objects."""
+        chunks = MessageProcessor._split_text(text) or [None]
+        uploads = [discord.File(io.BytesIO(f.data), filename=f.filename) for f in (files or [])]
+        extras = {"files": uploads} if uploads else {}
+        await interaction.followup.send(chunks[0], allowed_mentions=NO_PINGS, **extras)
+        for chunk in chunks[1:]:
+            await interaction.followup.send(chunk, allowed_mentions=NO_PINGS)
+
     async def _register_chat_command(self):
         """Register the chat command"""
         @self.bot.tree.command(name="chat", description="Chat with ChronoChunk")
-        @app_commands.describe(message="What you want to say to ChronoChunk")
-        async def chat(interaction: discord.Interaction, message: str):
+        @app_commands.describe(
+            message="What you want to say to ChronoChunk",
+            file="An image, PDF or text file for ChronoChunk to read"
+        )
+        async def chat(interaction: discord.Interaction, message: str, file: Optional[discord.Attachment] = None):
             user_id = str(interaction.user.id)
             username = interaction.user.display_name
             channel_id = str(interaction.channel_id)
+            rate_limiter = getattr(self.bot, "rate_limiter", None)
             
             try:
+                if rate_limiter:
+                    try:
+                        rate_limiter.check_rate_limit(user_id, "chat")
+                    except RateLimitError as e:
+                        minutes = max(1, round(e.retry_after / 60))
+                        await interaction.response.send_message(
+                            f"slow down, u hit the message limit. try again in about {minutes} min", ephemeral=True
+                        )
+                        return
+
                 # Defer the response to give us time to process
                 await interaction.response.defer(thinking=True)
                 
                 # Get user data for context
                 user_data = self.user_data_manager.load_user_data(user_id, username)
                 
-                # Build context
+                # Build context from what is really in the channel right now
+                processor = getattr(self.bot, "message_processor", None)
+                if processor and interaction.channel:
+                    await processor.sync_channel_history(interaction.channel)
                 conversation_history = self.message_handler.build_conversation_context(channel_id, user_data, False)
 
                 # Resolve any Discord message links — keep original for clean history storage
                 original_message = message
                 enriched_message = await self._resolve_message_link(message)
 
-                # Process through AI
-                ai_response = await self.ai_handler.generate_response(enriched_message, conversation_history, username)
+                # Read the attached image or file, if there is one
+                attached = await read_own_attachments([file] if file else [])
+
+                # Process through AI. Files it makes count against the per-user daily limit.
+                file_gate = (lambda: rate_limiter.check_rate_limit(user_id, "file")) if rate_limiter else None
+                reply = await self.ai_handler.generate_reply(
+                    enriched_message, conversation_history, username, user_id,
+                    attached_context=attached.text, images=attached.images,
+                    allow_files=True, file_gate=file_gate
+                )
+                ai_response = reply.text
 
                 # Update channel history with original (clean) user message
                 self.message_handler.update_channel_history(
@@ -283,14 +324,11 @@ class SlashCommandManager:
                     bot_response=ai_response
                 )
 
-                # Save to user data using the original clean message
+                # Save to user data using the original clean message. This also extracts facts.
                 await self.user_data_manager.add_conversation(user_id, original_message, ai_response, username)
-
-                # Extract facts
-                await self.user_data_manager.extract_and_save_facts(user_id, original_message, username)
                 
                 # Send the response
-                await interaction.followup.send(ai_response)
+                await self._send_followup(interaction, ai_response, reply.files)
 
                 # Give first-use role
                 if interaction.guild:
@@ -311,6 +349,27 @@ class SlashCommandManager:
             except Exception as e:
                 logger.error(f"Error handling chat command: {e}")
                 await interaction.followup.send("damn, something went wrong with the AI. try again?")
+
+    async def _register_tldr_command(self):
+        """Register the tldr command"""
+        @self.bot.tree.command(name="tldr", description="Sum up the recent messages in this channel")
+        @app_commands.describe(count="How many messages to sum up, 5 to 200 (default 50)")
+        async def tldr(interaction: discord.Interaction, count: Optional[int] = 50):
+            try:
+                await interaction.response.defer(thinking=True)
+                summary = await self.bot.command_handler.summarize_channel(
+                    interaction.channel, interaction.user.display_name, str(interaction.user.id), count or 50
+                )
+                await self._send_followup(interaction, summary)
+            except Exception as e:
+                logger.error(f"Error handling tldr command: {e}")
+                await interaction.followup.send("couldnt sum that up, try again?")
+
+    async def _register_usage_command(self):
+        """Register the usage command"""
+        @self.bot.tree.command(name="usage", description="See how much of the AI budget is used")
+        async def usage(interaction: discord.Interaction):
+            await interaction.response.send_message(self.bot.command_handler.usage_summary())
     
     async def _register_music_command(self):
         """Register the music command"""
@@ -505,6 +564,15 @@ class SlashCommandManager:
                 "pinging me works the same as starting with `/`"
             ]
             embed.add_field(name="📎 reading stuff", value="\n".join(reading_cmds), inline=False)
+
+            # Writing and files section
+            writing_cmds = [
+                "ask for an email, proposal, report, cover letter or notes and i write it properly, no slang",
+                "ask for it as a pdf or docx (`/make this a pdf`, `/write a proposal for X as docx`) and i attach the file",
+                "ask for a diagram or flowchart and i send it as an image",
+                "`/usage` - how much of the ai budget is used"
+            ]
+            embed.add_field(name="📝 writing and files", value="\n".join(writing_cmds), inline=False)
 
             # Game commands section
             game_cmds = [

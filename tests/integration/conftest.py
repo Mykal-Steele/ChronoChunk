@@ -20,7 +20,10 @@ def pipeline(tmp_path, mock_genai_client, mock_bot_user):
     mh = MessageHandler(bot=None)
     gm = GameManager()
 
+    from src.ai_response_handler import Reply
+
     ai_handler = MagicMock()
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("yo what's good"))
     ai_handler.generate_response = AsyncMock(return_value="yo what's good")
     ai_handler.extract_important_topics = MagicMock(return_value=[])
 

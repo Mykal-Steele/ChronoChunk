@@ -65,7 +65,37 @@ Reply to any message and start your reply with `/`, for example `/read this` or 
 - PDFs with selectable text
 - markdown, text and code files
 
-You can also attach a file or image to your own `/` message. Pinging the bot works the same as starting with `/`.
+You can also attach a file or image to your own `/` message. Pinging the bot works the same as starting with `/`. The `/chat` command takes an optional file too.
+
+## Writing, documents and diagrams
+
+Ask for an email, a proposal, a report, a cover letter or meeting notes and the bot writes it in clean professional English (or the language you asked in). Chat keeps the bot's usual personality. Work text does not.
+
+- Ask for a file and it attaches one: `/write a one page proposal for X as a pdf`, `/turn this into meeting notes as docx`.
+- Formats are PDF, DOCX and Markdown. Say "one page" and a PDF is fitted to one page when the text allows it.
+- Ask for a diagram or flowchart and it sends a rendered image. Diagrams inside documents are rendered too.
+- Diagrams are rendered by the public service mermaid.ink, so the diagram text leaves your server.
+
+How documents are written is set by the Markdown files in `skills/`. Edit them to change the voice or the rules:
+
+- `skills/writer.md` - the writer's role and output format
+- `skills/business-writing.md` - structure for emails, proposals, reports and other documents
+- `skills/no-ai-tells.md` - words and patterns the writer must never use
+
+## AI budget and limits
+
+The bot stops calling the model when it reaches its spending cap, and starts again when the cap resets.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `AI_MONTHLY_BUDGET_USD` | 15 | Hard cap per billing cycle |
+| `AI_DAILY_BUDGET_USD` | 2 | Hard cap per day |
+| `AI_BUDGET_RESET_DAY` | 14 | Day of the month the cycle restarts |
+| `AI_CHAT_REASONING_EFFORT` | low | Reasoning effort for chat replies |
+
+Set these in `.env`. Costs are estimated from token counts at gpt-5-mini prices and kept in `state/ai_usage.json`. `/usage` shows the current totals.
+
+Per user, the bot answers 50 messages per 30 minutes and makes 15 files per day.
 
 ## Music Commands
 

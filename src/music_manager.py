@@ -651,6 +651,7 @@ Request: "{query}"
             import os
             from dotenv import load_dotenv
             from openai import AsyncOpenAI
+            from src.usage_guard import guard_client
 
             load_dotenv()
             api_key = os.getenv("AZURE_OPENAI_KEY", "")
@@ -661,7 +662,7 @@ Request: "{query}"
                 logger.warning("Azure OpenAI credentials not found for AI search enhancement")
                 return query
 
-            client = AsyncOpenAI(base_url=endpoint, api_key=api_key)
+            client = guard_client(AsyncOpenAI(base_url=endpoint, api_key=api_key))
 
             resp = await asyncio.wait_for(
                 client.chat.completions.create(

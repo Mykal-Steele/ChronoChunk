@@ -6,15 +6,17 @@ order and freshness of the channel history.
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
+from src.ai_response_handler import Reply
 from tests.fakes import fake_attachment, fake_author, fake_channel, fake_message, make_pdf, reply_to
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 
 
-def _ai_call(ai_handler):
-    """Return what the processor passed to the AI: (query, history, attached_context, images)."""
-    ai_handler.generate_response.assert_called_once()
-    args, kwargs = ai_handler.generate_response.call_args
+def _ai_call(ai_handler, method="generate_reply"):
+    """Return what was passed to the AI: (query, history, attached_context, images)."""
+    call = getattr(ai_handler, method)
+    call.assert_called_once()
+    args, kwargs = call.call_args
     return args[0], args[1], kwargs.get("attached_context", ""), kwargs.get("images", [])
 
 
@@ -157,7 +159,7 @@ async def test_reply_to_another_user_without_slash_is_ignored(pipeline):
 
     await processor.process_message(trigger)
 
-    ai_handler.generate_response.assert_not_called()
+    ai_handler.generate_reply.assert_not_called()
 
 
 async def test_ping_triggers_an_answer_and_is_stripped_from_the_query(pipeline):
@@ -187,7 +189,7 @@ async def test_ping_while_replying_to_someone_reads_that_message(pipeline):
 
 async def test_answer_is_sent_as_a_reply_to_the_asking_message(pipeline):
     processor, _, _, _, ai_handler, bot = pipeline
-    ai_handler.generate_response = AsyncMock(return_value="it says hey bau")
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("it says hey bau"))
     trigger = fake_message(fake_author("Kruskal"), "/yo", message_id=1)
     _channel_with(trigger)
 
@@ -201,7 +203,7 @@ async def test_answer_is_sent_as_a_reply_to_the_asking_message(pipeline):
 
 async def test_answers_never_ping_anyone(pipeline):
     processor, _, _, _, ai_handler, bot = pipeline
-    ai_handler.generate_response = AsyncMock(return_value='it says "@everyone free nitro <@777>"')
+    ai_handler.generate_reply = AsyncMock(return_value=Reply('it says "@everyone free nitro <@777>"'))
     target = fake_message(fake_author("Alex", 777), "@everyone free nitro", message_id=1)
     trigger = fake_message(fake_author("Kruskal"), "/read", message_id=2, reference=reply_to(target))
     _channel_with(target, trigger)
@@ -306,7 +308,7 @@ async def test_tldr_sums_up_the_channel(pipeline):
 
     await processor.process_message(trigger)
 
-    _, _, attached, _ = _ai_call(ai_handler)
+    _, _, attached, _ = _ai_call(ai_handler, "generate_response")
     assert "LAST 2 MESSAGES IN THIS CHANNEL" in attached
     assert attached.index("Alex: lunch at 12?") < attached.index("Sam: cant, meeting")
     assert "/tldr" not in attached
@@ -339,4 +341,141 @@ async def test_tldr_rejects_a_non_number(pipeline):
     await processor.process_message(trigger)
 
     ai_handler.generate_response.assert_not_called()
+    ai_handler.generate_reply.assert_not_called()
     assert "number" in trigger.channel.send.call_args[0][0]
+
+
+# ── typed /chat, typed commands, limits and files ─────────────────────────────
+
+async def test_typed_chat_reads_the_replied_image_and_drops_the_word_chat(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    image = fake_attachment("proof.png", PNG_BYTES, "image/png")
+    target = fake_message(fake_author("Kruskal"), "", message_id=1, attachments=[image])
+    trigger = fake_message(fake_author("Kruskal"), "/chat what is this", message_id=2, reference=reply_to(target))
+    _channel_with(target, trigger)
+
+    await processor.process_message(trigger)
+
+    query, _, attached, images = _ai_call(ai_handler)
+    assert query == "/what is this"
+    assert "image: proof.png" in attached
+    assert len(images) == 1
+    trigger.channel.send.assert_not_called()
+
+
+async def test_bare_typed_chat_points_the_ai_at_the_reply(pipeline):
+    from src.message_processor import NO_TEXT
+    processor, _, _, _, ai_handler, bot = pipeline
+    target = fake_message(fake_author("Alex", 777), "E = mc^2", message_id=1)
+    trigger = fake_message(fake_author("Kruskal"), "/chat", message_id=2, reference=reply_to(target))
+    _channel_with(target, trigger)
+
+    await processor.process_message(trigger)
+
+    query, _, attached, _ = _ai_call(ai_handler)
+    assert query == NO_TEXT
+    assert "E = mc^2" in attached
+
+
+async def test_words_outside_the_typed_command_list_are_chat(pipeline):
+    processor, _, gm, _, ai_handler, bot = pipeline
+    processor.text_commands = {"tldr", "usage"}  # how the real bot is wired
+    trigger = fake_message(fake_author("Kruskal"), "/stop being weird", message_id=1)
+    _channel_with(trigger)
+
+    await processor.process_message(trigger)
+
+    query, _, _, _ = _ai_call(ai_handler)
+    assert query == "/stop being weird"
+    trigger.channel.send.assert_not_called()
+
+
+async def test_typed_usage_reports_the_budget(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    processor.text_commands = {"tldr", "usage"}
+    trigger = fake_message(fake_author("Kruskal"), "/usage", message_id=1)
+    _channel_with(trigger)
+
+    await processor.process_message(trigger)
+
+    ai_handler.generate_reply.assert_not_called()
+    sent = trigger.channel.send.call_args[0][0]
+    assert "ai budget" in sent and "resets on" in sent
+
+
+async def test_typed_tldr_works_with_the_real_wiring(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    processor.text_commands = {"tldr", "usage"}
+    bot.ai_handler = ai_handler
+    processor.command_handler.bot = bot
+    older = [fake_message(fake_author("Alex", 777), "lunch at 12?", message_id=1)]
+    trigger = fake_message(fake_author("Kruskal"), "/tldr 20", message_id=2)
+    _channel_with(*older, trigger)
+
+    await processor.process_message(trigger)
+
+    _, _, attached, _ = _ai_call(ai_handler, "generate_response")
+    assert "LAST 1 MESSAGES IN THIS CHANNEL" in attached
+
+
+async def test_chat_rate_limit_stops_calls_to_the_ai(pipeline):
+    from src.rate_limiter import RateLimiter
+    processor, _, _, _, ai_handler, bot = pipeline
+    limiter = RateLimiter()
+    limiter._limits = {"chat": (2, 600), "file": (1, 600), "default": (2, 600)}
+    processor.rate_limiter = limiter
+
+    last = None
+    for message_id in (1, 2, 3):
+        last = fake_message(fake_author("Kruskal"), f"/msg {message_id}", message_id=message_id)
+        _channel_with(last)
+        await processor.process_message(last)
+
+    assert ai_handler.generate_reply.call_count == 2
+    assert "slow down" in last.channel.send.call_args[0][0]
+    last.reply.assert_not_called()
+
+
+async def test_ai_is_allowed_to_make_files_behind_the_file_limit(pipeline):
+    from src.exceptions import RateLimitError
+    from src.rate_limiter import RateLimiter
+    import pytest
+    processor, _, _, _, ai_handler, bot = pipeline
+    limiter = RateLimiter()
+    limiter._limits = {"chat": (50, 600), "file": (1, 600), "default": (2, 600)}
+    processor.rate_limiter = limiter
+    trigger = fake_message(fake_author("Kruskal"), "/make me a pdf", message_id=1)
+    _channel_with(trigger)
+
+    await processor.process_message(trigger)
+
+    kwargs = ai_handler.generate_reply.call_args[1]
+    assert kwargs["allow_files"] is True
+    kwargs["file_gate"]()                 # first file passes
+    with pytest.raises(RateLimitError):   # second one is over the limit
+        kwargs["file_gate"]()
+
+
+async def test_generated_files_are_uploaded_with_the_reply(pipeline):
+    from src.document_builder import BuiltFile
+    processor, _, _, _, ai_handler, bot = pipeline
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("here u go", [BuiltFile("proposal.pdf", b"%PDF-1.7 data")]))
+    trigger = fake_message(fake_author("Kruskal"), "/write a proposal as a pdf", message_id=1)
+    _channel_with(trigger)
+
+    await processor.process_message(trigger)
+
+    assert trigger.reply.call_args[0][0] == "here u go"
+    uploads = trigger.reply.call_args[1]["files"]
+    assert [upload.filename for upload in uploads] == ["proposal.pdf"]
+    assert uploads[0].fp.read() == b"%PDF-1.7 data"
+
+
+async def test_plain_replies_send_no_files_argument(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    trigger = fake_message(fake_author("Kruskal"), "/yo", message_id=1)
+    _channel_with(trigger)
+
+    await processor.process_message(trigger)
+
+    assert "files" not in trigger.reply.call_args[1]

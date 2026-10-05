@@ -8,6 +8,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
 
+from src.ai_response_handler import Reply
 from tests.fakes import AsyncIterator
 
 
@@ -57,7 +58,7 @@ async def test_bot_message_ignored(pipeline):
     msg = _make_message(bot.user, is_bot_author=True)
     await processor.process_message(msg)
     msg.channel.send.assert_not_called()
-    ai_handler.generate_response.assert_not_called()
+    ai_handler.generate_reply.assert_not_called()
 
 
 # ── command routing ───────────────────────────────────────────────────────────
@@ -78,14 +79,14 @@ async def test_unknown_command_falls_back_to_ai(pipeline):
     msg = _make_message(bot.user, content="/notacommand hello", channel_send=send)
     await processor.process_message(msg)
     # Either AI called or some response sent
-    assert send.called or ai_handler.generate_response.called
+    assert send.called or ai_handler.generate_reply.called
 
 
 async def test_regular_message_no_ai_response(pipeline):
     processor, _, _, _, ai_handler, bot = pipeline
     msg = _make_message(bot.user, content="just a normal message")
     await processor.process_message(msg)
-    ai_handler.generate_response.assert_not_called()
+    ai_handler.generate_reply.assert_not_called()
 
 
 # ── reply triggers AI ─────────────────────────────────────────────────────────
@@ -96,12 +97,12 @@ async def test_reply_to_bot_triggers_ai(pipeline):
     msg = _make_message(bot.user, content="what do you think?",
                         is_reply_to_bot=True, channel_send=send)
     await processor.process_message(msg)
-    ai_handler.generate_response.assert_called_once()
+    ai_handler.generate_reply.assert_called_once()
 
 
 async def test_reply_to_bot_sends_response(pipeline):
     processor, _, _, _, ai_handler, bot = pipeline
-    ai_handler.generate_response = AsyncMock(return_value="here's my take fr")
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("here's my take fr"))
     send = AsyncMock()
     msg = _make_message(bot.user, content="what do you think?",
                         is_reply_to_bot=True, channel_send=send)

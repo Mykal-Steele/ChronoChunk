@@ -24,5 +24,34 @@ class RateLimiter:
         self._cleanup_interval = Config.RATE_LIMIT_CLEANUP_INTERVAL  # Use configured cleanup interval
         
     def check_rate_limit(self, user_id: str, action: str = "default") -> None:
-        """Rate limiting is currently disabled — all messages pass through."""
-        return
+        """
+        Count one request for this user and action. Raises RateLimitError with the
+        seconds to wait when they are over the limit for that action.
+        """
+        max_requests, window = self._limits.get(action, self._limits["default"])
+        now = time.time()
+        self._cleanup(now)
+
+        # keep only the timestamps still inside the window
+        recent = [t for t in self._history[user_id][action] if now - t < window]
+        if len(recent) >= max_requests:
+            self._history[user_id][action] = recent
+            raise RateLimitError(retry_after=window - (now - recent[0]))
+
+        recent.append(now)
+        self._history[user_id][action] = recent
+
+    def _cleanup(self, now: float) -> None:
+        """Drop users with no recent activity so the history does not grow forever."""
+        if now - self._last_cleanup < self._cleanup_interval:
+            return
+        self._last_cleanup = now
+        longest_window = max(window for _, window in self._limits.values())
+        for user_id in list(self._history):
+            actions = self._history[user_id]
+            for action in list(actions):
+                actions[action] = [t for t in actions[action] if now - t < longest_window]
+                if not actions[action]:
+                    del actions[action]
+            if not actions:
+                del self._history[user_id]

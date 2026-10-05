@@ -1,7 +1,8 @@
+import io
 import logging
 import re
 import discord
-from typing import Optional, Tuple
+from typing import Optional, Set, Tuple
 from src.command_handler import RateLimitError
 from src.message_context import build_attached_context, history_text
 from discord.ext.commands.errors import CommandNotFound
@@ -19,19 +20,30 @@ HISTORY_FETCH_LIMIT = 15
 # The bot quotes and sums up other people's messages, so what it sends must never ping anyone
 NO_PINGS = discord.AllowedMentions.none()
 
+# Stands in for the text when someone only pings the bot or types a bare /chat
+NO_TEXT = "(no text, they just want u to look at what they replied to or attached)"
+
 
 class MessageProcessor:
     """Processes incoming Discord messages and handles routing them correctly"""
     
     def __init__(self, bot, message_handler, ai_response_handler=None, user_data_manager=None, 
-                 game_manager=None, command_handler=None):
-        """Initialize message processor with required components"""
+                 game_manager=None, command_handler=None, rate_limiter=None,
+                 text_commands: Optional[Set[str]] = None):
+        """
+        Initialize message processor with required components.
+
+        text_commands limits which typed "/word" messages go to the command handler.
+        Everything else typed with a slash is chat. None sends every known command there.
+        """
         self.bot = bot
         self.message_handler = message_handler
         self.ai_handler = ai_response_handler  # Store with internal name ai_handler
         self.user_data_manager = user_data_manager
         self.game_manager = game_manager
         self.command_handler = command_handler  # Add this line to store the command handler
+        self.rate_limiter = rate_limiter
+        self.text_commands = text_commands
     
     async def process_message(self, message: discord.Message) -> None:
         """Process an incoming Discord message - Properly capture ALL channel messages"""
@@ -107,12 +119,12 @@ class MessageProcessor:
     def _strip_bot_mention(self, content: str) -> str:
         """Remove the bot's own ping from the text so the AI only sees what they said."""
         stripped = re.sub(rf'<@!?{self.bot.user.id}>', '', content).strip()
-        return stripped or "(no text, they just pinged u)"
+        return stripped or NO_TEXT
 
-    async def _sync_channel_history(self, message: discord.Message) -> None:
+    async def sync_channel_history(self, channel) -> None:
         """Replace the stored history with what is really in the channel right now, oldest first."""
         try:
-            recent = [msg async for msg in message.channel.history(limit=HISTORY_FETCH_LIMIT)]
+            recent = [msg async for msg in channel.history(limit=HISTORY_FETCH_LIMIT)]
         except discord.HTTPException as e:
             logger.warning(f"Could not fetch channel history (code {e.code}): {e}")
             return
@@ -120,7 +132,7 @@ class MessageProcessor:
             return
 
         recent.reverse()  # Discord returns newest first
-        self.message_handler.replace_channel_history(str(message.channel.id), [
+        self.message_handler.replace_channel_history(str(channel.id), [
             {
                 "user_id": str(msg.author.id),
                 "username": msg.author.display_name,
@@ -137,7 +149,15 @@ class MessageProcessor:
                        channel_id: str, query: str, user_data: dict,
                        referenced: Optional[discord.Message] = None) -> None:
         """Answer a message with the AI, using fresh channel history and whatever the message points at."""
-        await self._sync_channel_history(message)
+        if self.rate_limiter:
+            try:
+                self.rate_limiter.check_rate_limit(user_id, "chat")
+            except RateLimitError as e:
+                minutes = max(1, round(e.retry_after / 60))
+                await self._safe_send(message.channel, f"slow down, u hit the message limit. try again in about {minutes} min")
+                return
+
+        await self.sync_channel_history(message.channel)
         conversation_history = self.message_handler.build_conversation_context(
             channel_id=channel_id, user_data=user_data, is_correction=False
         )
@@ -154,8 +174,17 @@ is_correction: bool) -> None:
             command = parts[0][1:] if len(parts[0]) > 1 else ""  # Remove the slash
             args = parts[1:] if len(parts) > 1 else []
             
-            # Check if we actually have a command handler
-            if not self.command_handler:
+            # "/chat ..." is plain chat, so the word itself is dropped
+            if command.lower() == "chat":
+                rest = message.content[len(parts[0]):].strip()
+                query = f"/{rest}" if rest else NO_TEXT
+                referenced = await self._get_referenced_message(message)
+                await self._respond(message, user_id, username, channel_id, query, user_data, referenced)
+                return
+
+            # Without a command handler, or for a word that is not a typed command, it is chat
+            is_text_command = self.text_commands is None or command.lower() in self.text_commands
+            if not self.command_handler or not is_text_command:
                 referenced = await self._get_referenced_message(message)
                 await self._respond(message, user_id, username, channel_id, message.content, user_data, referenced)
                 return
@@ -247,12 +276,18 @@ is_correction: bool) -> None:
                 enriched_query = await self._resolve_message_link(query)
                 # Read the message they replied to and any files or images involved
                 attached = await build_attached_context(message, referenced, self.bot.user.id)
-                ai_response = await self.ai_handler.generate_response(
+                # Files (documents, diagrams) count against a per-user daily limit
+                file_gate = None
+                if self.rate_limiter:
+                    file_gate = lambda: self.rate_limiter.check_rate_limit(user_id, "file")
+                reply = await self.ai_handler.generate_reply(
                     enriched_query, conversation_history, username, user_id,
-                    attached_context=attached.text, images=attached.images
+                    attached_context=attached.text, images=attached.images,
+                    allow_files=True, file_gate=file_gate
                 )
+                ai_response = reply.text
 
-            await self._send_reply(message, ai_response)
+            await self._send_reply(message, ai_response, reply.files)
             await self._maybe_assign_chrono_role(message)
 
             # The user's message is already in the history, so only the answer is added
@@ -282,8 +317,12 @@ is_correction: bool) -> None:
                 split_at = text.rfind(' ', 0, limit)
             if split_at <= 0:
                 split_at = limit
-            chunks.append(text[:split_at])
-            text = text[split_at:].lstrip()
+            chunk, text = text[:split_at], text[split_at:].lstrip()
+            # A split inside a code block closes it here and reopens it in the next chunk
+            if chunk.count('```') % 2 == 1:
+                chunk += '\n```'
+                text = '```\n' + text
+            chunks.append(chunk)
         if text:
             chunks.append(text)
         return chunks
@@ -293,16 +332,27 @@ is_correction: bool) -> None:
         for chunk in self._split_text(text):
             await channel.send(chunk, allowed_mentions=NO_PINGS)
 
-    async def _send_reply(self, message: discord.Message, text: str) -> None:
-        """Send the answer as a Discord reply to the message that asked, splitting long text."""
+    async def _send_reply(self, message: discord.Message, text: str, files=None) -> None:
+        """
+        Send the answer as a Discord reply to the message that asked, splitting long
+        text. files are BuiltFile objects, uploaded with the first chunk.
+        """
         chunks = self._split_text(text)
-        if not chunks:
+        if not chunks and not files:
             return
+        first = chunks[0] if chunks else None
+
+        def extras() -> dict:
+            # Upload objects can only be sent once, so they are rebuilt for the fallback
+            if not files:
+                return {}
+            return {"files": [discord.File(io.BytesIO(f.data), filename=f.filename) for f in files]}
+
         try:
-            await message.reply(chunks[0], mention_author=False, allowed_mentions=NO_PINGS)
+            await message.reply(first, mention_author=False, allowed_mentions=NO_PINGS, **extras())
         except discord.HTTPException:
             # Replying failed (message deleted, or no permission), so send it as a plain message
-            await message.channel.send(chunks[0], allowed_mentions=NO_PINGS)
+            await message.channel.send(first, allowed_mentions=NO_PINGS, **extras())
         for chunk in chunks[1:]:
             await message.channel.send(chunk, allowed_mentions=NO_PINGS)
 

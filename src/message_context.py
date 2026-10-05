@@ -215,6 +215,19 @@ async def _read_message(message, image_budget: int) -> MessageContext:
     return MessageContext("\n".join(lines), files.images)
 
 
+async def read_own_attachments(attachments: list, image_budget: int = MAX_IMAGES) -> MessageContext:
+    """Read the files someone attached to their own message into a labelled block."""
+    own = await _read_attachments(_items(attachments), image_budget)
+    if not own.text:
+        return MessageContext()
+    return MessageContext(
+        "=== FILES THEY ATTACHED TO THIS MESSAGE ===\n"
+        f"{own.text}\n"
+        "=== END OF ATTACHED FILES ===",
+        own.images,
+    )
+
+
 async def build_attached_context(message, referenced=None, bot_user_id: Optional[int] = None) -> MessageContext:
     """
     Gather what a message points at: the message it replies to (with its files and
@@ -235,14 +248,9 @@ async def build_attached_context(message, referenced=None, bot_user_id: Optional
             "=== END OF REPLIED-TO MESSAGE ==="
         )
 
-    own_attachments = _items(message.attachments)
-    if own_attachments:
-        own = await _read_attachments(own_attachments, MAX_IMAGES - len(images))
+    own = await read_own_attachments(message.attachments, MAX_IMAGES - len(images))
+    if own.text:
         images.extend(own.images)
-        blocks.append(
-            "=== FILES THEY ATTACHED TO THIS MESSAGE ===\n"
-            f"{own.text}\n"
-            "=== END OF ATTACHED FILES ==="
-        )
+        blocks.append(own.text)
 
     return MessageContext("\n\n".join(blocks), images)
