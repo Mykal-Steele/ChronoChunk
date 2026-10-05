@@ -1,0 +1,22 @@
+#cloud-config
+# First-boot setup for the Azure VM: Docker, swap, and the repo checkout.
+# Pass it to `az vm create --custom-data deployment/cloud-init.yml`.
+package_update: true
+package_upgrade: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - docker-buildx
+  - git
+
+# The VM has 1 GiB of RAM, so image builds need swap.
+swap:
+  filename: /swapfile
+  size: 2G
+  maxsize: 2G
+
+runcmd:
+  - systemctl enable --now docker
+  - usermod -aG docker azureuser
+  - install -d -o azureuser -g azureuser /opt/chronochunk /opt/chronochunk/data /opt/chronochunk/data/user_data /opt/chronochunk/data/logs
+  - sudo -u azureuser git clone --branch ai/chat https://github.com/Mykal-Steele/ChronoChunk /opt/chronochunk/app
