@@ -384,11 +384,15 @@ class AIResponseHandler:
         if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
         called_at = time.monotonic()
-        resp = await self.ai_client.chat.completions.create(**kwargs)
+        try:
+            resp = await self.ai_client.chat.completions.create(**kwargs)
+        finally:
+            # A call that fails still made them wait
+            if request:
+                request.model_seconds += time.monotonic() - called_at
         if request:
-            request.model_seconds += time.monotonic() - called_at
             request.calls += 1
-            request.cost += UsageGuard.cost_of(getattr(resp, "usage", None))
+            request.cost += UsageGuard.cost_of(getattr(resp, "usage", None), kwargs["model"])
         return resp.choices[0].message
 
     async def generate_reply(self, query: str, conversation_history: str,

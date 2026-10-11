@@ -159,3 +159,16 @@ async def test_guarded_client_does_not_call_the_model_over_budget(guard):
     with pytest.raises(BudgetExceededError):
         await client.chat.completions.create(model="gpt-5-mini", messages=[])
     inner.chat.completions.create.assert_not_called()
+
+
+def test_a_cheaper_model_is_costed_at_its_own_prices():
+    tokens = usage(prompt=1_000_000, completion=1_000_000)
+    assert UsageGuard.cost_of(tokens, "gpt-5-nano-2025-08-07") == pytest.approx(0.45)
+    assert UsageGuard.cost_of(tokens, "gpt-5-mini-2025-08-07") == pytest.approx(2.25)
+    assert UsageGuard.cost_of(tokens) == pytest.approx(2.25)
+
+
+def test_the_guard_records_the_price_of_the_model_that_answered(guard):
+    assert guard.record(usage(prompt=1_000_000), "gpt-5-nano") == pytest.approx(0.05)
+    assert guard.summary()["cycle_cost"] == pytest.approx(0.05)
+

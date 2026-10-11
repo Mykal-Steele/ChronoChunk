@@ -135,6 +135,7 @@ The bot stops calling the model when it reaches its spending cap, and starts aga
 | `AI_DAILY_BUDGET_USD` | 2 | Hard cap per day |
 | `AI_BUDGET_RESET_DAY` | 14 | Day of the month the cycle restarts |
 | `AI_CHAT_REASONING_EFFORT` | low | Reasoning effort for chat replies |
+| `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` | empty | A cheaper deployment, such as gpt-5-nano, for picking facts out of messages. Empty uses the main one |
 
 Set these in `.env`. Costs are estimated from token counts at gpt-5-mini prices and kept in `state/ai_usage.json`. `/usage` shows the current totals. Each reply also writes one log line with the images and files it read, the number of model calls and the estimated cost.
 

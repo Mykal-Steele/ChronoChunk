@@ -46,6 +46,16 @@ class Config:
     AI_PRICE_CACHED_INPUT_PER_M = float(os.getenv("AI_PRICE_CACHED_INPUT_PER_M", 0.025))
     AI_PRICE_OUTPUT_PER_M = float(os.getenv("AI_PRICE_OUTPUT_PER_M", 2.00))
 
+    # Prices for other models the bot calls: (input, cached input, output) in USD per 1M tokens.
+    # Matched against the model name in each response. Anything not listed is costed at the prices above.
+    AI_MODEL_PRICES = {
+        "gpt-5-nano": (0.05, 0.005, 0.40),
+    }
+
+    # A cheaper deployment for jobs that run behind the reply, such as picking facts out of a
+    # message. Empty means those jobs use the main deployment.
+    AI_BACKGROUND_DEPLOYMENT = os.getenv("AZURE_OPENAI_BACKGROUND_DEPLOYMENT", "").strip()
+
     # Tavily key for web search. Without it the bot can still open links, it just cannot search.
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
     
