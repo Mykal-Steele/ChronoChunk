@@ -6,12 +6,10 @@ Prints [PASS] / [FAIL] for each check.
 Exits with code 1 if any non-advisory check fails.
 """
 import asyncio
-import json
 import os
 import shutil
 import sys
 import tempfile
-import time
 
 # Ensure project root on path and load .env before any imports
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -90,8 +88,11 @@ async def check_azure_via_udm():
     from src.user_data_manager import UserDataManager
 
     with tempfile.TemporaryDirectory() as tmpdir:
+        from src.database import Database
+        from src.user_store import UserStore
+        database = Database(os.path.join(tmpdir, "live_check.db"))
         try:
-            udm = UserDataManager(data_dir=tmpdir)
+            udm = UserDataManager(UserStore(database))
         except Exception as e:
             check("UserDataManager init", False, str(e))
             return
@@ -101,13 +102,13 @@ async def check_azure_via_udm():
         try:
             await asyncio.wait_for(
                 udm.extract_and_save_facts(
-                    "live_test_uid_99",
+                    "990000000000000099",
                     "I am 30 years old and I absolutely love hiking in the mountains",
                     "LiveTestUser"
                 ),
                 timeout=20.0
             )
-            data = udm.load_user_data("live_test_uid_99")
+            data = udm.load_user_data("990000000000000099")
             facts = [f.get("content", "") for f in data.get("facts", [])]
             has_fact = any("30" in c or "hik" in c.lower() or "mountain" in c.lower() for c in facts)
             if not has_fact and not facts:
@@ -118,52 +119,30 @@ async def check_azure_via_udm():
             check("Fact extracted and saved", False, "timed out after 20s")
         except Exception as e:
             check("Fact extracted and saved", False, str(e)[:120])
+        finally:
+            database.close()
 
 
-# ── 4. User data file I/O ─────────────────────────────────────────────────────
+# ── 4. User data in the database ──────────────────────────────────────────────
 
 def check_user_data_io():
-    print("\n4. User data file I/O")
-    from src.user_data_manager import UserDataManager
+    print("\n4. User data in the database")
+    from src.database import Database
+    from src.user_store import UserStore
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        udm = UserDataManager.__new__(UserDataManager)
-        udm.data_dir = tmpdir
-        # Skip Gemini init for this check
-        udm.ai_client = None
-        udm.model_name = "gemini-2.0-flash"
-        udm.fact_model = None
-
-        # Re-import needed methods work without genai
-        import re
-        from datetime import datetime
-        import logging
-        logger = logging.getLogger("live_check")
-
-        # Test write → read roundtrip
+        path = os.path.join(tmpdir, "live_check.db")
+        store = UserStore(Database(path))
         uid = "987654321"
-        sample = {
-            "user_id": uid,
-            "username": "LiveTestUser",
-            "created_at": datetime.now().isoformat(),
-            "personal_info": {},
-            "preferences": {},
-            "facts": [{"content": "You love สมอง 1mm and 寿司", "timestamp": "now"}],
-            "topics_of_interest": ["hiking", "testing"],
-            "conversation_history": [],
-            "last_interaction": datetime.now().isoformat(),
-        }
+        store.get_profile(uid, "LiveTestUser")
+        store.change_facts(uid, add=["You love สมอง 1mm and 寿司"])
+        store.add_conversation(uid, "hello", "yo")
 
-        path = os.path.join(tmpdir, f"{uid}.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(sample, f, ensure_ascii=False)
-
-        with open(path, encoding="utf-8") as f:
-            loaded = json.load(f)
-
+        # Read it back through a second connection, the way a restart would
+        loaded = UserStore(Database(path)).get_profile(uid)
         check("UTF-8 roundtrip (Thai + Japanese)", "สมอง" in str(loaded) and "寿司" in str(loaded))
-        check("Topics persisted", loaded["topics_of_interest"] == ["hiking", "testing"])
         check("Facts persisted", len(loaded["facts"]) == 1)
+        check("Conversation persisted", len(loaded["conversation_history"]) == 1)
 
 
 # ── 5. Web server endpoints ───────────────────────────────────────────────────

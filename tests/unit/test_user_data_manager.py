@@ -1,293 +1,214 @@
-"""Unit tests for UserDataManager — file system uses tmp_path, Gemini is mocked."""
-import json
-import os
+"""Unit tests for UserDataManager. The data lives in the test database and the model is mocked."""
+import asyncio
+
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch
+
+from config.config import Config
 
 
 @pytest.fixture
-def udm(tmp_path, mock_openai_client):
+def udm(mock_openai_client):
     with patch("src.user_data_manager.AsyncOpenAI") as mock_cls:
         mock_cls.return_value = mock_openai_client
         from src.user_data_manager import UserDataManager
-        manager = UserDataManager(data_dir=str(tmp_path))
+        manager = UserDataManager()
     manager.ai_client = mock_openai_client
-    manager.deployment = "gpt-5-mini"
     return manager
 
 
 USER_ID = "1234567890"
 
 
-# ── load_user_data ────────────────────────────────────────────────────────────
+def _facts(udm):
+    return [fact["content"] for fact in udm.load_user_data(USER_ID)["facts"]]
 
-def test_load_creates_default_structure(udm):
+
+def _model_says(fake_openai_response, text):
+    fake_openai_response.choices[0].message.content = text
+
+
+# ── loading ───────────────────────────────────────────────────────────────────
+
+def test_a_new_user_starts_empty(udm):
     data = udm.load_user_data(USER_ID, "TestUser")
-    for key in ("user_id", "username", "facts", "topics_of_interest",
-                "conversation_history", "personal_info", "preferences"):
-        assert key in data, f"Missing key: {key}"
+    assert data["user_id"] == USER_ID and data["username"] == "TestUser"
+    assert data["facts"] == [] and data["topics_of_interest"] == [] and data["conversation_history"] == []
 
 
-def test_load_creates_file_on_disk(udm, tmp_path):
-    udm.load_user_data(USER_ID, "TestUser")
-    assert os.path.exists(tmp_path / f"{USER_ID}.json")
-
-
-def test_load_returns_existing_data(udm):
-    udm.load_user_data(USER_ID, "TestUser")
-    # Mutate and save
-    data = udm.load_user_data(USER_ID, "TestUser")
-    data["facts"].append({"content": "You love pizza", "timestamp": "now"})
-    udm.save_user_data(USER_ID, data)
-
-    loaded = udm.load_user_data(USER_ID)
-    assert any("pizza" in f.get("content", "") for f in loaded["facts"])
-
-
-def test_load_updates_username_when_changed(udm):
+def test_a_changed_display_name_is_saved(udm):
     udm.load_user_data(USER_ID, "OldName")
-    data = udm.load_user_data(USER_ID, "NewName")
-    assert data["username"] == "NewName"
+    assert udm.load_user_data(USER_ID, "NewName")["username"] == "NewName"
+    assert udm.load_user_data(USER_ID)["username"] == "NewName"
 
 
-# ── save_user_data ────────────────────────────────────────────────────────────
+def test_user_ids_keep_only_their_digits(udm):
+    udm.load_user_data("<@1234567890>", "TestUser")
+    assert udm.store.user_count() == 1
+    assert udm.load_user_data(USER_ID)["username"] == "TestUser"
 
-def test_save_creates_file(udm, tmp_path):
-    data = udm.load_user_data(USER_ID, "TestUser")
-    udm.save_user_data(USER_ID, data)
-    assert os.path.exists(tmp_path / f"{USER_ID}.json")
 
+# ── conversations ─────────────────────────────────────────────────────────────
 
-def test_save_updates_last_interaction(udm):
-    data = udm.load_user_data(USER_ID, "TestUser")
-    original_ts = data.get("last_interaction", "")
-    udm.save_user_data(USER_ID, data)
-    saved = udm.load_user_data(USER_ID)
-    assert saved["last_interaction"] != ""
+async def test_add_conversation_stores_the_exchange(udm, fake_openai_response):
+    _model_says(fake_openai_response, "[]")
+    await udm.add_conversation(USER_ID, "hello there friend", "yo", "TestUser")
+    history = udm.load_user_data(USER_ID)["conversation_history"]
+    assert [(c["user_message"], c["bot_response"]) for c in history] == [("hello there friend", "yo")]
 
 
-def test_save_utf8_fact_preserved(udm):
-    data = udm.load_user_data(USER_ID, "TestUser")
-    data["facts"].append({"content": "You like สมอง 1mm and 寿司", "timestamp": "now"})
-    udm.save_user_data(USER_ID, data)
-    loaded = udm.load_user_data(USER_ID)
-    contents = [f.get("content", "") for f in loaded["facts"]]
-    assert any("สมอง" in c and "寿司" in c for c in contents)
+async def test_only_the_newest_conversations_are_kept(udm, fake_openai_response):
+    _model_says(fake_openai_response, "[]")
+    for number in range(Config.MAX_CONVERSATION_HISTORY + 5):
+        await udm.add_conversation(USER_ID, f"message number {number}", "ok", "TestUser")
+    history = udm.load_user_data(USER_ID)["conversation_history"]
+    assert len(history) == Config.MAX_CONVERSATION_HISTORY
+    assert history[0]["user_message"] == "message number 5"
+    assert history[-1]["user_message"] == f"message number {Config.MAX_CONVERSATION_HISTORY + 4}"
 
 
-def test_save_file_is_valid_json(udm, tmp_path):
-    data = udm.load_user_data(USER_ID, "TestUser")
-    udm.save_user_data(USER_ID, data)
-    with open(tmp_path / f"{USER_ID}.json", encoding="utf-8") as f:
-        parsed = json.load(f)
-    assert isinstance(parsed, dict)
+# ── fact extraction ───────────────────────────────────────────────────────────
 
+async def test_extracted_facts_are_stored(udm, fake_openai_response):
+    _model_says(fake_openai_response, '["You like hiking", "You have a dog"]')
+    assert await udm.extract_and_save_facts(USER_ID, "i like hiking and i have a dog", "TestUser") is True
+    assert _facts(udm) == ["You like hiking", "You have a dog"]
+    stored = udm.load_user_data(USER_ID)["facts"][0]
+    assert stored["extracted_from"] == "i like hiking and i have a dog" and stored["timestamp"]
 
-# ── user ID sanitization ──────────────────────────────────────────────────────
 
-def test_user_id_sanitized_removes_non_digits(udm, tmp_path):
-    udm.load_user_data("<script>99999</script>", "Hacker")
-    assert os.path.exists(tmp_path / "99999.json")
-    assert not any(f.name.startswith("<") for f in tmp_path.iterdir())
+async def test_non_ascii_facts_survive(udm, fake_openai_response):
+    _model_says(fake_openai_response, '["You live in กรุงเทพ"]')
+    await udm.extract_and_save_facts(USER_ID, "ผมอยู่กรุงเทพ ครับ", "TestUser")
+    assert _facts(udm) == ["You live in กรุงเทพ"]
 
 
-def test_user_id_digits_only_unchanged(udm, tmp_path):
-    udm.load_user_data("777888", "TestUser")
-    assert os.path.exists(tmp_path / "777888.json")
+async def test_json_inside_a_code_fence_is_read(udm, fake_openai_response):
+    _model_says(fake_openai_response, '```json\n["You like tea"]\n```')
+    await udm.extract_and_save_facts(USER_ID, "i like tea a lot", "TestUser")
+    assert _facts(udm) == ["You like tea"]
 
 
-# ── add_conversation ──────────────────────────────────────────────────────────
+async def test_a_fact_already_stored_is_not_added_twice(udm, fake_openai_response):
+    _model_says(fake_openai_response, '["You like tea"]')
+    await udm.extract_and_save_facts(USER_ID, "i like tea a lot", "TestUser")
+    assert await udm.extract_and_save_facts(USER_ID, "did i say i like tea", "TestUser") is False
+    assert _facts(udm) == ["You like tea"]
 
-async def test_add_conversation_stores_entry(udm):
-    await udm.add_conversation(USER_ID, "hi there", "hello!", "TestUser")
-    data = udm.load_user_data(USER_ID)
-    assert len(data["conversation_history"]) >= 1
-    entry = data["conversation_history"][-1]
-    assert entry["user_message"] == "hi there"
-    assert entry["bot_response"] == "hello!"
 
+async def test_a_new_age_or_home_replaces_the_old_one(udm, fake_openai_response):
+    _model_says(fake_openai_response, '["You are 20 years old", "You live in Bangkok", "You like tea"]')
+    await udm.extract_and_save_facts(USER_ID, "im 20, live in bangkok, like tea", "TestUser")
+    _model_says(fake_openai_response, '["You are 21 years old", "You moved to Chiang Mai"]')
+    await udm.extract_and_save_facts(USER_ID, "im 21 now and moved to chiang mai", "TestUser")
+    assert sorted(_facts(udm)) == ["You are 21 years old", "You like tea", "You moved to Chiang Mai"]
 
-async def test_add_conversation_history_trimmed_to_max(udm, mock_openai_client):
-    # Silence fact extraction so it doesn't interfere
-    mock_openai_client.chat.completions.create = AsyncMock(
-        side_effect=Exception("quota")
-    )
-    udm.ai_client = mock_openai_client
-    from config.config import Config
 
-    # add_conversation() enforces the trim — call it directly
-    for i in range(Config.MAX_CONVERSATION_HISTORY + 5):
-        await udm.add_conversation(USER_ID, f"user msg {i}", f"bot resp {i}", "TestUser")
+async def test_a_new_like_does_not_delete_an_older_one(udm, fake_openai_response):
+    _model_says(fake_openai_response, '["You like tea"]')
+    await udm.extract_and_save_facts(USER_ID, "i like tea a lot", "TestUser")
+    _model_says(fake_openai_response, '["You like hiking", "You are a backend developer"]')
+    await udm.extract_and_save_facts(USER_ID, "i like hiking and im a backend dev", "TestUser")
+    assert sorted(_facts(udm)) == ["You are a backend developer", "You like hiking", "You like tea"]
 
-    data = udm.load_user_data(USER_ID)
-    assert len(data["conversation_history"]) <= Config.MAX_CONVERSATION_HISTORY
 
+@pytest.mark.parametrize("message", ["ok", "hi", "", "/x", "help me out please", "/chat about my day"])
+async def test_short_messages_and_command_words_are_skipped(udm, mock_openai_client, message):
+    assert await udm.extract_and_save_facts(USER_ID, message, "TestUser") is False
+    mock_openai_client.chat.completions.create.assert_not_called()
 
-# ── extract_and_save_facts ────────────────────────────────────────────────────
 
-async def test_extract_facts_calls_api(udm, mock_openai_client, fake_openai_response):
-    fake_openai_response.choices[0].message.content ='["You are 25 years old", "You love sushi"]'
-    mock_openai_client.chat.completions.create = AsyncMock(return_value=fake_openai_response)
-    udm.ai_client = mock_openai_client
+async def test_an_answer_that_is_not_json_changes_nothing(udm, fake_openai_response):
+    _model_says(fake_openai_response, "sorry, no facts here")
+    assert await udm.extract_and_save_facts(USER_ID, "this is a long message", "TestUser") is False
+    assert _facts(udm) == []
 
-    result = await udm.extract_and_save_facts(USER_ID, "I am 25 years old and I love sushi", "TestUser")
-    assert mock_openai_client.chat.completions.create.called
 
-
-async def test_extract_facts_stores_facts(udm, mock_openai_client, fake_openai_response):
-    fake_openai_response.choices[0].message.content ='["You are 25 years old", "You love sushi"]'
-    mock_openai_client.chat.completions.create = AsyncMock(return_value=fake_openai_response)
-    udm.ai_client = mock_openai_client
-
-    await udm.extract_and_save_facts(USER_ID, "I am 25 years old and I love sushi", "TestUser")
-    data = udm.load_user_data(USER_ID)
-    fact_contents = [f.get("content", "") for f in data["facts"]]
-    assert any("25" in c for c in fact_contents) or any("sushi" in c for c in fact_contents)
-
-
-async def test_extract_facts_skips_message_too_short(udm, mock_openai_client):
-    result = await udm.extract_and_save_facts(USER_ID, "ok", "TestUser")
-    assert result is False
-    assert not mock_openai_client.chat.completions.create.called
-
-
-async def test_extract_facts_skips_single_word(udm, mock_openai_client):
-    result = await udm.extract_and_save_facts(USER_ID, "hi", "TestUser")
-    assert result is False
-    assert not mock_openai_client.chat.completions.create.called
-
-
-async def test_extract_facts_handles_json_error_gracefully(udm, mock_openai_client, fake_openai_response):
-    fake_openai_response.choices[0].message.content ="not valid json at all"
-    mock_openai_client.chat.completions.create = AsyncMock(return_value=fake_openai_response)
-    udm.ai_client = mock_openai_client
-
-    # Should not raise
-    result = await udm.extract_and_save_facts(USER_ID, "I love cheese and mountains", "TestUser")
-    assert result is False or result is True  # Doesn't crash
-
-
-async def test_extract_facts_handles_quota_error_silently(udm, mock_openai_client):
-    mock_openai_client.chat.completions.create = AsyncMock(
-        side_effect=Exception("429 quota exceeded")
-    )
-    udm.ai_client = mock_openai_client
-
-    # Should not raise
-    result = await udm.extract_and_save_facts(USER_ID, "I work as an engineer", "TestUser")
-    assert result is False
-
-
-async def test_extract_facts_skips_command_words(udm, mock_openai_client):
-    result = await udm.extract_and_save_facts(USER_ID, "chat hello world", "TestUser")
-    assert result is False
-    assert not mock_openai_client.chat.completions.create.called
-
-
-async def test_extract_facts_handles_json_array_response(udm, mock_openai_client, fake_openai_response):
-    # With response_format=json_object, model returns clean JSON — no markdown wrapping
-    fake_openai_response.choices[0].message.content ='{"facts": ["You love cats"]}'
-    mock_openai_client.chat.completions.create = AsyncMock(return_value=fake_openai_response)
-    udm.ai_client = mock_openai_client
-
-    await udm.extract_and_save_facts(USER_ID, "I absolutely love cats so much", "TestUser")
-    # Should not crash even if format differs from expected array
-    data = udm.load_user_data(USER_ID)
-    assert isinstance(data["facts"], list)
-
-
-# ── remove_fact ───────────────────────────────────────────────────────────────
-
-def test_remove_fact_existing(udm):
-    data = udm.load_user_data(USER_ID, "TestUser")
-    data["facts"].append({"content": "You are 25 years old", "timestamp": "now", "extracted_from": "test"})
-    udm.save_user_data(USER_ID, data)
-
-    # remove_fact does substring match: search string must appear inside the fact content
-    result = udm.remove_fact(USER_ID, "25 years old", "TestUser")
-    assert result is True
-    updated = udm.load_user_data(USER_ID)
-    assert not any("25 years old" in f.get("content", "") for f in updated["facts"])
-
-
-def test_remove_fact_nonexistent_returns_false(udm):
-    udm.load_user_data(USER_ID, "TestUser")
-    result = udm.remove_fact(USER_ID, "something that was never stored xyz", "TestUser")
-    assert result is False
-
-
-# ── get_user_summary ──────────────────────────────────────────────────────────
-
-def test_get_user_summary_empty_user(udm):
-    summary = udm.get_user_summary(USER_ID, "TestUser")
-    assert isinstance(summary, str)
-    # Empty user should return a friendly "don't know much" message or minimal output
-    assert len(summary) >= 0  # At minimum returns something
-
-
-def test_get_user_summary_includes_facts(udm):
-    data = udm.load_user_data(USER_ID, "TestUser")
-    data["facts"].append({"content": "You love pizza", "timestamp": "now", "extracted_from": "test"})
-    data["facts"].append({"content": "You are 22 years old", "timestamp": "now", "extracted_from": "test"})
-    udm.save_user_data(USER_ID, data)
-
-    summary = udm.get_user_summary(USER_ID, "TestUser")
-    assert "pizza" in summary or "22" in summary
-
-
-# ── forget_user ───────────────────────────────────────────────────────────────
-
-def test_forget_user_deletes_everything_stored(udm, tmp_path):
-    data = udm.load_user_data(USER_ID, "TestUser")
-    data["facts"] = [{"content": "likes cats"}]
-    data["conversation_history"] = [{"user_message": "hi", "bot_response": "yo"}]
-    udm.save_user_data(USER_ID, data)
-    udm.forget_user(USER_ID)
-    assert not os.path.exists(tmp_path / f"{USER_ID}.json")
-    fresh = udm.load_user_data(USER_ID, "TestUser")
-    assert fresh["facts"] == [] and fresh["conversation_history"] == []
-
-
-def test_forget_user_with_nothing_stored_is_fine(udm):
-    udm.forget_user("999")
-
-
-def test_data_loaded_before_a_forget_is_not_saved_back(udm, tmp_path):
-    # Fact extraction loads the data, waits for the model, then saves. A /forget in between must win.
-    stale = udm.load_user_data(USER_ID, "TestUser")
-    stale["facts"] = [{"content": "likes cats"}]
-    udm.forget_user(USER_ID)
-    udm.save_user_data(USER_ID, stale)
-    assert not os.path.exists(tmp_path / f"{USER_ID}.json")
-
-
-def test_data_loaded_after_a_forget_is_saved_normally(udm, tmp_path):
-    udm.forget_user(USER_ID)
-    fresh = udm.load_user_data(USER_ID, "TestUser")
-    fresh["facts"] = [{"content": "likes dogs"}]
-    udm.save_user_data(USER_ID, fresh)
-    stored = json.loads((tmp_path / f"{USER_ID}.json").read_text(encoding="utf-8"))
-    assert stored["facts"] == [{"content": "likes dogs"}]
-    assert not any(key.startswith("_") for key in stored)
+async def test_a_rate_limit_from_the_model_is_swallowed(udm, mock_openai_client):
+    mock_openai_client.chat.completions.create.side_effect = Exception("429 quota exceeded")
+    assert await udm.extract_and_save_facts(USER_ID, "this is a long message", "TestUser") is False
 
 
 async def test_facts_are_extracted_with_the_main_model_by_default(udm, mock_openai_client, fake_openai_response):
-    fake_openai_response.choices[0].message.content = "[]"
+    _model_says(fake_openai_response, "[]")
     await udm.extract_and_save_facts(USER_ID, "i really like hiking a lot", "TestUser")
     call = mock_openai_client.chat.completions.create.call_args[1]
     assert call["model"] == "gpt-5-mini" and call["reasoning_effort"] == "low"
 
 
-async def test_facts_use_the_background_model_when_one_is_set(tmp_path, mock_openai_client, fake_openai_response, monkeypatch):
-    from config.config import Config
+async def test_facts_use_the_background_model_when_one_is_set(mock_openai_client, fake_openai_response, monkeypatch):
     monkeypatch.setattr(Config, "AI_BACKGROUND_DEPLOYMENT", "gpt-5-nano")
     with patch("src.user_data_manager.AsyncOpenAI") as mock_cls:
         mock_cls.return_value = mock_openai_client
         from src.user_data_manager import UserDataManager
-        manager = UserDataManager(data_dir=str(tmp_path))
+        manager = UserDataManager()
     manager.ai_client = mock_openai_client
-    fake_openai_response.choices[0].message.content = '["You like hiking"]'
+    _model_says(fake_openai_response, '["You like hiking"]')
     assert await manager.extract_and_save_facts(USER_ID, "i really like hiking a lot", "TestUser")
     call = mock_openai_client.chat.completions.create.call_args[1]
     assert call["model"] == "gpt-5-nano" and call["reasoning_effort"] == "minimal"
 
+
+# ── removing and showing ──────────────────────────────────────────────────────
+
+async def test_remove_fact_deletes_what_matches(udm, fake_openai_response):
+    _model_says(fake_openai_response, '["You like tea", "You have a dog"]')
+    await udm.extract_and_save_facts(USER_ID, "i like tea and have a dog", "TestUser")
+    assert udm.remove_fact(USER_ID, "TEA") is True
+    assert _facts(udm) == ["You have a dog"]
+    assert udm.remove_fact(USER_ID, "spaceship") is False
+    assert udm.remove_fact(USER_ID, "") is False
+
+
+async def test_summary_lists_facts_and_says_so_when_there_are_none(udm, fake_openai_response):
+    assert "don't have any information" in udm.get_user_summary(USER_ID, "TestUser")
+    _model_says(fake_openai_response, '["You like tea"]')
+    await udm.extract_and_save_facts(USER_ID, "i like tea a lot", "TestUser")
+    assert udm.get_user_summary(USER_ID) == "Things I know about you:\n- You like tea"
+
+
+# ── forgetting ────────────────────────────────────────────────────────────────
+
+async def test_forget_user_deletes_everything_stored(udm, fake_openai_response, database):
+    _model_says(fake_openai_response, '["You like cats"]')
+    await udm.add_conversation(USER_ID, "i like cats very much", "nice", "TestUser")
+    udm.forget_user(USER_ID)
+    for table in ("users", "facts", "topics", "conversations"):
+        assert database.query(f"SELECT COUNT(*) AS n FROM {table}")[0]["n"] == 0
+    udm.forget_user("999")  # someone the bot never saw
+
+
+async def test_a_forget_during_fact_extraction_is_not_undone(udm, mock_openai_client, fake_openai_response):
+    # Extraction reads the user, waits for the model, then saves. A /forget in between must win.
+    model_called, let_model_answer = asyncio.Event(), asyncio.Event()
+
+    async def slow_model(**kwargs):
+        model_called.set()
+        await let_model_answer.wait()
+        return fake_openai_response
+    _model_says(fake_openai_response, '["You like cats"]')
+    mock_openai_client.chat.completions.create.side_effect = slow_model
+    extraction = asyncio.ensure_future(udm.extract_and_save_facts(USER_ID, "i like cats very much", "TestUser"))
+    await model_called.wait()
+    udm.forget_user(USER_ID)
+    let_model_answer.set()
+    assert await extraction is False
+    assert udm.store.user_count() == 0
+
+
+async def test_a_forget_then_a_new_message_starts_clean(udm, mock_openai_client, fake_openai_response):
+    model_called, let_model_answer = asyncio.Event(), asyncio.Event()
+
+    async def slow_model(**kwargs):
+        model_called.set()
+        await let_model_answer.wait()
+        return fake_openai_response
+    _model_says(fake_openai_response, '["You like cats"]')
+    mock_openai_client.chat.completions.create.side_effect = slow_model
+    extraction = asyncio.ensure_future(udm.extract_and_save_facts(USER_ID, "i like cats very much", "TestUser"))
+    await model_called.wait()
+    udm.forget_user(USER_ID)
+    udm.load_user_data(USER_ID, "TestUser")  # they talk to the bot again before the old extraction ends
+    let_model_answer.set()
+    assert await extraction is False
+    assert _facts(udm) == []

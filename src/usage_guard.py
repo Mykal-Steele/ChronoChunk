@@ -1,12 +1,12 @@
 """Keeps the bot's AI spending under a hard budget and records what every call costs."""
-import json
 import logging
-import os
+import sqlite3
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 from config.config import Config
+from src.database import Database, get_database
 from src.exceptions import BotError
 
 logger = logging.getLogger(__name__)
@@ -43,66 +43,50 @@ def _as_int(value: Any) -> int:
 class UsageGuard:
     """
     Tracks estimated AI cost per billing cycle and per day, and refuses new calls
-    once either cap is reached. The totals live in a small JSON file so a restart
-    does not reset them.
+    once either cap is reached. Every call adds to a row in the database, so a
+    restart does not reset the totals. The totals themselves are kept in memory,
+    so checking the budget before a call costs no query.
     """
 
-    def __init__(self, ledger_path: Optional[str] = None,
+    def __init__(self, database: Optional[Database] = None,
                  monthly_budget: Optional[float] = None, daily_budget: Optional[float] = None,
                  reset_day: Optional[int] = None):
-        self.ledger_path = ledger_path or os.path.join(Config.STATE_DIR, "ai_usage.json")
+        self._database = database or get_database()
         self.monthly_budget = Config.AI_MONTHLY_BUDGET_USD if monthly_budget is None else monthly_budget
         self.daily_budget = Config.AI_DAILY_BUDGET_USD if daily_budget is None else daily_budget
         self.reset_day = Config.AI_BUDGET_RESET_DAY if reset_day is None else reset_day
-        self._state = self._load()
+        self._state = self._load(self._today())
 
     @staticmethod
     def _today() -> date:
         return datetime.now(timezone.utc).date()
 
-    def _empty_state(self, today: date) -> Dict[str, Any]:
+    def _load(self, today: date) -> Dict[str, Any]:
+        """The totals for the billing cycle and the day that today falls in, summed from the database."""
+        cycle_start = cycle_start_for(today, self.reset_day).isoformat()
+        cycle = self._database.query(
+            "SELECT COALESCE(SUM(cost), 0) AS cost, COALESCE(SUM(requests), 0) AS requests, "
+            "COALESCE(SUM(input_tokens), 0) AS tokens_in, COALESCE(SUM(output_tokens), 0) AS tokens_out "
+            "FROM usage_daily WHERE day >= ?", (cycle_start,))[0]
+        day = self._database.query(
+            "SELECT COALESCE(SUM(cost), 0) AS cost FROM usage_daily WHERE day = ?", (today.isoformat(),))[0]
         return {
-            "cycle_start": cycle_start_for(today, self.reset_day).isoformat(),
-            "cycle_cost": 0.0,
+            "cycle_start": cycle_start,
+            "cycle_cost": float(cycle["cost"]),
             "day": today.isoformat(),
-            "day_cost": 0.0,
-            "requests": 0,
-            "input_tokens": 0,
-            "output_tokens": 0,
+            "day_cost": float(day["cost"]),
+            "requests": int(cycle["requests"]),
+            "input_tokens": int(cycle["tokens_in"]),
+            "output_tokens": int(cycle["tokens_out"]),
         }
-
-    def _load(self) -> Dict[str, Any]:
-        state = self._empty_state(self._today())
-        try:
-            with open(self.ledger_path, "r", encoding="utf-8") as f:
-                state.update(json.load(f))
-        except FileNotFoundError:
-            pass
-        except (OSError, ValueError) as e:
-            logger.error(f"Could not read the AI usage ledger at {self.ledger_path}: {e}")
-        return state
-
-    def _save(self) -> None:
-        try:
-            os.makedirs(os.path.dirname(self.ledger_path), exist_ok=True)
-            tmp_path = f"{self.ledger_path}.tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(self._state, f, indent=2)
-            os.replace(tmp_path, self.ledger_path)
-        except OSError as e:
-            # The totals stay in memory, so the caps still hold until the next restart
-            logger.error(f"Could not write the AI usage ledger at {self.ledger_path}: {e}")
 
     def _roll_over(self) -> None:
         """Start a fresh day or cycle when the date has moved past the stored one."""
         today = self._today()
-        cycle_start = cycle_start_for(today, self.reset_day).isoformat()
-        if self._state["cycle_start"] != cycle_start:
-            logger.info(f"New AI budget cycle started on {cycle_start}, last cycle cost ${self._state['cycle_cost']:.4f}")
-            self._state = self._empty_state(today)
-        elif self._state["day"] != today.isoformat():
-            self._state["day"] = today.isoformat()
-            self._state["day_cost"] = 0.0
+        if self._state["day"] != today.isoformat():
+            if self._state["cycle_start"] != cycle_start_for(today, self.reset_day).isoformat():
+                logger.info(f"New AI budget cycle started, last cycle cost ${self._state['cycle_cost']:.4f}")
+            self._state = self._load(today)
 
     def check(self) -> None:
         """Raise BudgetExceededError if a cap is reached. Call before every model request."""
@@ -153,7 +137,17 @@ class UsageGuard:
         self._state["requests"] += 1
         self._state["input_tokens"] += prompt
         self._state["output_tokens"] += completion
-        self._save()
+        try:
+            self._database.execute(
+                "INSERT INTO usage_daily(day, user_id, feature, model, requests, input_tokens, output_tokens, cost) "
+                "VALUES (?, '', '', ?, 1, ?, ?, ?) "
+                "ON CONFLICT(day, user_id, feature, model) DO UPDATE SET requests = requests + 1, "
+                "input_tokens = input_tokens + excluded.input_tokens, "
+                "output_tokens = output_tokens + excluded.output_tokens, cost = cost + excluded.cost",
+                (self._state["day"], model or "", prompt, completion, cost))
+        except sqlite3.Error as e:
+            # The totals stay in memory, so the caps still hold until the next restart
+            logger.error(f"Could not record AI usage: {e}")
         return cost
 
     def summary(self) -> Dict[str, Any]:
