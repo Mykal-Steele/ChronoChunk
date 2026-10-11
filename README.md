@@ -1,6 +1,6 @@
 # ChronoChunk Discord Bot
 
-A Discord bot with a personality. It chats, remembers things about the people it talks to, reads images and files, writes documents, searches the web and plays music. The AI is gpt-5-mini on Azure OpenAI.
+A Discord bot with a personality. It chats, remembers things about the people it talks to, reads images and files, writes documents, searches the web and plays music. The AI runs on Azure OpenAI: gpt-6-luna for chat and gpt-5-nano for background jobs, or any other deployment you name in the settings.
 
 ## Features
 
@@ -134,7 +134,8 @@ The bot stops calling the model when it reaches its spending cap, and starts aga
 | `AI_MONTHLY_BUDGET_USD` | 15 | Hard cap per billing cycle |
 | `AI_DAILY_BUDGET_USD` | 2 | Hard cap per day |
 | `AI_BUDGET_RESET_DAY` | 14 | Day of the month the cycle restarts |
-| `AI_CHAT_REASONING_EFFORT` | low | Reasoning effort for chat replies |
+| `AZURE_OPENAI_DEPLOYMENT` | gpt-5-mini | The chat model. `deployment/docker-compose.yml` sets it to gpt-6-luna |
+| `AI_CHAT_REASONING_EFFORT` | low | Reasoning effort for chat replies. Must be `none` for gpt-6-luna and gpt-5.6-luna, which do not take tool calls with reasoning on |
 | `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` | empty | A cheaper deployment, such as gpt-5-nano, for picking facts out of messages. Empty uses the main one |
 
 Set these in `.env`. Costs are estimated from token counts at gpt-5-mini prices and kept in `state/ai_usage.json`. `/usage` shows the current totals. Each reply also writes one log line with the images and files it read, the number of model calls and the estimated cost.

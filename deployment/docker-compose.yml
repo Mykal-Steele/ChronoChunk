@@ -9,7 +9,11 @@ services:
     container_name: chronochunk
     restart: unless-stopped
     env_file: .env
+    # These win over the same names in .env
     environment:
+      # The chat model. gpt-6-luna only takes tool calls with reasoning switched off.
+      AZURE_OPENAI_DEPLOYMENT: gpt-6-luna
+      AI_CHAT_REASONING_EFFORT: none
       # The cheap model for jobs that run behind the reply. Remove this line if the Azure
       # resource has no gpt-5-nano deployment.
       AZURE_OPENAI_BACKGROUND_DEPLOYMENT: gpt-5-nano

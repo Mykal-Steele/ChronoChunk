@@ -10,6 +10,18 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.2.0 (2026-10-11)
+
+### Changed
+
+- The bot's own server now runs on gpt-6-luna instead of gpt-5-mini. Five models were tested on the bot's real prompts and tools. gpt-6-luna picked the right tool 14 times out of 14, answered in about 2 seconds against 3.4, and a typical reply cost about a tenth as much. Its roasts are shorter and a little tamer. The switch is two lines in `deployment/docker-compose.yml`, and the code still defaults to gpt-5-mini.
+- gpt-6-luna and gpt-5.6-luna only accept tool calls with reasoning switched off, so the compose file sets `AI_CHAT_REASONING_EFFORT` to `none`.
+- The spending cap knows the prices of gpt-6-luna and gpt-5.6-luna, including their extra charge for writing the prompt cache.
+
+### For whoever runs the bot
+
+- Copy the new `deployment/docker-compose.yml` to the server. It needs a `gpt-6-luna` deployment on the Azure resource.
+
 ## 3.1.1 (2026-10-11)
 
 Nothing changes for people using the bot. What is sent to the model is identical to 3.1.0.
