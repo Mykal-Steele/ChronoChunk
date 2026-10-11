@@ -10,6 +10,16 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.3.0 (2026-10-11)
+
+### Added
+
+- `/model` shows which AI model the bot is running on, the model it uses for memory, and the bot's version. It works as a slash command and typed.
+
+### Changed
+
+- The `openai` package moves from 2.28 to 3.26. Chat, image reading, web search, diagrams, documents, fact extraction and the music lookup were all run against the live service on the new version.
+
 ## 3.2.0 (2026-10-11)
 
 ### Changed

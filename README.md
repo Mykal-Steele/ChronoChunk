@@ -59,12 +59,13 @@ Slash commands:
 - `/forget` - Delete everything the bot has stored about you. `/forget <text>` deletes one fact.
 - `/game <max>`, `/guess <number>`, `/end` - The number guessing game
 - `/usage` - How much of the AI budget is used
+- `/model` - Which AI model the bot is running on
 - `/recent-posts on|off` - Turn reading of just-posted images and files on or off in a channel (needs Manage Channels)
 - `/help` - Show every command and the limits below
 - `/code` - Link to this repository
 - The music commands are listed under [Music commands](#music-commands).
 
-You can also type to the bot without picking a slash command. A message that starts with `/`, a ping, or a reply to one of its messages is chat. `/tldr`, `/usage` and `/help` work typed as well.
+You can also type to the bot without picking a slash command. A message that starts with `/`, a ping, or a reply to one of its messages is chat. `/tldr`, `/usage`, `/model` and `/help` work typed as well.
 
 ## Reading messages and files
 

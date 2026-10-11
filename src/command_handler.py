@@ -8,6 +8,8 @@ from src.rate_limiter import RateLimiter
 from src.message_context import read_channel_messages
 from src.usage_guard import get_usage_guard
 from src.logger import logger
+from src.version import __version__
+from config.config import Config
 
 # Sits right under the channel messages, where the model reads it last. In the system
 # prompt alone the same rule was not enough to stop it adding steps and advice of its own.
@@ -20,7 +22,7 @@ CHANNEL_ANSWER_RULE = (
 
 class CommandHandler:
     """
-    Handles the commands that also work as typed messages: /tldr, /usage and /help.
+    Handles the commands that also work as typed messages: /tldr, /usage, /model and /help.
     Every other command is a slash command, in src/slash_commands.py.
     """
 
@@ -30,6 +32,7 @@ class CommandHandler:
         self.command_handlers = {
             "tldr": self._handle_tldr,
             "usage": self._handle_usage,
+            "model": self._handle_model,
             "help": self._handle_help,
         }
 
@@ -106,6 +109,20 @@ class CommandHandler:
     async def _handle_usage(self, args: List[str], message: discord.Message, user_id: str) -> str:
         """Show how much of the AI budget is used"""
         return self.usage_summary()
+
+    async def _handle_model(self, args: List[str], message: discord.Message, user_id: str) -> Optional[str]:
+        """Show the AI models for a bare '/model'. With more words, like '/model this for me', it is chat."""
+        return None if args else self.model_summary()
+
+    def model_summary(self) -> str:
+        """One line on which AI models the bot is running on right now."""
+        ai_handler = getattr(self.bot, "ai_handler", None)
+        chat_model = getattr(ai_handler, "deployment", None) or "unknown"
+        background = Config.AI_BACKGROUND_DEPLOYMENT or chat_model
+        return (
+            f"chat model: `{chat_model}` (reasoning: {Config.AI_CHAT_REASONING_EFFORT}). "
+            f"background model for memory: `{background}`. bot version {__version__}"
+        )
 
     def usage_summary(self) -> str:
         """One line on AI spending so far against the caps."""
