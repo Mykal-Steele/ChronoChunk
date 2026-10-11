@@ -1,6 +1,6 @@
 # ChronoChunk Discord Bot
 
-A Discord bot with a personality. It chats, remembers things about the people it talks to, reads images and files, writes documents, searches the web and plays music. The AI is gpt-5-mini on Azure OpenAI.
+A Discord bot with a personality. It chats, remembers things about the people it talks to, reads images and files, writes documents, searches the web and plays music. The AI runs on Azure OpenAI: gpt-6-luna for chat and gpt-5-nano for background jobs, or any other deployment you name in the settings.
 
 ## Features
 
@@ -134,7 +134,9 @@ The bot stops calling the model when it reaches its spending cap, and starts aga
 | `AI_MONTHLY_BUDGET_USD` | 15 | Hard cap per billing cycle |
 | `AI_DAILY_BUDGET_USD` | 2 | Hard cap per day |
 | `AI_BUDGET_RESET_DAY` | 14 | Day of the month the cycle restarts |
-| `AI_CHAT_REASONING_EFFORT` | low | Reasoning effort for chat replies |
+| `AZURE_OPENAI_DEPLOYMENT` | gpt-5-mini | The chat model. `deployment/docker-compose.yml` sets it to gpt-6-luna |
+| `AI_CHAT_REASONING_EFFORT` | low | Reasoning effort for chat replies. Must be `none` for gpt-6-luna and gpt-5.6-luna, which do not take tool calls with reasoning on |
+| `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` | empty | A cheaper deployment, such as gpt-5-nano, for picking facts out of messages. Empty uses the main one |
 
 Set these in `.env`. Costs are estimated from token counts at gpt-5-mini prices and kept in `state/ai_usage.json`. `/usage` shows the current totals. Each reply also writes one log line with the images and files it read, the number of model calls and the estimated cost.
 
@@ -189,9 +191,13 @@ ChronoChunk/
 │   ├── message_processor.py   # Decides which messages get an answer
 │   ├── message_handler.py     # Channel history and context
 │   ├── message_context.py     # Reads replies, images and files
-│   ├── ai_response_handler.py # Talks to the model and runs its tools
-│   ├── document_builder.py    # PDF, DOCX and diagrams
-│   ├── web_tools.py           # Web search and link reading
+│   ├── ai_response_handler.py # Talks to the model and runs the reply loop
+│   ├── tools/                 # What the model can do: one file per group of tools
+│   │   ├── base.py            # The interface every tool implements
+│   │   ├── documents.py       # create_document and create_diagram
+│   │   └── web.py             # open_url and web_search
+│   ├── document_builder.py    # Turns Markdown into PDF, DOCX and diagram images
+│   ├── web_tools.py           # Fetches pages and calls the search service
 │   ├── slash_commands.py      # Slash commands
 │   ├── command_handler.py     # Typed /tldr, /usage and /help
 │   ├── user_data_manager.py   # What is stored about each user

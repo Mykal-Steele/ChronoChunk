@@ -10,6 +10,51 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.2.0 (2026-10-11)
+
+### Changed
+
+- The bot's own server now runs on gpt-6-luna instead of gpt-5-mini. Five models were tested on the bot's real prompts and tools. gpt-6-luna picked the right tool 14 times out of 14, answered in about 2 seconds against 3.4, and a typical reply cost about a tenth as much. Its roasts are shorter and a little tamer. The switch is two lines in `deployment/docker-compose.yml`, and the code still defaults to gpt-5-mini.
+- gpt-6-luna and gpt-5.6-luna only accept tool calls with reasoning switched off, so the compose file sets `AI_CHAT_REASONING_EFFORT` to `none`.
+- The spending cap knows the prices of gpt-6-luna and gpt-5.6-luna, including their extra charge for writing the prompt cache.
+
+### For whoever runs the bot
+
+- Copy the new `deployment/docker-compose.yml` to the server. It needs a `gpt-6-luna` deployment on the Azure resource.
+
+## 3.1.1 (2026-10-11)
+
+Nothing changes for people using the bot. What is sent to the model is identical to 3.1.0.
+
+### Changed
+
+- The things the model can do (make a document, draw a diagram, open a link, search the web) are separate tools in `src/tools/`, each with the same small interface. Before this they were branches inside the reply code. A new ability is a new file plus one line in `default_tools()`.
+
+## 3.1.0 (2026-10-11)
+
+### Added
+
+- A second, cheaper model for work that happens behind the reply. Set `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` to a gpt-5-nano deployment and the bot picks facts out of messages with it. On a test set of 14 messages it found the same facts as gpt-5-mini, in 0.8 seconds against 2.8, at about one eighteenth of the cost. Without the setting nothing changes.
+- The spending cap prices each call by the model that answered it.
+
+### Changed
+
+- The music search rewrite uses low reasoning effort. It picked the same songs in testing and no longer runs into its 5 second limit. It stays on gpt-5-mini, because gpt-5-nano picked wrong songs.
+
+### For whoever runs the bot
+
+- Copy the new `deployment/docker-compose.yml` to the server. It sets `AZURE_OPENAI_BACKGROUND_DEPLOYMENT`.
+
+## 3.0.1 (2026-10-11)
+
+### Fixed
+
+- `/chat` sends its answer before it saves the conversation. Saving also picks facts out of the message, which is a second model call, and people waited for it.
+
+### Changed
+
+- The log line for each reply says how long the reply took and how much of that was spent waiting for the model.
+
 ## 3.0.0 (2026-10-11)
 
 The first number changed because an existing install needs two steps before this version starts. See "Upgrading".

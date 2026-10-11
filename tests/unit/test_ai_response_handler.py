@@ -1,4 +1,5 @@
 """Unit tests for AIResponseHandler — Gemini client is mocked."""
+import re
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -257,12 +258,12 @@ def _tool_call(name, arguments, call_id="call_1"):
 @pytest.fixture
 def built_files(monkeypatch):
     """Replace the real file builders so no pandoc or network is needed."""
-    from src import ai_response_handler
+    from src.tools import documents
     from src.document_builder import BuiltFile
     document = AsyncMock(return_value=BuiltFile("proposal.pdf", b"%PDF"))
     diagram = AsyncMock(return_value=BuiltFile("flow.png", b"\x89PNG"))
-    monkeypatch.setattr(ai_response_handler, "build_document", document)
-    monkeypatch.setattr(ai_response_handler, "build_diagram", diagram)
+    monkeypatch.setattr(documents, "build_document", document)
+    monkeypatch.setattr(documents, "build_diagram", diagram)
     return document, diagram
 
 
@@ -278,6 +279,7 @@ async def test_each_reply_logs_what_it_read_and_what_it_cost(handler, mock_opena
     line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("Reply for Kruskal"))
     assert "read 1 images and 1 files" in line
     assert "1 model calls, about $0.2500, sent 0 files" in line
+    assert re.search(r"took \d+\.\ds \(\d+\.\ds waiting for the model\)$", line)
 
 
 async def test_tools_are_only_offered_when_files_are_allowed(handler, mock_openai_client):
@@ -294,12 +296,12 @@ async def test_tools_are_only_offered_when_files_are_allowed(handler, mock_opena
 def web(monkeypatch):
     """Replace the real search and page reader, and pretend a search key is configured."""
     from config.config import Config
-    from src import ai_response_handler
+    from src.tools import web as web_tools_module
     monkeypatch.setattr(Config, "TAVILY_API_KEY", "tvly-test")
     search = AsyncMock(return_value='=== WEB SEARCH RESULTS for "x" ===\n1. Result\n   https://a.example/1\n=== END ===')
     page = AsyncMock(return_value="=== WEB PAGE https://a.example/1 ===\nthe page text\n=== END ===")
-    monkeypatch.setattr(ai_response_handler, "search_web", search)
-    monkeypatch.setattr(ai_response_handler, "read_page", page)
+    monkeypatch.setattr(web_tools_module, "search_web", search)
+    monkeypatch.setattr(web_tools_module, "read_page", page)
     return search, page
 
 
@@ -352,7 +354,7 @@ async def test_answers_from_the_web_are_not_cached(handler, mock_openai_client, 
 
 
 async def test_web_lookups_per_reply_are_limited(handler, mock_openai_client, web):
-    from src.ai_response_handler import MAX_WEB_CALLS_PER_REPLY
+    from src.tools.web import MAX_WEB_CALLS_PER_REPLY
     search, _ = web
     many = [_tool_call("web_search", {"query": f"q{n}"}, call_id=f"call_{n}") for n in range(MAX_WEB_CALLS_PER_REPLY + 2)]
     mock_openai_client.chat.completions.create.side_effect = [_message(tool_calls=many), _message(content="done")]
@@ -618,7 +620,8 @@ async def test_file_limit_stops_the_build_and_tells_the_model(handler, mock_open
 
 
 async def test_model_cannot_loop_on_tools_forever(handler, mock_openai_client, built_files):
-    from src.ai_response_handler import MAX_FILES_PER_REPLY, MAX_TOOL_ROUNDS
+    from src.ai_response_handler import MAX_TOOL_ROUNDS
+    from src.tools.documents import MAX_FILES_PER_REPLY
     looping = [_message(tool_calls=[_tool_call("create_diagram", {"title": "Flow", "mermaid": "flowchart TD\n  A --> B"})])
                for _ in range(MAX_TOOL_ROUNDS)]
     mock_openai_client.chat.completions.create.side_effect = looping + [_message(content="ok thats enough")]
@@ -731,7 +734,7 @@ async def test_a_crash_while_building_a_file_does_not_lose_the_reply(handler, mo
 
 
 def test_page_limit_is_read_from_plain_words():
-    from src.ai_response_handler import page_limit_from
+    from src.tools.documents import page_limit_from
     assert page_limit_from("write a one page proposal as a pdf") == 1
     assert page_limit_from("a 2-page report on sales") == 2
     assert page_limit_from("keep it to three pages") == 3
@@ -740,7 +743,7 @@ def test_page_limit_is_read_from_plain_words():
 
 
 def test_page_limit_is_not_invented():
-    from src.ai_response_handler import page_limit_from
+    from src.tools.documents import page_limit_from
     assert page_limit_from("write a proposal as a pdf") is None
     assert page_limit_from("redesign the landing pages for me") is None
     assert page_limit_from("summarize page 3 of this") is None

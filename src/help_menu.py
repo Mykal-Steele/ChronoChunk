@@ -4,7 +4,7 @@ from typing import List
 import discord
 
 from config.config import Config
-from src.ai_response_handler import MAX_FILES_PER_REPLY
+from src.tools.documents import MAX_FILES_PER_REPLY
 from src.version import __version__
 from src.message_context import (
     MAX_FILE_BYTES, MAX_FILE_CHARS, MAX_FILES, MAX_IMAGE_BYTES, MAX_IMAGES, MAX_PDF_IMAGES, MAX_PDF_PAGES,

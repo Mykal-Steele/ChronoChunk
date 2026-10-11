@@ -659,6 +659,8 @@ Request: "{query}"
                     model=deployment,
                     messages=[{"role": "user", "content": prompt}],
                     max_completion_tokens=500,
+                    # Same picks as the default effort in testing, and it stays under the timeout below
+                    reasoning_effort="low",
                 ),
                 timeout=5.0
             )
