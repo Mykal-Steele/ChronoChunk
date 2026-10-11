@@ -1,0 +1,15 @@
+# The packages the bot imports, each pinned to the version it is tested with.
+# requirements.txt is built from this file and also pins everything these pull in:
+#   docker run --rm -v "$PWD":/work -w /work python:3.12-slim sh -c \
+#     "pip install -q pip-tools && pip-compile -q --strip-extras requirements.in"
+aiohttp==3.12.13
+discord.py[voice]==2.7.1
+openai==2.28.0
+pillow==12.3.0
+PyNaCl==1.5.0
+pypdf==6.19.0
+python-dotenv==1.2.4
+# yt-dlp uses requests for its downloads when it is installed
+requests==2.32.3
+weasyprint==70.0
+yt-dlp==2026.8.19

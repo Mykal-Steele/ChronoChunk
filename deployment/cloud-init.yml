@@ -18,5 +18,5 @@ swap:
 runcmd:
   - systemctl enable --now docker
   - usermod -aG docker azureuser
-  - install -d -o azureuser -g azureuser /opt/chronochunk /opt/chronochunk/data /opt/chronochunk/data/user_data /opt/chronochunk/data/logs
-  - sudo -u azureuser git clone --branch ai/chat https://github.com/Mykal-Steele/ChronoChunk /opt/chronochunk/app
+  - install -d -o azureuser -g azureuser /opt/chronochunk /opt/chronochunk/data /opt/chronochunk/data/user_data /opt/chronochunk/data/logs /opt/chronochunk/data/state
+  - sudo -u azureuser git clone --branch main https://github.com/Mykal-Steele/ChronoChunk /opt/chronochunk/app

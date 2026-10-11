@@ -1,12 +1,13 @@
-FROM python:3.12-slim
+FROM python:3.12-slim AS base
 
-# ffmpeg + libopus required for discord.py[voice] and yt-dlp
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# ffmpeg + libopus are for voice and music
 # pandoc, pango and the fonts are for building DOCX and PDF files (Noto covers Thai)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libopus0 \
-    libopus-dev \
-    gcc \
     pandoc \
     libpango-1.0-0 \
     libpangoft2-1.0-0 \
@@ -15,14 +16,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
+# The bot does not run as root. 1000 is also the first user on the host, who owns the data folders.
+RUN useradd --create-home --uid 1000 bot
+
 WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
 
-RUN mkdir -p logs user_data state
+# Adds pytest. The tests are not in the image, so the checkout is mounted over /app:
+#   docker build --target test -t chronochunk:dev .
+FROM base AS test
+
+COPY requirements-dev.txt .
+RUN pip install --no-cache-dir -r requirements-dev.txt
+
+
+# The image the bot runs from. It is the last stage, so a plain `docker build .` makes it.
+FROM base
+
+# The code stays owned by root, so the bot can write to its data folders and nothing else
+COPY . .
+RUN chmod -R go-w /app && mkdir -p logs user_data state && chown bot:bot logs user_data state
+
+USER bot
 
 # Health check server from src/web_server.py
 EXPOSE 8080

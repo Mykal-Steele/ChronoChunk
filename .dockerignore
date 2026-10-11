@@ -13,3 +13,9 @@ pytest.ini
 .idea/
 .vscode/
 state/
+tavilyapi.txt
+requirements*.in
+deployment/
+.github/
+README.md
+CHANGELOG.md
