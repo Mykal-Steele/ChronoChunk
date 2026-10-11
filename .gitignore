@@ -206,3 +206,6 @@ __pycache__/
 env/
 venv/
 /state/
+
+# API keys kept in local files
+tavilyapi.txt
