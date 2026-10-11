@@ -63,16 +63,6 @@ async def test_bot_message_ignored(pipeline):
 
 # ── command routing ───────────────────────────────────────────────────────────
 
-async def test_slash_game_command_handled(pipeline):
-    processor, _, gm, _, ai_handler, bot = pipeline
-    send = AsyncMock()
-    msg = _make_message(bot.user, content="/game 50", channel_send=send)
-    await processor.process_message(msg)
-    send.assert_called()
-    # The game should be started for user 12345 (int)
-    assert gm.get_active_game(12345) is not None
-
-
 async def test_unknown_command_falls_back_to_ai(pipeline):
     processor, _, _, _, ai_handler, bot = pipeline
     send = AsyncMock()
@@ -146,23 +136,3 @@ async def test_fact_extraction_skipped_for_short_message(pipeline, mock_genai_cl
     await processor.process_message(msg)
     # With message "ok" (1 word), extract_and_save_facts should return early
     # API should not have been called for fact extraction (it is for the AI response though)
-
-
-# ── game end-to-end through command handler ───────────────────────────────────
-
-async def test_game_guess_end_to_end(pipeline):
-    processor, _, gm, _, _, bot = pipeline
-
-    # Start game
-    start_send = AsyncMock()
-    start_msg = _make_message(bot.user, content="/game 10", channel_send=start_send)
-    await processor.process_message(start_msg)
-    assert gm.get_active_game(12345) is not None
-
-    # Guess the secret number directly
-    secret = gm.active_games[12345].secret_number
-    win_send = AsyncMock()
-    win_msg = _make_message(bot.user, content=f"/guess {secret}", channel_send=win_send)
-    await processor.process_message(win_msg)
-    win_send.assert_called()
-    assert gm.get_active_game(12345) is None

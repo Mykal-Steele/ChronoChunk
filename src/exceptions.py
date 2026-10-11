@@ -1,14 +1,11 @@
 class BotError(Exception):
     """Base exception for all bot errors"""
-    pass
 
 class ConfigError(BotError):
     """Something's wrong with the config"""
-    pass
 
 class UserDataError(BotError):
     """Something went wrong with user data"""
-    pass
 
 class AIError(BotError):
     """AI service messed up"""

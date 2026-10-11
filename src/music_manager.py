@@ -1,4 +1,6 @@
 import asyncio
+import html
+import aiohttp
 import discord
 import logging
 import re
@@ -15,6 +17,21 @@ SPOTIFY_REGEX = r'(?:https?://)?(?:open\.spotify\.com/track/|spotify:track:)([a-
 
 # Inactivity timeout in seconds (10 minutes)
 INACTIVITY_TIMEOUT = 600
+# Spotify sends the title and artist tags only to link previewers, so the lookup names itself as one
+LINK_PREVIEW_USER_AGENT = "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)"
+SPOTIFY_TIMEOUT_SECONDS = 10
+
+def spotify_query_from_page(page: str) -> str:
+    """The title and artist from a Spotify track page, or "" when the page has no title."""
+    def tag(name: str) -> str:
+        match = re.search(rf'<meta[^>]+property="og:{name}"[^>]+content="([^"]*)"', page)
+        return html.unescape(match.group(1)).strip() if match else ""
+
+    title = tag("title")
+    # The description reads "Artist · Album · Song · Year"
+    artist = tag("description").split("·")[0].strip()
+    return f"{title} {artist}".strip() if title else ""
+
 
 class Song:
     """Represents a song with metadata"""
@@ -152,6 +169,26 @@ class MusicManager:
         self.update_activity(guild_id)
         return state.voice_client
     
+    async def _spotify_search_query(self, track_id: str) -> str:
+        """
+        Turn a Spotify track into words to search YouTube with: its title and artist.
+        Spotify only puts those in the page it serves to link previewers.
+        """
+        fallback = f"spotify track {track_id}"
+        try:
+            timeout = aiohttp.ClientTimeout(total=SPOTIFY_TIMEOUT_SECONDS)
+            async with aiohttp.ClientSession(timeout=timeout, headers={"User-Agent": LINK_PREVIEW_USER_AGENT}) as session:
+                async with session.get(f"https://open.spotify.com/track/{track_id}") as response:
+                    if response.status != 200:
+                        logger.warning(f"Spotify answered {response.status} for track {track_id}")
+                        return fallback
+                    page = await response.text()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            logger.warning(f"Could not reach Spotify for track {track_id}: {e!r}")
+            return fallback
+
+        return spotify_query_from_page(page) or fallback
+
     async def extract_info(self, url: str, requested_by: str = None) -> Tuple[str, str, int]:
         """Extract audio URL, title and duration from a YouTube or Spotify URL or search query"""
         logger.info(f"Extracting info for: {url}")
@@ -159,54 +196,7 @@ class MusicManager:
         # Check if it's a Spotify URL
         spotify_match = re.match(SPOTIFY_REGEX, url)
         if spotify_match:
-            try:
-                # For Spotify links, create a better search query
-                import requests
-                from bs4 import BeautifulSoup
-                
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                }
-                
-                track_id = spotify_match.group(1)
-                full_url = f"https://open.spotify.com/track/{track_id}"
-                logger.info(f"Fetching Spotify track info from: {full_url}")
-                
-                response = requests.get(full_url, headers=headers, timeout=10)
-                
-                if response.status_code == 200:
-                    search_query = f"spotify track {track_id}"
-                    try:
-                        soup = BeautifulSoup(response.text, 'html.parser')
-                        
-                        # Try to get title and artist from meta tags
-                        title_tag = soup.find("meta", property="og:title")
-                        artist_tag = soup.find("meta", property="og:description")
-                        
-                        search_terms = []
-                        if title_tag and title_tag.get("content"):
-                            search_terms.append(title_tag.get("content"))
-                        if artist_tag and artist_tag.get("content"):
-                            artist = artist_tag.get("content").split("·")[0].strip()
-                            search_terms.append(artist)
-                        
-                        if search_terms:
-                            search_query = " ".join(search_terms)
-                            logger.info(f"Extracted song info from Spotify: {search_query}")
-                    except Exception as e:
-                        logger.error(f"Error parsing Spotify page: {e}")
-                        
-                    search_url = f"ytsearch1:{search_query}"
-                else:
-                    logger.warning(f"Failed to get Spotify page, status: {response.status_code}")
-                    search_url = f"ytsearch1:spotify track {track_id}"
-                    
-            except Exception as e:
-                logger.error(f"Error extracting Spotify metadata: {e}")
-                # Fallback to just the track ID
-                track_id = spotify_match.group(1)
-                search_url = f"ytsearch1:spotify track {track_id}"
-            
+            search_url = f"ytsearch1:{await self._spotify_search_query(spotify_match.group(1))}"
             logger.info(f"Using search query for Spotify track: {search_url}")
             
         elif re.match(YOUTUBE_REGEX, url):

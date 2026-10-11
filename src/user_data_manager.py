@@ -1,14 +1,13 @@
 import json
 import os
 import re
-import time
 import logging
 from datetime import datetime
 from openai import AsyncOpenAI
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any
 from src.usage_guard import guard_client
 from config.config import Config
-from config.ai_config import FACT_EXTRACTION_PROMPT, TOPIC_EXTRACTION_PROMPT, CONTRADICTION_CHECK_PROMPT, CORRECTION_PROMPT, PERSPECTIVE_CONVERSION_PROMPT
+from config.ai_config import CONTRADICTION_CHECK_PROMPT, CORRECTION_PROMPT
 
 # Setup logger 
 logger = logging.getLogger(__name__)
@@ -83,6 +82,14 @@ class UserDataManager:
         except Exception as e:
             logger.error(f"Error loading user data: {e}")
             return default_data
+
+    def forget_user(self, user_id: str) -> None:
+        """Delete everything stored about a user: facts, topics and saved conversations."""
+        try:
+            os.remove(self._get_user_file_path(user_id))
+        except FileNotFoundError:
+            pass
+        logger.info(f"Deleted all stored data for {re.sub(r'[^0-9]', '', user_id)}")
 
     def save_user_data(self, user_id: str, data: Dict[str, Any]) -> None:
         """Save user data to file"""

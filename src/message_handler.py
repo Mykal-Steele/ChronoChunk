@@ -1,10 +1,9 @@
-import asyncio
 import re
 import logging
 import discord
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional
 from config.config import Config
 
 # Setup logging
@@ -396,7 +395,7 @@ class MessageHandler:
             logger.error(f"Error in send_response: {e}")
             try:
                 # Last resort fallback
-                return await channel.send("shit, something went wrong sending that message")
+                return await channel.send("something went wrong sending that message, try again")
             except Exception as exc:
                 logger.error(f"Final fallback send also failed: {exc}")
             

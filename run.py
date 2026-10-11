@@ -8,40 +8,21 @@ import sys
 import signal
 import logging
 import traceback
-import time
 import platform
-from datetime import datetime
 from dotenv import load_dotenv
-
-# Import our logging utils before setting up any loggers
-from src.logging_utils import patch_all_loggers
-
-# Ensure logs directory exists before FileHandler tries to open it
-os.makedirs("logs", exist_ok=True)
-
-# Configure logging to file AND console
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(f"logs/chronochunk_{datetime.now().strftime('%Y%m%d')}.log", encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
-
-# Patch all loggers to handle Unicode characters
-patch_all_loggers()
-
-logger = logging.getLogger("ChronoChunk")
 
 # Add project directory to path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Store start time for uptime tracking
-START_TIME = time.time()
-
-# Load environment variables first
+# Load environment variables before anything reads them
 load_dotenv()
+
+from src.logger import setup_logging
+
+setup_logging()
+
+logger = logging.getLogger("ChronoChunk")
+
 
 # Track if shutdown is requested
 shutdown_requested = False

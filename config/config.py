@@ -14,22 +14,14 @@ class Config:
     
     # Discord bot settings
     DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-    COMMAND_PREFIX = "/"
-    
-    # AI model settings
-    AI_MODEL = "gemini-2.0-flash-lite"  # Consistent AI model for all interactions
-    FACT_MODEL = "gemini-2.0-flash-lite"  # Model used for fact extraction
-    
+
     # Rate limiting settings
-    RATE_LIMIT_WINDOW = 30 * 60  # 30 minutes in seconds
-    RATE_LIMIT_MAX_MESSAGES = 50  # 50 messages per window
     RATE_LIMIT_CLEANUP_INTERVAL = 60 * 60  # Clean up old entries every hour
     
     # Memory and history settings
     MEMORY_SIZE = 30  # Remember last 30 messages in conversation context
     MAX_CONVERSATION_HISTORY = 20  # Keep 20 most recent conversations in user data
     CHANNEL_HISTORY_SIZE = 40  # Number of recent messages to keep in channel history
-    DISPLAY_CONTEXT_SIZE = 20  # Number of messages to include in conversation context
     
     # Game settings
     MAX_GAME_ATTEMPTS = 10  # Maximum number of attempts in the guessing game
@@ -38,6 +30,7 @@ class Config:
     BASE_DIR = Path(__file__).parent.parent
     USER_DATA_DIR = os.path.join(BASE_DIR, "user_data")
     LOG_DIR = os.path.join(BASE_DIR, "logs")
+    LOG_RETENTION_DAYS = int(os.getenv("LOG_RETENTION_DAYS", 30))  # daily log files older than this are deleted
     STATE_DIR = os.path.join(BASE_DIR, "state")  # small files that must survive a restart
 
     # AI spending caps. Once a cap is hit the bot stops calling the model until it resets.
@@ -52,11 +45,9 @@ class Config:
     AI_PRICE_INPUT_PER_M = float(os.getenv("AI_PRICE_INPUT_PER_M", 0.25))
     AI_PRICE_CACHED_INPUT_PER_M = float(os.getenv("AI_PRICE_CACHED_INPUT_PER_M", 0.025))
     AI_PRICE_OUTPUT_PER_M = float(os.getenv("AI_PRICE_OUTPUT_PER_M", 2.00))
-    LOG_FILE = os.path.join(LOG_DIR, "bot.log")
-    
-    # Web server settings for health checks
-    WEB_HOST = "0.0.0.0"
-    WEB_PORT = int(os.getenv("PORT", 10000))
+
+    # Tavily key for web search. Without it the bot can still open links, it just cannot search.
+    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
     
     # Rate limit settings by action type
     RATE_LIMITS = {
@@ -69,36 +60,6 @@ class Config:
         "file": (15, 86400),   # 15 generated documents or diagrams per day
         "tldr": (6, 3600),     # 6 channel summaries per hour
     }
-    
-    # Important topics requiring special handling
-    IMPORTANT_TOPICS = [
-        # these are sensitive topics where we need to be extra careful
-        # the bot needs to recognize when a conversation touches on these areas
-        # so it can give appropriate warnings and handle with sensitivity
-        
-        # Mental health topics
-        "depression", "suicide", "self-harm", "harm", "death", 
-        "violence", "abuse", "mental health", "anxiety", "trauma",
-        "sadness", "loneliness", "stress", "therapy", "medication",
-        "drugs", "addiction", "eating disorder", "bipolar", "schizophrenia",
-        
-        # Sensitive social topics
-        "race", "racism", "discrimination", "politics", "religion",
-        "sexuality", "gender", "transgender", "homophobia", "feminism",
-        "abortion", "guns", "terrorism", "war", "protests", "riots",
-        
-        # Family and relationship issues
-        "divorce", "breakup", "cheating", "dating", "marriage", "family",
-        "parents", "abuse", "domestic violence", "assault", "rape",
-        
-        # Health concerns
-        "cancer", "disease", "illness", "health", "disability", "pain",
-        "hospital", "surgery", "emergency", "accident", "injury",
-        
-        # Financial/life struggles
-        "money", "debt", "poverty", "homeless", "unemployment", "job loss",
-        "eviction", "bankruptcy", "financial"
-    ]
     
     # Dynamic settings like directories are initialized in a method rather than duplicated
     @classmethod

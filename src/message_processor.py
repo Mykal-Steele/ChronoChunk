@@ -2,16 +2,13 @@ import io
 import logging
 import re
 import discord
-from typing import Optional, Set, Tuple
+from typing import Optional, Set
 from src.ai_response_handler import Reply
-from src.command_handler import RateLimitError
+from src.exceptions import RateLimitError
 from src.channel_settings import get_channel_settings
 from src.message_context import build_attached_context, history_text, resolve_message_link
-from discord.ext.commands.errors import CommandNotFound
-import asyncio
-import sys
 import traceback
-from typing import Dict, Any, List, Optional
+from typing import List, Optional
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -24,6 +21,35 @@ NO_PINGS = discord.AllowedMentions.none()
 
 # Stands in for the text when someone only pings the bot or types a bare /chat
 NO_TEXT = "(no text, they just want u to look at what they replied to or attached)"
+
+
+# Given to a member the first time the bot answers them
+FIRST_USE_ROLE = "I Love Chrono <3"
+
+
+async def give_first_use_role(guild: Optional[discord.Guild], user_id: int) -> None:
+    """Give the first-use role to a member who does not have it yet. Does nothing in DMs."""
+    if not guild:
+        return
+    role = discord.utils.get(guild.roles, name=FIRST_USE_ROLE)
+    if not role:
+        logger.warning(f"'{FIRST_USE_ROLE}' role not found in guild, check the role name matches exactly")
+        return
+    # A full Member object is needed so .roles is filled in
+    member = guild.get_member(user_id)
+    if not member:
+        logger.warning(f"Could not resolve member {user_id} from guild cache")
+        return
+    if role in member.roles:
+        return
+    try:
+        await member.add_roles(role)
+        logger.info(f"Assigned '{FIRST_USE_ROLE}' role to {member.display_name}")
+    except discord.Forbidden:
+        logger.warning(f"Missing permission to assign '{FIRST_USE_ROLE}', the bot's role must be above it")
+    except Exception as e:
+        # The role is a nicety. Failing to give it must never turn a sent reply into an error.
+        logger.error(f"Error assigning '{FIRST_USE_ROLE}' role: {e}")
 
 
 class MessageProcessor:
@@ -218,27 +244,8 @@ is_correction: bool) -> None:
             await self._safe_send(message.channel, "yo something broke on my end, try again")
     
     async def _maybe_assign_chrono_role(self, message: discord.Message) -> None:
-        """Give the 'I Love Chrono <3' role on a user's first AI interaction."""
-        guild = message.guild
-        if not guild:
-            return
-        role = discord.utils.get(guild.roles, name="I Love Chrono <3")
-        if not role:
-            logger.warning("'I Love Chrono <3' role not found in guild — check the role name matches exactly")
-            return
-        # Resolve to a full Member object so .roles is populated
-        member = guild.get_member(message.author.id)
-        if not member:
-            logger.warning(f"Could not resolve member {message.author.id} from guild cache")
-            return
-        if role not in member.roles:
-            try:
-                await member.add_roles(role)
-                logger.info(f"Assigned 'I Love Chrono <3' role to {member.display_name}")
-            except discord.Forbidden:
-                logger.warning("Missing permission to assign 'I Love Chrono <3' role — bot role must be above it in hierarchy")
-            except Exception as e:
-                logger.error(f"Error assigning Chrono role: {e}")
+        """Give the first-use role to whoever just talked to the bot."""
+        await give_first_use_role(message.guild, message.author.id)
 
     async def _handle_ai_response(self, message: discord.Message, user_id: str,
                               username: str, channel_id: str, query: str,

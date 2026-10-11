@@ -1,9 +1,7 @@
 from collections import defaultdict
 import time
-from typing import Dict, DefaultDict, List
-from datetime import datetime, timedelta
+from typing import Dict, DefaultDict
 from config.config import Config
-from src.logger import logger
 from src.exceptions import RateLimitError
 
 class RateLimiter:

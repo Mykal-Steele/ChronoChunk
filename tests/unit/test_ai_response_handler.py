@@ -12,7 +12,6 @@ def handler(mock_openai_client):
             endpoint="https://fake.openai.azure.com/openai/v1",
             api_key="fake_key",
             deployment="gpt-5-mini",
-            important_topics=["depression", "suicide", "violence"],
         )
     h.ai_client = mock_openai_client
     return h
@@ -71,35 +70,6 @@ def test_format_preserves_text(handler):
 
 def test_format_returns_string(handler):
     assert isinstance(handler._format_ai_response("normal message"), str)
-
-
-# ── extract_important_topics ──────────────────────────────────────────────────
-
-def test_extract_topics_finds_depression(handler):
-    # The topic list contains "depression" — must use that exact word in the message
-    topics = handler.extract_important_topics("I've been dealing with depression for months")
-    assert "depression" in topics
-
-
-def test_extract_topics_finds_suicide(handler):
-    topics = handler.extract_important_topics("i have been thinking about suicide")
-    assert "suicide" in topics
-
-
-def test_extract_topics_empty_message(handler):
-    topics = handler.extract_important_topics("")
-    assert topics == []
-
-
-def test_extract_topics_none_found(handler):
-    topics = handler.extract_important_topics("what's your favorite color")
-    assert topics == []
-
-
-def test_extract_topics_multiple(handler):
-    topics = handler.extract_important_topics("depression and violence are serious topics")
-    assert "depression" in topics
-    assert "violence" in topics
 
 
 # ── generate_response ─────────────────────────────────────────────────────────
@@ -315,7 +285,120 @@ async def test_tools_are_only_offered_when_files_are_allowed(handler, mock_opena
     assert "tools" not in mock_openai_client.chat.completions.create.call_args[1]
     await handler.generate_reply("/make a pdf", "", "Kruskal", "1", allow_files=True)
     offered = mock_openai_client.chat.completions.create.call_args[1]["tools"]
-    assert {tool["function"]["name"] for tool in offered} == {"create_document", "create_diagram"}
+    assert {tool["function"]["name"] for tool in offered} == {"create_document", "create_diagram", "open_url"}
+
+
+# ── the web ───────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def web(monkeypatch):
+    """Replace the real search and page reader, and pretend a search key is configured."""
+    from config.config import Config
+    from src import ai_response_handler
+    monkeypatch.setattr(Config, "TAVILY_API_KEY", "tvly-test")
+    search = AsyncMock(return_value='=== WEB SEARCH RESULTS for "x" ===\n1. Result\n   https://a.example/1\n=== END ===')
+    page = AsyncMock(return_value="=== WEB PAGE https://a.example/1 ===\nthe page text\n=== END ===")
+    monkeypatch.setattr(ai_response_handler, "search_web", search)
+    monkeypatch.setattr(ai_response_handler, "read_page", page)
+    return search, page
+
+
+async def test_search_is_offered_only_when_its_key_is_set(handler, mock_openai_client, web):
+    await handler.generate_reply("/whats new", "", "Kruskal", "1", allow_files=True)
+    call = mock_openai_client.chat.completions.create.call_args[1]
+    assert {tool["function"]["name"] for tool in call["tools"]} == {
+        "create_document", "create_diagram", "open_url", "web_search"}
+    system = call["messages"][0]["content"]
+    assert "web_search" in system and "today is" in system
+
+
+async def test_system_prompt_leaves_search_out_without_a_key(handler, mock_openai_client):
+    await handler.generate_reply("/read this link", "", "Kruskal", "1", allow_files=True)
+    system = mock_openai_client.chat.completions.create.call_args[1]["messages"][0]["content"]
+    assert "open_url" in system and "web_search" not in system
+
+
+async def test_search_results_go_back_to_the_model(handler, mock_openai_client, web):
+    search, _ = web
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("web_search", {"query": "latest python", "time_range": "week"})]),
+        _message(content="its 3.14 <https://a.example/1>"),
+    ]
+    reply = await handler.generate_reply("/latest python version?", "", "Kruskal", "1", allow_files=True)
+    search.assert_awaited_once_with("latest python", None, "week")
+    assert reply.text == "its 3.14 <https://a.example/1>"
+    tool_turn = mock_openai_client.chat.completions.create.call_args[1]["messages"][-1]
+    assert tool_turn["role"] == "tool" and "WEB SEARCH RESULTS" in tool_turn["content"]
+
+
+async def test_a_link_is_opened_and_its_text_goes_back_to_the_model(handler, mock_openai_client, web):
+    _, page = web
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("open_url", {"url": "https://a.example/1"})]),
+        _message(content="it says the page text"),
+    ]
+    await handler.generate_reply("/sum up https://a.example/1", "", "Kruskal", "1", allow_files=True)
+    page.assert_awaited_once_with("https://a.example/1")
+    assert "the page text" in mock_openai_client.chat.completions.create.call_args[1]["messages"][-1]["content"]
+
+
+async def test_answers_from_the_web_are_not_cached(handler, mock_openai_client, web):
+    def answers():
+        return [_message(tool_calls=[_tool_call("web_search", {"query": "score"})]), _message(content="2-1")]
+    mock_openai_client.chat.completions.create.side_effect = answers() + answers()
+    await handler.generate_reply("/score?", "", "Kruskal", "1", allow_files=True)
+    await handler.generate_reply("/score?", "", "Kruskal", "1", allow_files=True)
+    assert mock_openai_client.chat.completions.create.call_count == 4
+
+
+async def test_web_lookups_per_reply_are_limited(handler, mock_openai_client, web):
+    from src.ai_response_handler import MAX_WEB_CALLS_PER_REPLY
+    search, _ = web
+    many = [_tool_call("web_search", {"query": f"q{n}"}, call_id=f"call_{n}") for n in range(MAX_WEB_CALLS_PER_REPLY + 2)]
+    mock_openai_client.chat.completions.create.side_effect = [_message(tool_calls=many), _message(content="done")]
+    await handler.generate_reply("/search a lot", "", "Kruskal", "1", allow_files=True)
+    assert search.await_count == MAX_WEB_CALLS_PER_REPLY
+    last = mock_openai_client.chat.completions.create.call_args[1]["messages"][-1]["content"]
+    assert last.startswith("error: this reply has used all its web lookups")
+
+
+async def test_a_failed_lookup_is_reported_to_the_model(handler, mock_openai_client, web):
+    from src.web_tools import WebError
+    _, page = web
+    page.side_effect = WebError("that address is not on the public internet")
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("open_url", {"url": "http://localhost/"})]),
+        _message(content="cant open that one"),
+    ]
+    reply = await handler.generate_reply("/open http://localhost/", "", "Kruskal", "1", allow_files=True)
+    assert reply.text == "cant open that one"
+    last = mock_openai_client.chat.completions.create.call_args[1]["messages"][-1]["content"]
+    assert last == "error: that address is not on the public internet"
+
+
+async def test_a_crash_in_a_lookup_does_not_lose_the_reply(handler, mock_openai_client, web):
+    search, _ = web
+    search.side_effect = RuntimeError("boom")
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("web_search", {"query": "x"})]),
+        _message(content="search broke"),
+    ]
+    reply = await handler.generate_reply("/search x", "", "Kruskal", "1", allow_files=True)
+    assert reply.text == "search broke"
+
+
+async def test_the_document_writer_sees_what_was_looked_up(handler, mock_openai_client, built_files, web):
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("open_url", {"url": "https://a.example/1"})]),
+        _message(tool_calls=[_tool_call("create_document", {"format": "pdf", "title": "Summary", "brief": "Sum it up"})]),
+        _message(content="# Summary\n\nText."),
+        _message(content="here"),
+    ]
+    reply = await handler.generate_reply("/make a pdf of https://a.example/1", "", "Kruskal", "1", allow_files=True)
+    assert len(reply.files) == 1
+    writer_call = mock_openai_client.chat.completions.create.call_args_list[2][1]
+    assert "LOOKED UP ON THE WEB FOR THIS REQUEST" in writer_call["messages"][1]["content"]
+    assert "the page text" in writer_call["messages"][1]["content"]
 
 
 async def test_chat_uses_the_configured_reasoning_effort(handler, mock_openai_client):

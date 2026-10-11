@@ -1,4 +1,3 @@
-import asyncio
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -17,10 +16,8 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
     
 # Import local modules
-from config.config import Config
-from src.command_handler import CommandHandler, RateLimitError
+from src.command_handler import CommandHandler
 from src.game_manager import GameManager
-from src.intent_detector import IntentDetector
 from src.rate_limiter import RateLimiter
 from src.user_data_manager import UserDataManager
 
@@ -31,6 +28,7 @@ from src.slash_commands import SlashCommandManager
 from src.version import __version__
 from src.web_server import WebServer
 from src.message_processor import MessageProcessor
+from src.music_manager import MusicManager
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -75,8 +73,6 @@ class ChronoChunk(commands.Bot):
             endpoint=AZURE_OPENAI_ENDPOINT,
             api_key=AZURE_OPENAI_KEY,
             deployment=AZURE_OPENAI_DEPLOYMENT,
-            important_topics=Config.IMPORTANT_TOPICS,
-            user_data_manager=self.user_data_manager
         )
         
         # Store a reference as ai_handler for compatibility
@@ -85,13 +81,11 @@ class ChronoChunk(commands.Bot):
         # One rate limiter for typed messages and slash commands, so the limits are shared
         self.rate_limiter = RateLimiter()
 
-        # Create command handler
-        self.command_handler = CommandHandler(
-            bot=self,
-            user_data_manager=self.user_data_manager,
-            game_manager=self.game_manager,
-            rate_limiter=self.rate_limiter
-        )
+        # One music player for the whole bot, so the voice events and the commands see the same queues
+        self.music_manager = MusicManager()
+
+        # Typed commands: /tldr, /usage and /help
+        self.command_handler = CommandHandler(bot=self, rate_limiter=self.rate_limiter)
         
         # Create message processor with correct parameter.
         # Only /tldr, /usage and a bare /help are typed commands. Any other "/word" message
@@ -118,8 +112,7 @@ class ChronoChunk(commands.Bot):
         async def on_voice_state_update(member, before, after):
             try:
                 # Forward voice state updates to the music manager
-                if hasattr(self.command_handler, 'music_manager'):
-                    await self.command_handler.music_manager.on_voice_state_update(member, before, after)
+                await self.music_manager.on_voice_state_update(member, before, after)
             except Exception as e:
                 logger.error(f"Error handling voice state update: {e}")
                 logger.error(traceback.format_exc())
@@ -140,7 +133,8 @@ class ChronoChunk(commands.Bot):
             game_manager=self.game_manager,
             user_data_manager=self.user_data_manager,
             ai_handler=self.ai_handler,
-            message_handler=self.message_handler
+            message_handler=self.message_handler,
+            music_manager=self.music_manager
         )
         
         # Register slash commands
@@ -206,7 +200,7 @@ class ChronoChunk(commands.Bot):
             
             # Log available emojis
             logger.info(f"Collected {len(server_emojis)} custom emojis from {len(self.guilds)} servers")
-            await self.command_handler.music_manager.start_inactivity_checker()
+            await self.music_manager.start_inactivity_checker()
             # Store emoji info in your AI handler
             self.ai_handler.server_emojis = list(server_emojis.keys())
             
@@ -298,7 +292,7 @@ def main() -> None:
     """Start up the bot"""
     try:
         bot = ChronoChunk()
-        bot.run(DISCORD_TOKEN)
+        bot.run(DISCORD_TOKEN, log_handler=None)  # logging is already set up in run.py
     except Exception as e:
         logger.error(f"Bot crashed: {e}")
         raise

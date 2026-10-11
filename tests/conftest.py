@@ -14,6 +14,8 @@ os.environ.setdefault("AZURE_OPENAI_KEY", "fake_azure_key_for_tests")
 os.environ.setdefault("AZURE_OPENAI_ENDPOINT", "https://fake.openai.azure.com/openai/v1")
 os.environ.setdefault("AZURE_OPENAI_DEPLOYMENT", "gpt-5-mini")
 os.environ.setdefault("GEMINI_API_KEY", "fake_gemini_key_for_tests")
+# Tests never search for real. The ones that need a key set it themselves.
+os.environ["TAVILY_API_KEY"] = ""
 
 import discord
 

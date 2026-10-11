@@ -2,12 +2,12 @@ import io
 import logging
 import discord
 from discord import app_commands
-from typing import Dict, Any, List, Optional, Callable, Awaitable, Tuple
+from typing import Optional
 from src.exceptions import RateLimitError
 from src.help_menu import build_help_embed
 from src.channel_settings import get_channel_settings
 from src.message_context import gather_context, resolve_message_link
-from src.message_processor import MessageProcessor, NO_PINGS
+from src.message_processor import MessageProcessor, NO_PINGS, give_first_use_role
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ class SlashCommandManager:
     
     def __init__(self, bot, game_manager=None, user_data_manager=None, 
                  ai_handler=None, message_handler=None, music_manager=None):
-        """Initialize WITHOUT rate limiter"""
+        """The rate limiter is the bot's shared one, read from bot.rate_limiter when a command runs."""
         self.bot = bot
         self.game_manager = game_manager
         self.user_data_manager = user_data_manager
@@ -31,7 +31,6 @@ class SlashCommandManager:
         else:
             self.music_manager = music_manager
             
-        logger.info("Slash command manager initialized without rate limiting")
 
     async def register_commands(self):
         """Register all slash commands with Discord"""
@@ -64,9 +63,6 @@ class SlashCommandManager:
             await self._register_volume_command()
             await self._register_relate_command()
             
-            # Register test audio command
-            await self._register_test_audio_command()
-            
             # Sync the commands with Discord - force sync to update
             await self.bot.tree.sync()
             
@@ -74,8 +70,7 @@ class SlashCommandManager:
         
         except Exception as e:
             logger.error(f"Error registering slash commands: {e}")
-            import traceback
-            traceback.print_exc()  # Add this to see detailed error information
+            logger.exception("Slash command registration failed")
     
     async def _register_good_boy_command(self):
         """Register the good-boy command"""
@@ -83,48 +78,29 @@ class SlashCommandManager:
         async def good_boy(interaction: discord.Interaction):
             await interaction.response.send_message(":)")
     
+    async def _send_user_summary(self, interaction: discord.Interaction) -> None:
+        """Answer /info and /mydata. Only the person who asked sees it, because it lists personal facts."""
+        try:
+            summary = self.user_data_manager.get_user_summary(str(interaction.user.id), interaction.user.display_name)
+            if "I don't have any information" in summary or len(summary.strip().split('\n')) <= 3:
+                summary = "i dont know much about u yet. talk to me a bit and ill pick things up"
+            await interaction.response.send_message(summary, ephemeral=True)
+        except Exception as e:
+            logger.error(f"Error showing user data: {e}")
+            await interaction.response.send_message("couldnt get ur data right now, try again in a bit", ephemeral=True)
+
     async def _register_info_command(self):
         """Register the info command"""
         @self.bot.tree.command(name="info", description="See what information the bot has about you")
         async def info(interaction: discord.Interaction):
-            # Get user data
-            user_id = str(interaction.user.id)
-            username = interaction.user.display_name
-            
-            try:
-                # Get user summary directly
-                summary = self.user_data_manager.get_user_summary(user_id, username)
-
-                # If the summary is empty or minimal, provide a friendly message
-                if "I don't have any information" in summary or len(summary.strip().split('\n')) <= 3:
-                    await interaction.response.send_message("damn, i don't know much about you yet. hit me up with some convos so i can learn more about you!")
-                else:
-                    await interaction.response.send_message(summary)
-            except Exception as e:
-                logger.error(f"Error handling info command: {e}")
-                await interaction.response.send_message("shit, couldn't get your data right now")
+            await self._send_user_summary(interaction)
 
     async def _register_mydata_command(self):
         """Register the mydata command (alias for info)"""
         @self.bot.tree.command(name="mydata", description="See what information the bot has about you (alias for /info)")
         async def mydata(interaction: discord.Interaction):
-            # Reuse the info command functionality
-            user_id = str(interaction.user.id)
-            username = interaction.user.display_name
+            await self._send_user_summary(interaction)
 
-            try:
-                # Get user summary directly
-                summary = self.user_data_manager.get_user_summary(user_id, username)
-                
-                # If the summary is empty or minimal, provide a friendly message
-                if "I don't have any information" in summary or len(summary.strip().split('\n')) <= 3:
-                    await interaction.response.send_message("damn, i don't know much about you yet. hit me up with some convos so i can learn more about you!")
-                else:
-                    await interaction.response.send_message(summary)
-            except Exception as e:
-                logger.error(f"Error handling mydata command: {e}")
-                await interaction.response.send_message("shit, couldn't get your data right now")
-    
     async def _register_game_command(self):
         """Register the game command"""
         @self.bot.tree.command(name="game", description="Start a number guessing game")
@@ -183,21 +159,18 @@ class SlashCommandManager:
             try:
                 if not fact:
                     # Clear all user data
-                    new_data = self.user_data_manager.load_user_data(user_id, username)
-                    new_data["facts"] = []
-                    new_data["topics_of_interest"] = []
-                    self.user_data_manager.save_user_data(user_id, new_data)
-                    await interaction.response.send_message("bet, wiped all your data. fresh start 💀")
+                    self.user_data_manager.forget_user(user_id)
+                    await interaction.response.send_message("bet, wiped all your data. fresh start 💀", ephemeral=True)
                 else:
                     # Try to remove specific fact
                     result = self.user_data_manager.remove_fact(user_id, fact, username)
                     if result:
-                        await interaction.response.send_message("bet, forgot that shit 👍")
+                        await interaction.response.send_message("bet, forgot that 👍", ephemeral=True)
                     else:
-                        await interaction.response.send_message("couldn't find anything about that to forget, try different words?")
+                        await interaction.response.send_message("couldnt find anything about that to forget, try different words?", ephemeral=True)
             except Exception as e:
                 logger.error(f"Error handling forget command: {e}")
-                await interaction.response.send_message("damn, couldn't clear your data rn")
+                await interaction.response.send_message("couldnt clear ur data right now, try again in a bit", ephemeral=True)
     
     async def _register_code_command(self):
         """Register the code command"""
@@ -304,25 +277,11 @@ class SlashCommandManager:
                 # Send the response
                 await self._send_followup(interaction, ai_response, reply.files)
 
-                # Give first-use role
-                if interaction.guild:
-                    role = discord.utils.get(interaction.guild.roles, name="I Love Chrono <3")
-                    if not role:
-                        logger.warning("'I Love Chrono <3' role not found in guild — check the role name matches exactly")
-                    else:
-                        member = interaction.guild.get_member(interaction.user.id)
-                        if member and role not in member.roles:
-                            try:
-                                await member.add_roles(role)
-                                logger.info(f"Assigned 'I Love Chrono <3' role to {member.display_name}")
-                            except discord.Forbidden:
-                                logger.warning("Missing permission to assign 'I Love Chrono <3' role — bot role must be above it in hierarchy")
-                            except Exception as e:
-                                logger.error(f"Error assigning Chrono role: {e}")
+                await give_first_use_role(interaction.guild, interaction.user.id)
 
             except Exception as e:
                 logger.error(f"Error handling chat command: {e}")
-                await interaction.followup.send("damn, something went wrong with the AI. try again?")
+                await interaction.followup.send("something went wrong on my end, try again?")
 
     async def _register_tldr_command(self):
         """Register the tldr command"""
@@ -400,7 +359,7 @@ class SlashCommandManager:
                 
             except Exception as e:
                 logger.error(f"Error in music command: {e}")
-                await interaction.followup.send("damn, something went wrong tryna play that")
+                await interaction.followup.send("couldnt play that, something went wrong on my end")
 
     async def _register_skip_command(self):
         """Register the skip command"""
@@ -468,7 +427,7 @@ class SlashCommandManager:
             queue = self.music_manager.get_queue(interaction.guild_id)
             
             if not current_song and not queue:
-                await interaction.response.send_message("queue empty af, add something with /music")
+                await interaction.response.send_message("the queue is empty, add something with /music")
                 return
             
             response = []
@@ -501,39 +460,8 @@ class SlashCommandManager:
                 await interaction.response.send_message(response)
             except Exception as e:
                 logger.error(f"Error in volume command: {e}")
-                await interaction.response.send_message("couldn't change the volume, something broke")
+                await interaction.response.send_message("couldnt change the volume, something went wrong on my end")
     
-    async def _register_test_audio_command(self):
-        """Register a test command to check audio functionality"""
-        @self.bot.tree.command(name="testaudio", description="Test if audio playback is working")
-        async def testaudio(interaction: discord.Interaction):
-            if not interaction.user.voice:
-                await interaction.response.send_message("You need to be in a voice channel to test audio")
-                return
-                
-            voice_channel = interaction.user.voice.channel
-            await interaction.response.defer(thinking=True)
-                
-            try:
-                # Join voice channel
-                voice_client = await voice_channel.connect() if not interaction.guild.voice_client else interaction.guild.voice_client
-                    
-                # Play a simple audio test
-                audio_source = discord.FFmpegPCMAudio(
-                    "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",  # Test audio URL
-                    executable=self.music_manager.ffmpeg_path
-                )
-                    
-                if voice_client.is_playing():
-                    voice_client.stop()
-                    
-                voice_client.play(audio_source)
-                await interaction.followup.send("aight playing test audio, if u can hear it ur setup is good")
-
-            except Exception as e:
-                logger.error(f"Audio test failed: {e}", exc_info=True)
-                await interaction.followup.send("audio test broke on my end, check the logs")
-
     async def _register_help_command(self):
         """Register the help command"""
         @self.bot.tree.command(name="help", description="Show all available commands and how to use them")
@@ -562,4 +490,4 @@ class SlashCommandManager:
                 
             except Exception as e:
                 logger.error(f"Error in relate command: {e}")
-                await interaction.followup.send("damn, something went wrong trying to get a related song")
+                await interaction.followup.send("couldnt find a related song, something went wrong on my end")
