@@ -9,8 +9,16 @@ services:
     container_name: chronochunk
     restart: unless-stopped
     env_file: .env
-    environment:
-      PYTHONUNBUFFERED: "1"
+    # Runs as the unprivileged user from the Dockerfile, with nothing it could use to become root
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # The bot idles at about 40 MB. A PDF or a song adds a few hundred for a moment.
+    # The cap stops a runaway from taking the 1 GiB VM, and SSH, down with it.
+    mem_limit: 640m
+    memswap_limit: 1536m
+    pids_limit: 256
     volumes:
       - ./data/user_data:/app/user_data
       - ./data/logs:/app/logs

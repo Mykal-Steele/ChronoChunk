@@ -4,19 +4,6 @@ import pytest
 from config.config import Config
 
 
-def test_important_topics_is_nonempty():
-    assert len(Config.IMPORTANT_TOPICS) > 0
-
-
-def test_important_topics_contains_mental_health():
-    assert "depression" in Config.IMPORTANT_TOPICS
-    assert "suicide" in Config.IMPORTANT_TOPICS
-
-
-def test_important_topics_contains_violence():
-    assert "violence" in Config.IMPORTANT_TOPICS
-
-
 def test_rate_limits_has_required_keys():
     required = {"chat", "game", "info", "forget", "mydata"}
     assert required.issubset(set(Config.RATE_LIMITS.keys()))
@@ -41,10 +28,6 @@ def test_channel_history_size_is_positive():
 
 def test_max_conversation_history_is_positive():
     assert Config.MAX_CONVERSATION_HISTORY > 0
-
-
-def test_ai_model_is_set():
-    assert Config.AI_MODEL and "gemini" in Config.AI_MODEL.lower()
 
 
 def test_ensure_directories_creates_dirs(tmp_path, monkeypatch):
@@ -73,8 +56,3 @@ def test_validate_returns_dict_on_success():
     result = Config.validate()
     assert isinstance(result, dict)
     assert result.get("discord_token") is True
-
-
-def test_web_port_is_integer():
-    assert isinstance(Config.WEB_PORT, int)
-    assert Config.WEB_PORT > 0

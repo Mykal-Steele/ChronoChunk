@@ -10,6 +10,50 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.0.0 (2026-10-11)
+
+The first number changed because an existing install needs two steps before this version starts. See "Upgrading".
+
+### Upgrading
+
+- The bot no longer runs as root inside its container. Give the data folders to user 1000 once: `sudo chown -R 1000:1000 /opt/chronochunk/data`.
+- Copy the new `deployment/docker-compose.yml` to the server. It holds the memory cap and the security settings.
+- For web search, add `TAVILY_API_KEY` to `.env`.
+- The server now runs the `main` branch. Switch its checkout once: `git -C /opt/chronochunk/app checkout main`.
+
+### Added
+
+- The bot opens web links. Give it a link with a request, such as `/sum up https://...`, and it reads the page and answers from it. The page is downloaded from the bot's own server. Pages that come back nearly empty, PDFs and sites that block plain downloads are read through Tavily instead.
+- The bot searches the web when asked about something recent or told to look something up. It ends the answer with the links it used. Search needs `TAVILY_API_KEY` in `.env`. Without the key the bot still opens ordinary pages.
+- A document made in the same reply is written from what the bot looked up.
+- `/help` has a section about the web and a section about what the bot stores.
+- `PRIVACY.md` lists what the bot stores about people, which outside services receive their messages, and how to delete it.
+
+### Changed
+
+- The container runs as an unprivileged user, cannot write to its own code, has no Linux capabilities and is capped at 640 MB of memory.
+- aiohttp, requests, urllib3 and idna are upgraded past known security bugs. PyNaCl stays at 1.5.0, which has two known bugs, because discord.py does not allow a newer one yet.
+- Every Python package is pinned. `requirements.in` lists the packages the bot imports and `requirements.txt` is built from it. Eleven packages nothing imported are gone. The test packages moved to `requirements-dev.txt` and a `test` stage in the Dockerfile.
+- One log file, `logs/chronochunk.log`, that starts fresh each day. Files older than 30 days are deleted. Before this a log file grew for as long as the bot stayed up and nothing was ever deleted.
+- Error messages from commands no longer swear.
+- Command code that could not be reached is gone: the typed versions of the game, data and music commands had been switched off since the slash commands took over. `/testaudio` is gone too.
+
+### Fixed
+
+- Two people's saved chats were in the public repository. They are removed from the branch. They are still in the git history.
+- `/forget` with nothing after it deletes everything stored about the person. Before this it said "wiped all your data" but kept their last 20 saved conversations.
+- `/info` shows the facts when only one or two are stored. It used to say the bot knew nothing.
+- A `/forget` sent while the bot is still picking facts out of a message is no longer undone when that finishes.
+- `/info`, `/mydata` and `/forget` answer only to the person who asked. Before this the facts were posted to the whole channel.
+- A Spotify link plays the right song. The lookup needed a package that was never installed, so the bot searched YouTube for the link's ID instead of the title. The lookup also no longer freezes the bot while it waits for Spotify.
+- The bot leaves a voice channel after 10 minutes alone or idle. The check ran on a second music player that never had anything in it.
+
+### Limits
+
+- One reply makes at most 4 web lookups, and each page is cut at 12,000 characters.
+- Links to the server itself, to private networks and to Azure's metadata address are refused, including after a redirect.
+- Answers that used the web are not cached, so the same question is looked up again.
+
 ## 2.7.0 (2026-10-05)
 
 ### Added

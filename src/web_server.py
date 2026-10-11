@@ -1,7 +1,5 @@
-import asyncio
 import logging
 from aiohttp import web
-import threading
 import time
 
 from src.version import __version__

@@ -15,6 +15,8 @@ from src.message_context import (
 MB = 1024 * 1024
 
 
+PRIVACY_URL = "https://github.com/Mykal-Steele/ChronoChunk/blob/main/PRIVACY.md"
+
 def _window(seconds: int) -> str:
     """A rate limit window in words: 'a day', 'an hour' or 'every 30 min'."""
     if seconds == 86400:
@@ -53,9 +55,9 @@ def build_help_embed() -> discord.Embed:
 
     general_cmds = [
         "`/chat <message>` - talk with me directly",
-        "`/info` - see what i know about you",
+        "`/info` - see what i know about you. only u see the answer",
         "`/mydata` - same as /info, shows what i remember",
-        "`/forget <info>` - make me forget specific info (empty to wipe all)",
+        "`/forget <info>` - make me forget specific info. with nothing after it i delete everything i stored about u",
         "`/code` - get link to my source code"
     ]
     embed.add_field(name="💬 general commands", value="\n".join(general_cmds), inline=False)
@@ -79,6 +81,13 @@ def build_help_embed() -> discord.Embed:
         "`/usage` - how much of the ai budget is used"
     ]
     embed.add_field(name="📝 writing and files", value="\n".join(writing_cmds), inline=False)
+
+    web_cmds = [
+        "give me a web link with what u want (`/sum up https://...`) and i open the page and read it",
+        "ask about something recent or tell me to look it up (`/search the latest on X`) and i search the web and link where i got it",
+        "i cant log in to sites, and pages behind a login or a paywall mostly come back empty"
+    ]
+    embed.add_field(name="🌐 the web", value="\n".join(web_cmds), inline=False)
 
     embed.add_field(name="📏 limits", value="\n".join(f"- {line}" for line in limit_lines()), inline=False)
 
@@ -105,6 +114,14 @@ def build_help_embed() -> discord.Embed:
         "`/good-boy` - get a smiley face :)"
     ]
     embed.add_field(name="😂 other stuff", value="\n".join(fun_cmds), inline=False)
+
+    privacy = [
+        "i keep ur last 20 messages to me, my answers, and facts i pick up about u, so i remember u next time",
+        "what u send me goes to the ai model to get an answer",
+        "`/info` shows what i stored, `/forget` deletes it",
+        f"the full list is at <{PRIVACY_URL}>"
+    ]
+    embed.add_field(name="🔒 ur data", value="\n".join(privacy), inline=False)
 
     embed.set_footer(text=f"ChronoChunk v{__version__} | u can also just chat with me normally in any channel "
                           "by replying to the bot message, no commands needed")

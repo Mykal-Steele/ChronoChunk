@@ -252,3 +252,24 @@ async def test_help_shows_the_version(commands):
     await registered["help"](interaction)
 
     assert f"ChronoChunk v{__version__}" in interaction.response.send_message.call_args[1]["embed"].footer.text
+
+
+async def test_info_and_forget_answer_only_to_the_person_who_asked(mock_bot_user):
+    registered = {}
+    bot = MagicMock()
+    bot.user = mock_bot_user
+    bot.tree.command = lambda **kwargs: (lambda func: registered.setdefault(kwargs["name"], func))
+    user_data_manager = MagicMock()
+    user_data_manager.get_user_summary = MagicMock(return_value="a\nb\nc\nd\nlikes cats")
+    manager = SlashCommandManager(bot=bot, game_manager=MagicMock(), user_data_manager=user_data_manager,
+                                  ai_handler=MagicMock(), message_handler=MessageHandler(bot=None),
+                                  music_manager=MagicMock())
+    await manager._register_info_command()
+    await manager._register_mydata_command()
+    await manager._register_forget_command()
+
+    for name in ("info", "mydata", "forget"):
+        interaction = _interaction()
+        await registered[name](interaction)
+        assert interaction.response.send_message.call_args[1]["ephemeral"] is True, name
+    user_data_manager.forget_user.assert_called_once_with("1")

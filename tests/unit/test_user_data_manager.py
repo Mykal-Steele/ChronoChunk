@@ -233,3 +233,39 @@ def test_get_user_summary_includes_facts(udm):
 
     summary = udm.get_user_summary(USER_ID, "TestUser")
     assert "pizza" in summary or "22" in summary
+
+
+# ── forget_user ───────────────────────────────────────────────────────────────
+
+def test_forget_user_deletes_everything_stored(udm, tmp_path):
+    data = udm.load_user_data(USER_ID, "TestUser")
+    data["facts"] = [{"content": "likes cats"}]
+    data["conversation_history"] = [{"user_message": "hi", "bot_response": "yo"}]
+    udm.save_user_data(USER_ID, data)
+    udm.forget_user(USER_ID)
+    assert not os.path.exists(tmp_path / f"{USER_ID}.json")
+    fresh = udm.load_user_data(USER_ID, "TestUser")
+    assert fresh["facts"] == [] and fresh["conversation_history"] == []
+
+
+def test_forget_user_with_nothing_stored_is_fine(udm):
+    udm.forget_user("999")
+
+
+def test_data_loaded_before_a_forget_is_not_saved_back(udm, tmp_path):
+    # Fact extraction loads the data, waits for the model, then saves. A /forget in between must win.
+    stale = udm.load_user_data(USER_ID, "TestUser")
+    stale["facts"] = [{"content": "likes cats"}]
+    udm.forget_user(USER_ID)
+    udm.save_user_data(USER_ID, stale)
+    assert not os.path.exists(tmp_path / f"{USER_ID}.json")
+
+
+def test_data_loaded_after_a_forget_is_saved_normally(udm, tmp_path):
+    udm.forget_user(USER_ID)
+    fresh = udm.load_user_data(USER_ID, "TestUser")
+    fresh["facts"] = [{"content": "likes dogs"}]
+    udm.save_user_data(USER_ID, fresh)
+    stored = json.loads((tmp_path / f"{USER_ID}.json").read_text(encoding="utf-8"))
+    assert stored["facts"] == [{"content": "likes dogs"}]
+    assert not any(key.startswith("_") for key in stored)

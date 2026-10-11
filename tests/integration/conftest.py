@@ -25,22 +25,9 @@ def pipeline(tmp_path, mock_genai_client, mock_bot_user):
     ai_handler = MagicMock()
     ai_handler.generate_reply = AsyncMock(return_value=Reply("yo what's good"))
     ai_handler.generate_response = AsyncMock(return_value="yo what's good")
-    ai_handler.extract_important_topics = MagicMock(return_value=[])
-
-    mock_music = MagicMock()
-    mock_music.skip = AsyncMock(return_value=(False, "Nothing is playing"))
-    mock_music.pause = AsyncMock(return_value=(False, "Nothing is playing"))
-    mock_music.resume = AsyncMock(return_value=(False, "Not paused"))
-    mock_music.leave_voice_channel = AsyncMock(return_value=False)
-    mock_music.clear_queue = MagicMock()
 
     from src.command_handler import CommandHandler
-    ch = CommandHandler(
-        bot=None,
-        game_manager=gm,
-        user_data_manager=udm,
-        music_manager=mock_music,
-    )
+    ch = CommandHandler(bot=None)
 
     bot = MagicMock()
     bot.user = mock_bot_user

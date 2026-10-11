@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-    branches: [ai/chat, main]
+    branches: [main]
   pull_request:
 
 jobs:
@@ -14,12 +14,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # The bot's own image has pandoc, the fonts and every Python package the tests need
-      - name: Build the bot image
-        run: docker build -t chronochunk:test .
+      # The test stage is the bot's image plus pytest: pandoc, the fonts and every pinned package
+      - name: Build the test image
+        run: docker build --target test -t chronochunk:test .
 
-      # The image leaves the tests out, so the checkout is mounted over it
+      # The image has no source in it, so the checkout is mounted, and the tests run as the
+      # user who owns the checkout
       - name: Run the tests
         run: >
-          docker run --rm -e PYTHONDONTWRITEBYTECODE=1 -v "$PWD":/app -w /app chronochunk:test
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/app -w /app chronochunk:test
           python -m pytest tests/unit tests/integration -q -p no:cacheprovider
+
+      # The image that gets deployed has to build too
+      - name: Build the bot image
+        run: docker build -t chronochunk:latest .

@@ -43,7 +43,6 @@ def make_handler():
         endpoint=os.getenv("AZURE_OPENAI_ENDPOINT", ""),
         api_key=os.getenv("AZURE_OPENAI_KEY", ""),
         deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-5-mini"),
-        important_topics=[],
     )
 
 
