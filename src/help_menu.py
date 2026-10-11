@@ -7,9 +7,9 @@ from config.config import Config
 from src.tools.documents import MAX_FILES_PER_REPLY
 from src.version import __version__
 from src.message_context import (
-    MAX_FILE_BYTES, MAX_FILE_CHARS, MAX_FILES, MAX_IMAGE_BYTES, MAX_IMAGES, MAX_PDF_IMAGES, MAX_PDF_PAGES,
-    RECENT_FILE_CHARS, RECENT_MAX_FILES, RECENT_MAX_IMAGES, RECENT_POST_MINUTES, RECENT_POSTS, TLDR_FILE_CHARS,
-    TLDR_MAX_FILES, TLDR_MAX_IMAGES,
+    MAX_FILE_BYTES, MAX_FILE_CHARS, MAX_FILES, MAX_IMAGE_BYTES, MAX_IMAGES, MAX_PDF_PAGES, RECENT_FILE_CHARS,
+    RECENT_MAX_FILES, RECENT_MAX_IMAGES, RECENT_POST_MINUTES, RECENT_POSTS, TLDR_FILE_CHARS, TLDR_MAX_FILES,
+    TLDR_MAX_IMAGES,
 )
 
 MB = 1024 * 1024
@@ -33,8 +33,9 @@ def limit_lines() -> List[str]:
     tldr_count, tldr_window = Config.RATE_LIMITS["tldr"]
     return [
         f"images: png, jpg or webp, up to {MAX_IMAGE_BYTES // MB} MB each. files: pdf, md, txt and code files, up to {MAX_FILE_BYTES // MB} MB each",
-        f"i read up to {MAX_IMAGES} images and {MAX_FILES} files per message, plus up to {MAX_PDF_IMAGES} pictures from inside pdfs",
-        f"pdfs: the first {MAX_PDF_PAGES} pages. long files get cut at {MAX_FILE_CHARS:,} characters",
+        f"i read up to {MAX_IMAGES} images and {MAX_FILES} files per message",
+        f"pdfs: the first {MAX_PDF_PAGES} pages. i look at every slide, so tables, charts and diagrams count. the first look at a big deck takes up to a minute",
+        f"long text files get cut at {MAX_FILE_CHARS:,} characters",
         f"stuff posted right before ur message: the last {RECENT_POSTS} messages, {RECENT_POST_MINUTES} min old at most, "
         f"{RECENT_MAX_IMAGES} images and {RECENT_MAX_FILES} file (cut at {RECENT_FILE_CHARS:,} characters)",
         f"`/tldr`: 5 to 200 messages, plus the newest {TLDR_MAX_IMAGES} images and {TLDR_MAX_FILES} files in them "

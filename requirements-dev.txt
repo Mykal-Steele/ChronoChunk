@@ -18,7 +18,7 @@ pytest==9.1.1
     #   pytest-asyncio
 pytest-asyncio==1.4.0
     # via -r requirements-dev.in
-typing-extensions==4.12.2
+typing-extensions==4.16.0
     # via
     #   -c requirements.txt
     #   pytest-asyncio

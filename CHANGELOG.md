@@ -10,6 +10,25 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.4.0 (2026-10-11)
+
+### Added
+
+- The bot reads slides properly. When someone attaches, replies to or links a PDF, it looks at a picture of each page once and writes down what the page shows: text inside pictures, tables, formulas, charts and diagrams. Questions are then answered from the PDF's text plus those descriptions. On two real lecture decks it answered 18 of 18 questions about pictures, tables and charts, against 2 of 18 before.
+- `PDF_PAGE_NOTES` chooses how PDFs are read. `auto` (the default) describes pages that hold a picture, a drawing or almost no text, which is nearly every slide and nearly no page of a plain report. `on` describes every page. `off` is the old behaviour.
+
+### Changed
+
+- PDFs are read up to 150 pages, up from 60.
+- The first question about a PDF waits for the descriptions: about 13 seconds for 21 slides and under a minute for 90. Later questions about the same file are faster than before, because the descriptions are kept in memory for 6 hours. They are never written to disk.
+- A described PDF no longer sends its embedded pictures to the model, since the descriptions cover them.
+- `/tldr` and the reading of just-posted files still read a PDF's text and first pictures only.
+
+### For whoever runs the bot
+
+- New package: `pypdfium2`, which turns PDF pages into pictures.
+- Describing a deck costs about the same as five questions about it: $0.003 for 21 slides and $0.012 for 88 on gpt-6-luna. Each question then costs 26% to 42% more than before, because the descriptions are part of the prompt.
+
 ## 3.3.0 (2026-10-11)
 
 ### Added

@@ -73,7 +73,7 @@ Reply to any message and start your reply with `/`, for example `/read this` or 
 
 - text messages and link previews
 - images (png, jpg, webp)
-- PDFs: the text, and the pictures inside them such as charts, photos and scanned pages
+- PDFs: the text, plus a description the bot writes of each page from a picture of it, so tables, charts, diagrams and scanned pages are read too
 - markdown, text and code files
 
 You can also attach a file or image to your own `/` message. Pinging the bot works the same as starting with `/`. The `/chat` command takes an optional file too.
@@ -85,8 +85,9 @@ Reading recent posts means other people's images and files go to the model when 
 Limits (also shown by `/help`):
 
 - Images up to 5 MB each, files up to 15 MB each.
-- 3 images and 4 files per message, plus up to 10 pictures from inside PDFs.
-- PDFs are read up to 60 pages. Long files are cut at 30,000 characters.
+- 3 images and 4 files per message.
+- PDFs are read up to 150 pages. Long text files are cut at 30,000 characters.
+- The first question about a PDF takes longer, up to a minute for a long slide deck, while the bot looks at every page. Later questions about the same file are quick. Set `PDF_PAGE_NOTES` to `off` in `.env` to skip this and read only the text and the first 10 pictures, or to `on` to describe every page of every PDF.
 - From recent posts: the last 5 messages, 30 minutes old at most, 2 images and 1 file (cut at 12,000 characters).
 - `/tldr`: 5 to 200 messages, plus the newest 6 images and 3 files in them (each cut at 6,000 characters), and 6 recaps per hour per user.
 - GIFs, videos, voice messages and Word, Excel or PowerPoint files are not read.
@@ -192,6 +193,7 @@ ChronoChunk/
 │   ├── message_processor.py   # Decides which messages get an answer
 │   ├── message_handler.py     # Channel history and context
 │   ├── message_context.py     # Reads replies, images and files
+│   ├── pdf_notes.py           # Describes PDF pages from pictures of them
 │   ├── ai_response_handler.py # Talks to the model and runs the reply loop
 │   ├── tools/                 # What the model can do: one file per group of tools
 │   │   ├── base.py            # The interface every tool implements

@@ -5,7 +5,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from openai import AsyncOpenAI
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 from config.ai_config import PERSONALITY_PROMPT
 from config.config import Config
 from collections import deque
@@ -13,6 +13,7 @@ from src.document_builder import BuiltFile, strip_filler
 from src.usage_guard import BudgetExceededError, UsageGuard, guard_client
 from src.tools import Tool, ToolResult, Turn, default_tools
 from src.tools.base import user_content
+from src.pdf_notes import NOTES_MAX_TOKENS
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ REPLIED-TO MESSAGES AND FILES:
 - "=== LAST N MESSAGES IN THIS CHANNEL" is the channel chat they pointed u at. if they only want a tldr, sum it up. if they asked something else (a question about it, a list of what got decided, a pdf or a diagram of it), do exactly that using those messages. "here", "this chat" and "the discussion" mean those messages. stick to what those messages say: never add a task, an owner, a deadline, a number, a detail or a decision that nobody wrote, and dont pile on advice they didnt ask for. if something they ask about was not said or not decided, say so. keep it in proportion: a recap is always shorter than the chat it sums up, and one or two messages get one line. a filename marked "(image 2)" is the 2nd image attached to this prompt, so u can see what that person posted. use what the images and opened files show, not only the text.
 - "=== MESSAGE THEY LINKED" is what came with the discord message link they pasted. treat it like a message they replied to.
 - "=== POSTED IN THIS CHANNEL RIGHT BEFORE THEIR MESSAGE" is the pictures and files people dropped in the channel just before they wrote. that is what "this", "that pic", "the screenshot", "the pdf" or "the file" means when they did not reply to anything. if their message is not about those posts, ignore them completely and dont bring them up. if a file there is cut off and they need all of it, tell them to reply to that message.
+- a pdf block can be followed by a section that says what each of its pages shows. that section was written from pictures of the pages, so it holds what the plain text misses: tables, charts, diagrams, formulas and text inside pictures. use it to answer anything about a slide, a figure or a table, and treat it as part of the file. never say u cant see a chart or a picture that is described there.
 - a pdf line that says pictures from it are attached means those pictures are among the images on this prompt. look at them, they are part of the document (charts, photos, scanned pages).
 - pdfs, md, text and code files inside those blocks are already opened, and attached images are right there for u to look at. never say u cant open, load or see them.
 - be accurate first: quote a short message word for word, sum up a long file with its real key points, read the actual text in an image. personality goes in the tone only. these answers can be longer, and line breaks or a short list are fine here.
@@ -184,6 +186,18 @@ class AIResponseHandler:
             request.calls += 1
             request.cost += UsageGuard.cost_of(getattr(resp, "usage", None), kwargs["model"])
         return resp.choices[0].message
+
+    async def describe_images(self, prompt: str, images: List[str]) -> Tuple[str, float]:
+        """
+        One model call over a set of images with no persona and no tools. Used to write
+        down what PDF pages show. Returns the text and what the call cost.
+        """
+        counter = Turn("", "", "", "", [])
+        message = await self._chat(
+            [{"role": "user", "content": user_content(prompt, images)}],
+            NOTES_MAX_TOKENS, reasoning_effort=Config.AI_CHAT_REASONING_EFFORT, request=counter,
+        )
+        return (message.content if isinstance(message.content, str) else ""), counter.cost
 
     async def generate_reply(self, query: str, conversation_history: str,
                              username: str, user_id: str = None,

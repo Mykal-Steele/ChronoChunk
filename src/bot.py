@@ -29,6 +29,7 @@ from src.version import __version__
 from src.web_server import WebServer
 from src.message_processor import MessageProcessor
 from src.music_manager import MusicManager
+from src import pdf_notes
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -75,6 +76,9 @@ class ChronoChunk(commands.Bot):
             deployment=AZURE_OPENAI_DEPLOYMENT,
         )
         
+        # PDFs are described page by page with the same model and budget as chat
+        pdf_notes.set_describer(self.ai_response_handler.describe_images)
+
         # Store a reference as ai_handler for compatibility
         self.ai_handler = self.ai_response_handler
         

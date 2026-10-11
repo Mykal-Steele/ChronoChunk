@@ -56,6 +56,11 @@ class Config:
         "gpt-5.6-luna": (0.20, 0.02, 1.20, 0.25),
     }
 
+    # How PDFs that someone attaches, replies to or links are read. "auto" describes every page
+    # that has a picture, drawing or almost no text, from an image of the page. "on" describes
+    # every page. "off" reads the text and the first few embedded pictures only.
+    PDF_PAGE_NOTES = os.getenv("PDF_PAGE_NOTES", "auto").strip().lower()
+
     # A cheaper deployment for jobs that run behind the reply, such as picking facts out of a
     # message. Empty means those jobs use the main deployment.
     AI_BACKGROUND_DEPLOYMENT = os.getenv("AZURE_OPENAI_BACKGROUND_DEPLOYMENT", "").strip()
