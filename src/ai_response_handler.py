@@ -2,6 +2,7 @@ import hashlib
 import json
 import re
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from openai import AsyncOpenAI
@@ -276,6 +277,8 @@ class _Request:
     calls: int = 0
     cost: float = 0.0
     web_calls: int = 0
+    started: float = field(default_factory=time.monotonic)
+    model_seconds: float = 0.0  # time spent waiting for the model, out of the whole reply
     web: List[str] = field(default_factory=list)  # search results and pages read for this reply
 
 
@@ -380,8 +383,10 @@ class AIResponseHandler:
                 kwargs["tool_choice"] = {"type": "function", "function": {"name": force_tool}}
         if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
+        called_at = time.monotonic()
         resp = await self.ai_client.chat.completions.create(**kwargs)
         if request:
+            request.model_seconds += time.monotonic() - called_at
             request.calls += 1
             request.cost += UsageGuard.cost_of(getattr(resp, "usage", None))
         return resp.choices[0].message
@@ -513,12 +518,13 @@ class AIResponseHandler:
 
     @staticmethod
     def _log_reply(request: _Request, reply: Reply) -> None:
-        """One line on what a reply read, made and cost, so a bill can be traced to what caused it."""
+        """One line on what a reply read, made, cost and how long it took, so a bill or a slow answer can be traced."""
         files_read = len(re.findall(r"^file: ", request.attached, flags=re.MULTILINE))
         logger.info(
             f"Reply for {request.username}: read {len(request.images)} images and {files_read} files "
             f"({len(request.attached)} chars of context), {request.calls} model calls, "
-            f"about ${request.cost:.4f}, sent {len(reply.files)} files, {request.web_calls} web lookups"
+            f"about ${request.cost:.4f}, sent {len(reply.files)} files, {request.web_calls} web lookups, "
+            f"took {time.monotonic() - request.started:.1f}s ({request.model_seconds:.1f}s waiting for the model)"
         )
 
     async def generate_response(self, query: str, conversation_history: str,
