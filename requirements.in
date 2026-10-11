@@ -9,6 +9,8 @@ pillow==12.3.0
 # discord.py 2.7.1 only allows PyNaCl below 1.6, so this stays until discord.py moves
 PyNaCl==1.5.0
 pypdf==6.19.0
+# Turns PDF pages into pictures, so the model can describe slides, charts and tables
+pypdfium2==5.14.0
 python-dotenv==1.2.4
 # yt-dlp uses requests for its downloads when it is installed
 requests==2.34.2

@@ -1,5 +1,6 @@
 """Reads a Discord message's text, embeds and attachments so the AI can see them."""
 import asyncio
+import time
 import base64
 import io
 import logging
@@ -11,6 +12,7 @@ from typing import List, Optional, Tuple
 
 import discord
 from pypdf import PdfReader
+from src.pdf_notes import page_notes
 
 logger = logging.getLogger(__name__)
 
@@ -18,11 +20,17 @@ logger = logging.getLogger(__name__)
 MAX_FILE_BYTES = 15 * 1024 * 1024
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_FILE_CHARS = 30000
-MAX_PDF_PAGES = 60
+MAX_PDF_PAGES = 150
 MAX_IMAGES = 3
 # Pictures taken out of PDFs have their own limit per request. They are shrunk before
 # they are sent, so ten of them are still a small upload.
 MAX_PDF_IMAGES = 10
+# A PDF that comes with page notes (see src/pdf_notes.py) gets more room for its own text,
+# because the notes replace its pictures
+NOTED_PDF_CHARS = 60000
+# One request waits this long in total for page descriptions, however many PDFs it has.
+# A PDF that is not ready by then is read the old way, and its descriptions are there next time.
+NOTES_WAIT_SECONDS = 90
 MAX_FILES = 4
 MAX_EMBED_CHARS = 1500
 PDF_TIMEOUT_SECONDS = 30
@@ -78,6 +86,8 @@ class _ImageBudget:
     """How many more images one request may load. It is used up as attachments are read."""
     images: int      # pictures attached directly
     pdf_images: int  # pictures taken out of PDFs
+    # When the wait for PDF page descriptions ends, for all the PDFs of one request together
+    notes_deadline: float = field(default_factory=lambda: time.monotonic() + NOTES_WAIT_SECONDS)
 
 
 def _items(value) -> list:
@@ -279,14 +289,30 @@ async def _read_attachment(attachment, budget: _ImageBudget,
         return [f"image: {filename} (attached to this prompt as an image, look at it)"], [f"data:{mime};base64,{encoded}"]
 
     if kind == "pdf":
+        # A PDF someone points at directly is described page by page from its page images.
+        # In /tldr and for recent posts (max_chars set) it is read the short way.
+        notes = None
+        if max_chars is None and budget.notes_deadline > time.monotonic():
+            notes = await page_notes(data, filename, budget.notes_deadline - time.monotonic())
+        if notes:
+            max_chars = NOTED_PDF_CHARS
         try:
             text, pages, pictures, found = await asyncio.wait_for(
-                asyncio.to_thread(_read_pdf, data, budget.pdf_images, max_chars), PDF_TIMEOUT_SECONDS)
+                asyncio.to_thread(_read_pdf, data, 0 if notes else budget.pdf_images, max_chars), PDF_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
             return [f"file: {filename} (could not be read: the pdf took too long to open)"], []
         except Exception as e:
             logger.warning(f"Could not read pdf {filename}: {e}")
             return [f"file: {filename} (could not be read: {e})"], []
+
+        if notes:
+            # The notes cover every picture, table and chart, so no pictures are attached
+            lines = _file_block(filename, text or "(no selectable text)",
+                                f"pdf, {pages} pages, followed by what each page shows", max_chars)
+            lines.append(f"--- what the pages of {filename} show, written from the page images ---")
+            lines.append(notes)
+            lines.append(f"--- end of the page descriptions of {filename} ---")
+            return lines, []
 
         budget.pdf_images -= len(pictures)
         detail = f"pdf, {pages} pages"

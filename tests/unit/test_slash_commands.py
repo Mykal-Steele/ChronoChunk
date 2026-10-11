@@ -176,7 +176,7 @@ async def test_help_states_the_real_limits(commands):
     embed = interaction.response.send_message.call_args[1]["embed"]
     limits = next(field.value for field in embed.fields if "limits" in field.name)
     assert f"up to {message_context.MAX_IMAGES} images and {message_context.MAX_FILES} files per message" in limits
-    assert f"up to {message_context.MAX_PDF_IMAGES} pictures from inside pdfs" in limits
+    assert "tables, charts and diagrams count" in limits
     assert f"the first {message_context.MAX_PDF_PAGES} pages" in limits and "30,000 characters" in limits
     assert f"the newest {message_context.TLDR_MAX_IMAGES} images and {message_context.TLDR_MAX_FILES} files" in limits
     assert f"{Config.RATE_LIMITS['tldr'][0]} recaps an hour" in limits
