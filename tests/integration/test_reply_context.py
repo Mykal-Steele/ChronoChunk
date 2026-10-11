@@ -641,3 +641,29 @@ async def test_plain_replies_send_no_files_argument(pipeline):
     await processor.process_message(trigger)
 
     assert "files" not in trigger.reply.call_args[1]
+
+
+async def test_typed_model_names_the_models_the_bot_runs_on(pipeline, monkeypatch):
+    from config.config import Config
+    processor, _, _, _, ai_handler, bot = pipeline
+    processor.text_commands = {"tldr", "usage", "model", "help"}  # how the real bot is wired
+    processor.command_handler.bot = bot
+    bot.ai_handler.deployment = "gpt-6-luna"
+    monkeypatch.setattr(Config, "AI_BACKGROUND_DEPLOYMENT", "gpt-5-nano")
+    trigger = fake_message(fake_author("Kruskal"), "/model", message_id=1)
+    _channel_with(trigger)
+    await processor.process_message(trigger)
+    sent = trigger.channel.send.call_args[0][0]
+    assert "`gpt-6-luna`" in sent and "`gpt-5-nano`" in sent
+    ai_handler.generate_reply.assert_not_called()
+
+
+async def test_model_with_more_words_is_chat(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    processor.text_commands = {"tldr", "usage", "model", "help"}
+    processor.command_handler.bot = bot
+    trigger = fake_message(fake_author("Kruskal"), "/model this data for me", message_id=1)
+    _channel_with(trigger)
+    await processor.process_message(trigger)
+    ai_handler.generate_reply.assert_called_once()
+

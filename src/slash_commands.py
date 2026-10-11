@@ -50,6 +50,7 @@ class SlashCommandManager:
             await self._register_chat_command()
             await self._register_tldr_command()
             await self._register_usage_command()
+            await self._register_model_command()
             await self._register_recent_posts_command()
             await self._register_help_command()  # Make sure this line is here
             
@@ -331,6 +332,12 @@ class SlashCommandManager:
         async def usage(interaction: discord.Interaction):
             await interaction.response.send_message(self.bot.command_handler.usage_summary())
     
+    async def _register_model_command(self):
+        """Register the model command"""
+        @self.bot.tree.command(name="model", description="See which AI model the bot is running on")
+        async def model(interaction: discord.Interaction):
+            await interaction.response.send_message(self.bot.command_handler.model_summary())
+
     async def _register_music_command(self):
         """Register the music command"""
         @self.bot.tree.command(name="music", description="Play music from YouTube or Spotify")
