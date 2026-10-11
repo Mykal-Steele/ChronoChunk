@@ -115,11 +115,14 @@ class UsageGuard:
 
     @staticmethod
     def prices_for(model: Optional[str]) -> tuple:
-        """(input, cached input, output) prices per 1M tokens for the model that answered."""
-        for name, prices in Config.AI_MODEL_PRICES.items():
+        """(input, cached input, output, cache write) prices per 1M tokens for the model that answered."""
+        prices = (Config.AI_PRICE_INPUT_PER_M, Config.AI_PRICE_CACHED_INPUT_PER_M, Config.AI_PRICE_OUTPUT_PER_M)
+        for name, listed in Config.AI_MODEL_PRICES.items():
             if model and name in model:
-                return prices
-        return Config.AI_PRICE_INPUT_PER_M, Config.AI_PRICE_CACHED_INPUT_PER_M, Config.AI_PRICE_OUTPUT_PER_M
+                prices = listed
+                break
+        # A model with no separate price for writing the cache charges those tokens as plain input
+        return prices if len(prices) == 4 else (*prices, prices[0])
 
     @staticmethod
     def cost_of(usage: Any, model: Optional[str] = None) -> float:
@@ -128,8 +131,13 @@ class UsageGuard:
         completion = _as_int(getattr(usage, "completion_tokens", 0))
         cached = _as_int(getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", 0))
         cached = min(cached, prompt)
-        input_price, cached_price, output_price = UsageGuard.prices_for(model)
-        return ((prompt - cached) * input_price + cached * cached_price + completion * output_price) / 1_000_000
+        written = _as_int(getattr(getattr(usage, "prompt_tokens_details", None), "cache_write_tokens", 0))
+        written = min(written, prompt - cached)
+        input_price, cached_price, output_price, write_price = UsageGuard.prices_for(model)
+        return (
+            (prompt - cached - written) * input_price + cached * cached_price + written * write_price
+            + completion * output_price
+        ) / 1_000_000
 
     def record(self, usage: Any, model: Optional[str] = None) -> float:
         """Add one response's cost to the totals. Returns the cost."""

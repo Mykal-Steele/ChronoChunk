@@ -172,3 +172,13 @@ def test_the_guard_records_the_price_of_the_model_that_answered(guard):
     assert guard.record(usage(prompt=1_000_000), "gpt-5-nano") == pytest.approx(0.05)
     assert guard.summary()["cycle_cost"] == pytest.approx(0.05)
 
+
+def test_cache_writes_are_charged_at_their_own_price():
+    from types import SimpleNamespace
+    tokens = SimpleNamespace(prompt_tokens=1_000_000, completion_tokens=0,
+                             prompt_tokens_details=SimpleNamespace(cached_tokens=400_000, cache_write_tokens=500_000))
+    # gpt-6-luna: 100k plain at $0.10, 400k cached at $0.01, 500k written at $0.125
+    assert UsageGuard.cost_of(tokens, "gpt-6-luna-2026-09-22") == pytest.approx(0.01 + 0.004 + 0.0625)
+    # a model with no cache-write price charges those tokens as plain input
+    assert UsageGuard.cost_of(tokens, "gpt-5-mini") == pytest.approx(0.6 * 0.25 + 0.4 * 0.025)
+
