@@ -271,13 +271,15 @@ class SlashCommandManager:
                     bot_response=ai_response
                 )
 
-                # Save to user data using the original clean message. This also extracts facts.
-                await self.user_data_manager.add_conversation(user_id, original_message, ai_response, username)
-                
-                # Send the response
+                # The answer goes out first. Saving the conversation also extracts facts,
+                # which is another model call they should not have to wait for.
                 await self._send_followup(interaction, ai_response, reply.files)
 
                 await give_first_use_role(interaction.guild, interaction.user.id)
+                try:
+                    await self.user_data_manager.add_conversation(user_id, original_message, ai_response, username)
+                except Exception as e:
+                    logger.error(f"Could not save the conversation for {user_id}: {e}")
 
             except Exception as e:
                 logger.error(f"Error handling chat command: {e}")

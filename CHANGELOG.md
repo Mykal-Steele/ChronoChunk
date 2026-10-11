@@ -10,6 +10,16 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.0.1 (2026-10-11)
+
+### Fixed
+
+- `/chat` sends its answer before it saves the conversation. Saving also picks facts out of the message, which is a second model call, and people waited for it.
+
+### Changed
+
+- The log line for each reply says how long the reply took and how much of that was spent waiting for the model.
+
 ## 3.0.0 (2026-10-11)
 
 The first number changed because an existing install needs two steps before this version starts. See "Upgrading".

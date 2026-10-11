@@ -273,3 +273,22 @@ async def test_info_and_forget_answer_only_to_the_person_who_asked(mock_bot_user
         await registered[name](interaction)
         assert interaction.response.send_message.call_args[1]["ephemeral"] is True, name
     user_data_manager.forget_user.assert_called_once_with("1")
+
+
+async def test_chat_answers_before_it_saves_the_conversation(commands):
+    registered, bot, ai_handler, user_data_manager = commands
+    order = []
+    interaction = _interaction()
+    interaction.followup.send = AsyncMock(side_effect=lambda *a, **k: order.append("answer"))
+    user_data_manager.add_conversation = AsyncMock(side_effect=lambda *a, **k: order.append("save"))
+    await registered["chat"](interaction, "yo")
+    assert order == ["answer", "save"]
+
+
+async def test_chat_answer_survives_a_failed_save(commands):
+    registered, bot, ai_handler, user_data_manager = commands
+    interaction = _interaction()
+    user_data_manager.add_conversation = AsyncMock(side_effect=OSError("disk full"))
+    await registered["chat"](interaction, "yo")
+    assert interaction.followup.send.await_count == 1
+

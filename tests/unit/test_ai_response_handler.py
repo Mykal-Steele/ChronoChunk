@@ -1,4 +1,5 @@
 """Unit tests for AIResponseHandler — Gemini client is mocked."""
+import re
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -278,6 +279,7 @@ async def test_each_reply_logs_what_it_read_and_what_it_cost(handler, mock_opena
     line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("Reply for Kruskal"))
     assert "read 1 images and 1 files" in line
     assert "1 model calls, about $0.2500, sent 0 files" in line
+    assert re.search(r"took \d+\.\ds \(\d+\.\ds waiting for the model\)$", line)
 
 
 async def test_tools_are_only_offered_when_files_are_allowed(handler, mock_openai_client):
