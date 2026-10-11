@@ -1,12 +1,7 @@
-"""Per-channel switches that survive a restart, kept in one small JSON file."""
-import json
-import logging
-import os
+"""Per-channel switches that survive a restart."""
 from typing import Optional
 
-from config.config import Config
-
-logger = logging.getLogger(__name__)
+from src.database import Database, get_database
 
 
 class ChannelSettings:
@@ -16,36 +11,19 @@ class ChannelSettings:
     never switched is on.
     """
 
-    def __init__(self, path: Optional[str] = None):
-        self.path = path or os.path.join(Config.STATE_DIR, "channel_settings.json")
-        self._channels = self._load()
-
-    def _load(self) -> dict:
-        try:
-            with open(self.path, encoding="utf-8") as f:
-                data = json.load(f)
-            return data if isinstance(data, dict) else {}
-        except FileNotFoundError:
-            return {}
-        except (OSError, ValueError) as e:
-            logger.warning(f"Could not read {self.path}, using the defaults: {e}")
-            return {}
-
-    def _save(self) -> None:
-        try:
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
-            with open(self.path, "w", encoding="utf-8") as f:
-                json.dump(self._channels, f, indent=2)
-        except OSError as e:
-            logger.error(f"Could not save {self.path}: {e}")
+    def __init__(self, database: Optional[Database] = None):
+        self._database = database or get_database()
 
     def reads_recent_posts(self, channel_id) -> bool:
-        channel = self._channels.get(str(channel_id))
-        return channel.get("read_recent_posts", True) if isinstance(channel, dict) else True
+        rows = self._database.query(
+            "SELECT read_recent_posts FROM channel_settings WHERE channel_id = ?", (str(channel_id),))
+        return bool(rows[0]["read_recent_posts"]) if rows else True
 
     def set_reads_recent_posts(self, channel_id, enabled: bool) -> None:
-        self._channels.setdefault(str(channel_id), {})["read_recent_posts"] = bool(enabled)
-        self._save()
+        self._database.execute(
+            "INSERT INTO channel_settings(channel_id, read_recent_posts) VALUES (?, ?) "
+            "ON CONFLICT(channel_id) DO UPDATE SET read_recent_posts = excluded.read_recent_posts",
+            (str(channel_id), int(bool(enabled))))
 
 
 _shared_settings: Optional[ChannelSettings] = None

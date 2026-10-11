@@ -1,5 +1,4 @@
 """Unit tests for the AI budget guard: cost estimates, caps, cycle rollover and the guarded client."""
-import json
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -17,8 +16,8 @@ def usage(prompt=0, completion=0, cached=0):
 
 
 @pytest.fixture
-def guard(tmp_path):
-    return UsageGuard(ledger_path=str(tmp_path / "ai_usage.json"), monthly_budget=1.0, daily_budget=0.5, reset_day=14)
+def guard(database):
+    return UsageGuard(database, monthly_budget=1.0, daily_budget=0.5, reset_day=14)
 
 
 def set_today(monkeypatch, day: date):
@@ -106,35 +105,41 @@ def test_monthly_cap_clears_when_the_new_cycle_starts(guard, monkeypatch):
     assert guard.summary()["cycle_cost"] == 0
 
 
-# ── ledger file ───────────────────────────────────────────────────────────────
+# ── the ledger in the database ─────────────────────────────────────────────────
 
-def test_totals_survive_a_restart(tmp_path):
-    path = str(tmp_path / "ai_usage.json")
-    first = UsageGuard(ledger_path=path, monthly_budget=1.0, daily_budget=0.5, reset_day=14)
+def test_totals_survive_a_restart(database):
+    first = UsageGuard(database, monthly_budget=1.0, daily_budget=0.5, reset_day=14)
     first.record(usage(prompt=1_000_000))  # $0.25
-    second = UsageGuard(ledger_path=path, monthly_budget=1.0, daily_budget=0.5, reset_day=14)
+    second = UsageGuard(database, monthly_budget=1.0, daily_budget=0.5, reset_day=14)
     assert second.summary()["cycle_cost"] == pytest.approx(0.25)
     assert second.summary()["requests"] == 1
 
 
-def test_blocked_state_survives_a_restart(tmp_path):
-    path = str(tmp_path / "ai_usage.json")
-    UsageGuard(ledger_path=path, monthly_budget=1.0, daily_budget=0.5, reset_day=14).record(usage(completion=600_000))
+def test_blocked_state_survives_a_restart(database):
+    UsageGuard(database, monthly_budget=1.0, daily_budget=0.5, reset_day=14).record(usage(completion=600_000))
     with pytest.raises(BudgetExceededError):
-        UsageGuard(ledger_path=path, monthly_budget=1.0, daily_budget=0.5, reset_day=14).check()
+        UsageGuard(database, monthly_budget=1.0, daily_budget=0.5, reset_day=14).check()
 
 
-def test_calls_without_token_counts_write_nothing(guard, tmp_path):
+def test_calls_without_token_counts_write_nothing(guard, database):
     assert guard.record(MagicMock()) == 0.0
-    assert not (tmp_path / "ai_usage.json").exists()
+    assert database.query("SELECT COUNT(*) AS n FROM usage_daily")[0]["n"] == 0
 
 
-def test_a_corrupt_ledger_does_not_crash(tmp_path):
-    path = tmp_path / "ai_usage.json"
-    path.write_text("{not json", encoding="utf-8")
-    guard = UsageGuard(ledger_path=str(path), monthly_budget=1.0, daily_budget=0.5, reset_day=14)
-    guard.record(usage(prompt=1_000_000))
-    assert json.loads(path.read_text(encoding="utf-8"))["requests"] == 1
+def test_each_model_gets_its_own_row_per_day(guard, database):
+    guard.record(usage(prompt=1_000_000), "gpt-5-nano")
+    guard.record(usage(prompt=1_000_000), "gpt-5-nano")
+    guard.record(usage(prompt=1_000_000), "gpt-5-mini")
+    rows = {r["model"]: (r["requests"], r["cost"]) for r in database.query("SELECT model, requests, cost FROM usage_daily")}
+    assert rows == {"gpt-5-nano": (2, pytest.approx(0.10)), "gpt-5-mini": (1, pytest.approx(0.25))}
+
+
+def test_spending_from_an_earlier_cycle_is_not_counted(database, monkeypatch):
+    set_today(monkeypatch, date(2026, 10, 13))
+    UsageGuard(database, monthly_budget=1.0, daily_budget=0.5, reset_day=14).record(usage(prompt=1_000_000))
+    set_today(monkeypatch, date(2026, 10, 14))
+    fresh = UsageGuard(database, monthly_budget=1.0, daily_budget=0.5, reset_day=14)
+    assert fresh.summary()["cycle_cost"] == 0 and fresh.summary()["requests"] == 0
 
 
 # ── guarded client ────────────────────────────────────────────────────────────

@@ -4,13 +4,13 @@ This page says what ChronoChunk keeps about you, where it goes, and how to delet
 
 ## What the bot stores
 
-When you talk to the bot (a `/` message, a slash command, a ping or a reply to it), it saves a small file about you on its own server:
+When you talk to the bot (a `/` message, a slash command, a ping or a reply to it), it saves a few rows about you in a database on its own server:
 
 - Your Discord user ID and display name.
 - Your last 20 messages to the bot and its answers.
 - Short facts it picks out of what you tell it, such as "likes hiking", and the topics you talk about.
 
-It uses these to remember you between conversations. The files are not shared with anyone and are not in this repository.
+It uses these to remember you between conversations. The database is not shared with anyone and is not in this repository. It also keeps the time of your recent messages and files for up to a day, to enforce the limits in `/help`.
 
 ## What the bot reads but does not store
 
@@ -40,7 +40,7 @@ The bot cannot answer without sending some of what you write to other services:
 - `/forget` deletes everything stored about you.
 - `/forget <text>` deletes the one fact that matches.
 
-Nothing is deleted on a timer. Your file stays until you run `/forget`, or until the person running the bot removes it.
+Nothing about you is deleted on a timer. Your rows stay until you run `/forget`, or until the person running the bot removes them.
 
 ## Questions
 

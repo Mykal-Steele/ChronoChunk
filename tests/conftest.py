@@ -34,6 +34,21 @@ class AsyncIterator:
         raise StopAsyncIteration
 
 
+@pytest.fixture(autouse=True)
+def database(tmp_path):
+    """Every test gets its own empty database, and the stores that sit on top of it start fresh."""
+    from src import channel_settings, database as database_module, usage_guard
+    db = database_module.Database(":memory:")
+    database_module.set_database(db)
+    usage_guard._shared_guard = None
+    channel_settings._shared_settings = None
+    yield db
+    database_module.set_database(None)
+    usage_guard._shared_guard = None
+    channel_settings._shared_settings = None
+    db.close()
+
+
 @pytest.fixture
 def fake_openai_response():
     """Simulates an OpenAI ChatCompletion response."""
@@ -113,9 +128,9 @@ def mock_bot_user():
 
 
 @pytest.fixture
-def channel_settings(tmp_path, monkeypatch):
-    """Channel switches kept in a temp file, in place of the bot's real settings."""
+def channel_settings(database, monkeypatch):
+    """Channel switches in the test database, in place of the bot's real settings."""
     from src import channel_settings as module
-    settings = module.ChannelSettings(str(tmp_path / "channel_settings.json"))
+    settings = module.ChannelSettings(database)
     monkeypatch.setattr(module, "_shared_settings", settings)
     return settings

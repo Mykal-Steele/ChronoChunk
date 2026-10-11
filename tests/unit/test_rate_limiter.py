@@ -83,3 +83,21 @@ def test_idle_users_are_dropped_from_memory(limiter, clock):
 def test_real_config_has_limits_for_chat_and_files():
     limits = RateLimiter()._limits
     assert {"chat", "file", "tldr", "default"} <= set(limits)
+
+
+def test_counts_survive_a_restart(limiter, clock):
+    limiter.check_rate_limit("1", "file")
+    restarted = RateLimiter()
+    restarted._limits = limiter._limits
+    with pytest.raises(RateLimitError):
+        restarted.check_rate_limit("1", "file")
+    clock["t"] += 3601
+    restarted.check_rate_limit("1", "file")
+
+
+def test_old_events_are_not_loaded_after_a_restart(limiter, clock, database):
+    limiter.check_rate_limit("1", "file")
+    clock["t"] += 2 * 86400
+    RateLimiter()
+    assert database.query("SELECT COUNT(*) AS n FROM rate_events")[0]["n"] == 0
+

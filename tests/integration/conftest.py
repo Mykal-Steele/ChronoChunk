@@ -13,7 +13,7 @@ def pipeline(tmp_path, mock_genai_client, mock_bot_user):
     with patch("src.user_data_manager.AsyncOpenAI") as mock_cls:
         mock_cls.return_value = mock_genai_client
         from src.user_data_manager import UserDataManager
-        udm = UserDataManager(data_dir=str(tmp_path))
+        udm = UserDataManager()
     udm.ai_client = mock_genai_client
     udm.deployment = "gpt-5-mini"
 

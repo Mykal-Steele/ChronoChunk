@@ -10,6 +10,26 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.5.0 (2026-10-11)
+
+### Changed
+
+- The bot keeps its data in one SQLite database, `state/chronochunk.db`, in place of loose JSON files: what it remembers about people, the AI spending ledger, the channel switches and the rate limit counts. SQLite runs inside the bot, so there is no extra server.
+- On first start the bot copies the old files into the database: every `user_data/<id>.json`, `state/ai_usage.json` and `state/channel_settings.json`. The old files are left where they are and are no longer read.
+- The spending ledger keeps a row per day and per model, where it used to keep one running total.
+- The message, file and recap limits survive a restart. A deploy used to hand everyone a fresh allowance.
+
+### Fixed
+
+- Two things changing one person's data at the same moment can no longer overwrite each other. Each change is its own small transaction. The workaround that kept `/forget` from being undone is replaced by a check inside the database.
+- A new like, dislike or belonging no longer deletes an older one. Only a new age or a new home replaces the old value.
+- A sentence that starts with "You are" is no longer mistaken for someone's age.
+
+### For whoever runs the bot
+
+- Nothing to do. The database is created in the `state` folder that already survives rebuilds.
+- To go back to 3.4.0, the JSON files are still there, as they were at the moment of the upgrade.
+
 ## 3.4.0 (2026-10-11)
 
 ### Added

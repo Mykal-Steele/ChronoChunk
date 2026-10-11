@@ -125,7 +125,7 @@ The bot can open links and search the web.
 
 ## Privacy
 
-The bot keeps a small file about each person it talks to: their last 20 messages to it, its answers, and facts it picked up. `/info` shows yours and `/forget` deletes it. [PRIVACY.md](PRIVACY.md) lists everything that is stored and which outside services receive your messages.
+The bot keeps a small record of each person it talks to: their last 20 messages to it, its answers, and facts it picked up. `/info` shows yours and `/forget` deletes it. [PRIVACY.md](PRIVACY.md) lists everything that is stored and which outside services receive your messages.
 
 ## AI budget and limits
 
@@ -140,7 +140,7 @@ The bot stops calling the model when it reaches its spending cap, and starts aga
 | `AI_CHAT_REASONING_EFFORT` | low | Reasoning effort for chat replies. Must be `none` for gpt-6-luna and gpt-5.6-luna, which do not take tool calls with reasoning on |
 | `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` | empty | A cheaper deployment, such as gpt-5-nano, for picking facts out of messages. Empty uses the main one |
 
-Set these in `.env`. Costs are estimated from token counts at gpt-5-mini prices and kept in `state/ai_usage.json`. `/usage` shows the current totals. Each reply also writes one log line with the images and files it read, the number of model calls and the estimated cost.
+Set these in `.env`. Costs are estimated from token counts and each model's price, and kept in the database, one row per day and model. `/usage` shows the current totals. Each reply also writes one log line with the images and files it read, the number of model calls and the estimated cost.
 
 Per user, the bot answers 50 messages per 30 minutes and makes 15 files per day, 2 per reply.
 
@@ -177,6 +177,7 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/app -w /app chronochunk:de
 - GitHub Actions runs the same tests on every pull request and on every push to `main` (`.github/workflows/tests.yml`).
 - Changes are made on a branch, such as `feature/web-search` or `fix/spotify-links`, and reach `main` through a pull request once the tests pass. The server runs `main`.
 - Packages are pinned. `requirements.in` lists what the bot imports and `requirements.txt` is built from it. To change a version, edit `requirements.in` and run the command at the top of that file. `requirements-dev.in` works the same way for the test packages.
+- Data is in one SQLite file, `state/chronochunk.db`. To look inside: `sqlite3 state/chronochunk.db ".tables"`. The schema is the `MIGRATIONS` list in `src/database.py`. To change it, add a new entry at the end.
 - Logs go to `logs/chronochunk.log`. A new file starts each day and files older than 30 days are deleted.
 
 ### Project structure
@@ -203,7 +204,10 @@ ChronoChunk/
 │   ├── web_tools.py           # Fetches pages and calls the search service
 │   ├── slash_commands.py      # Slash commands
 │   ├── command_handler.py     # Typed /tldr, /usage and /help
-│   ├── user_data_manager.py   # What is stored about each user
+│   ├── database.py            # The SQLite database and its schema
+│   ├── user_store.py          # What is stored about each user
+│   ├── user_data_manager.py   # Picks facts about users out of what they say
+│   ├── legacy_import.py       # One-time copy of the old JSON files into the database
 │   ├── usage_guard.py         # AI spending cap
 │   ├── rate_limiter.py        # Limits per user
 │   ├── music_manager.py       # Music
