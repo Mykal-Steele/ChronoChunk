@@ -10,6 +10,14 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.1.1 (2026-10-11)
+
+Nothing changes for people using the bot. What is sent to the model is identical to 3.1.0.
+
+### Changed
+
+- The things the model can do (make a document, draw a diagram, open a link, search the web) are separate tools in `src/tools/`, each with the same small interface. Before this they were branches inside the reply code. A new ability is a new file plus one line in `default_tools()`.
+
 ## 3.1.0 (2026-10-11)
 
 ### Added
