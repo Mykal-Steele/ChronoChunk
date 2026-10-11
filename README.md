@@ -190,9 +190,13 @@ ChronoChunk/
 │   ├── message_processor.py   # Decides which messages get an answer
 │   ├── message_handler.py     # Channel history and context
 │   ├── message_context.py     # Reads replies, images and files
-│   ├── ai_response_handler.py # Talks to the model and runs its tools
-│   ├── document_builder.py    # PDF, DOCX and diagrams
-│   ├── web_tools.py           # Web search and link reading
+│   ├── ai_response_handler.py # Talks to the model and runs the reply loop
+│   ├── tools/                 # What the model can do: one file per group of tools
+│   │   ├── base.py            # The interface every tool implements
+│   │   ├── documents.py       # create_document and create_diagram
+│   │   └── web.py             # open_url and web_search
+│   ├── document_builder.py    # Turns Markdown into PDF, DOCX and diagram images
+│   ├── web_tools.py           # Fetches pages and calls the search service
 │   ├── slash_commands.py      # Slash commands
 │   ├── command_handler.py     # Typed /tldr, /usage and /help
 │   ├── user_data_manager.py   # What is stored about each user
