@@ -1,5 +1,6 @@
 """Reads a Discord message's text, embeds and attachments so the AI can see them."""
 import asyncio
+import time
 import base64
 import io
 import logging
@@ -27,6 +28,9 @@ MAX_PDF_IMAGES = 10
 # A PDF that comes with page notes (see src/pdf_notes.py) gets more room for its own text,
 # because the notes replace its pictures
 NOTED_PDF_CHARS = 60000
+# One request waits this long in total for page descriptions, however many PDFs it has.
+# A PDF that is not ready by then is read the old way, and its descriptions are there next time.
+NOTES_WAIT_SECONDS = 90
 MAX_FILES = 4
 MAX_EMBED_CHARS = 1500
 PDF_TIMEOUT_SECONDS = 30
@@ -82,6 +86,8 @@ class _ImageBudget:
     """How many more images one request may load. It is used up as attachments are read."""
     images: int      # pictures attached directly
     pdf_images: int  # pictures taken out of PDFs
+    # When the wait for PDF page descriptions ends, for all the PDFs of one request together
+    notes_deadline: float = field(default_factory=lambda: time.monotonic() + NOTES_WAIT_SECONDS)
 
 
 def _items(value) -> list:
@@ -285,7 +291,9 @@ async def _read_attachment(attachment, budget: _ImageBudget,
     if kind == "pdf":
         # A PDF someone points at directly is described page by page from its page images.
         # In /tldr and for recent posts (max_chars set) it is read the short way.
-        notes = await page_notes(data, filename) if max_chars is None else None
+        notes = None
+        if max_chars is None and budget.notes_deadline > time.monotonic():
+            notes = await page_notes(data, filename, budget.notes_deadline - time.monotonic())
         if notes:
             max_chars = NOTED_PDF_CHARS
         try:

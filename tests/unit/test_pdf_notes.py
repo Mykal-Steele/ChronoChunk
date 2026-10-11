@@ -98,8 +98,38 @@ async def test_a_failed_request_only_loses_its_own_pages(describer, monkeypatch)
             raise RuntimeError("content filter")
         return "## Page fine", 0.0
     pdf_notes.set_describer(flaky)
-    notes = await pdf_notes.page_notes(_pdf(["picture", "picture"]), "deck.pdf")
+    data = _pdf(["picture", "picture"])
+    notes = await pdf_notes.page_notes(data, "deck.pdf")
     assert notes and "## Page fine" in notes
+    # an incomplete pass is not kept, so the next question tries the lost pages again
+    before = len(calls)
+    await pdf_notes.page_notes(data, "deck.pdf")
+    assert len(calls) > before
+
+
+async def test_a_caller_that_runs_out_of_time_gets_nothing_and_the_pass_still_finishes(describer):
+    release = asyncio.Event()
+
+    async def slow(prompt, images):
+        await release.wait()
+        return "## Page done", 0.0
+    pdf_notes.set_describer(slow)
+    data = _pdf(["picture"])
+    assert await pdf_notes.page_notes(data, "deck.pdf", wait_seconds=0.05) is None
+    release.set()
+    await asyncio.sleep(0.05)
+    assert await pdf_notes.page_notes(data, "deck.pdf", wait_seconds=0.05) == "## Page done"
+
+
+async def test_one_request_stops_waiting_for_notes_at_its_deadline(describer):
+    import time
+    from src import message_context as mc
+    from tests.fakes import fake_attachment
+    attachment = fake_attachment("deck.pdf", _pdf(["picture"]), "application/pdf")
+    budget = mc._ImageBudget(mc.MAX_IMAGES, mc.MAX_PDF_IMAGES, notes_deadline=time.monotonic() - 1)
+    lines, _ = await mc._read_attachment(attachment, budget)
+    assert "what each page shows" not in "\n".join(lines)
+    describer.assert_not_awaited()
 
 
 async def test_no_notes_when_the_budget_is_used_up(describer):

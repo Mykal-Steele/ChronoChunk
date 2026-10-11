@@ -121,12 +121,15 @@ async def _in_render_thread(function, *args):
     return await asyncio.to_thread(_locked, function, *args)
 
 
-async def _build(data: bytes, filename: str, mode: str) -> Optional[str]:
-    """Describe the pages of one PDF. Returns the descriptions, or None when there is nothing to add."""
+async def _build(data: bytes, filename: str, mode: str) -> Tuple[Optional[str], bool]:
+    """
+    Describe the pages of one PDF. Returns the descriptions (None when there is nothing
+    to add) and whether every page that should be described was.
+    """
     started = time.monotonic()
     pages = await _in_render_thread(_pages_to_describe, data, mode)
     if not pages:
-        return None
+        return None, True
 
     limit = asyncio.Semaphore(REQUESTS_AT_ONCE)
     costs: List[float] = []
@@ -157,8 +160,9 @@ async def _build(data: bytes, filename: str, mode: str) -> Optional[str]:
             logger.warning(f"Page notes for {filename}: pages {group[0] + 1} to {group[-1] + 1} failed: {error!r}")
         elif task.result():
             parts.append(task.result())
+    complete = len(parts) == len(groups)
     if not parts:
-        return None
+        return None, complete
 
     notes = "\n\n".join(parts)
     if len(notes) > NOTES_MAX_CHARS:
@@ -166,16 +170,20 @@ async def _build(data: bytes, filename: str, mode: str) -> Optional[str]:
     logger.info(
         f"Page notes for {filename}: described {len(pages)} pages in {len(groups)} requests, {len(notes)} chars, "
         f"about ${sum(costs):.4f}, took {time.monotonic() - started:.1f}s"
+        + ("" if complete else f", {len(groups) - len(parts)} requests failed")
     )
-    return notes
+    return notes, complete
 
 
-async def page_notes(data: bytes, filename: str) -> Optional[str]:
+async def page_notes(data: bytes, filename: str, wait_seconds: Optional[float] = None) -> Optional[str]:
     """
     What each page of a PDF shows, written from the page images. None when page notes
     are off, the PDF has nothing worth describing, or the pass failed. The first call
     for a file takes a while. The result is kept in memory, so later questions about
     the same file get it at once.
+
+    wait_seconds is how long this caller will wait. When it runs out the caller gets
+    None, and the pass carries on so the next question about the file finds it done.
     """
     mode = Config.PDF_PAGE_NOTES
     if _describe is None or mode not in ("auto", "on"):
@@ -192,19 +200,30 @@ async def page_notes(data: bytes, filename: str) -> Optional[str]:
     if running is None:
         running = asyncio.ensure_future(_build(data, filename, mode))
         _in_progress[key] = running
-        running.add_done_callback(lambda _: _in_progress.pop(key, None))
+        running.add_done_callback(lambda finished: _finish(key, finished))
     try:
-        notes = await asyncio.shield(running)
+        notes, _ = await asyncio.wait_for(asyncio.shield(running), wait_seconds)
+    except asyncio.TimeoutError:
+        logger.warning(f"Page notes for {filename} are not ready after {wait_seconds:.0f}s, answering without them")
+        return None
     except BudgetExceededError:
         logger.warning(f"Page notes for {filename} skipped: the AI budget is used up")
         return None
     except Exception as e:
         logger.error(f"Page notes for {filename} failed: {e!r}")
         return None
+    return notes
 
-    if notes:
+
+def _finish(key: str, finished: "asyncio.Future") -> None:
+    """Keep a finished pass for later questions. Runs even when nobody waited for it to end."""
+    _in_progress.pop(key, None)
+    if finished.cancelled() or finished.exception():
+        return
+    notes, complete = finished.result()
+    # A pass that lost pages to a rate limit or a slow model is used once and tried again next time
+    if notes and complete:
         _cache[key] = (time.monotonic(), notes)
         _cache.move_to_end(key)
         while len(_cache) > CACHE_FILES:
             _cache.popitem(last=False)
-    return notes
