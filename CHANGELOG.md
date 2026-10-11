@@ -10,6 +10,21 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.1.0 (2026-10-11)
+
+### Added
+
+- A second, cheaper model for work that happens behind the reply. Set `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` to a gpt-5-nano deployment and the bot picks facts out of messages with it. On a test set of 14 messages it found the same facts as gpt-5-mini, in 0.8 seconds against 2.8, at about one eighteenth of the cost. Without the setting nothing changes.
+- The spending cap prices each call by the model that answered it.
+
+### Changed
+
+- The music search rewrite uses low reasoning effort. It picked the same songs in testing and no longer runs into its 5 second limit. It stays on gpt-5-mini, because gpt-5-nano picked wrong songs.
+
+### For whoever runs the bot
+
+- Copy the new `deployment/docker-compose.yml` to the server. It sets `AZURE_OPENAI_BACKGROUND_DEPLOYMENT`.
+
 ## 3.0.1 (2026-10-11)
 
 ### Fixed

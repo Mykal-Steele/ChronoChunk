@@ -269,3 +269,25 @@ def test_data_loaded_after_a_forget_is_saved_normally(udm, tmp_path):
     stored = json.loads((tmp_path / f"{USER_ID}.json").read_text(encoding="utf-8"))
     assert stored["facts"] == [{"content": "likes dogs"}]
     assert not any(key.startswith("_") for key in stored)
+
+
+async def test_facts_are_extracted_with_the_main_model_by_default(udm, mock_openai_client, fake_openai_response):
+    fake_openai_response.choices[0].message.content = "[]"
+    await udm.extract_and_save_facts(USER_ID, "i really like hiking a lot", "TestUser")
+    call = mock_openai_client.chat.completions.create.call_args[1]
+    assert call["model"] == "gpt-5-mini" and call["reasoning_effort"] == "low"
+
+
+async def test_facts_use_the_background_model_when_one_is_set(tmp_path, mock_openai_client, fake_openai_response, monkeypatch):
+    from config.config import Config
+    monkeypatch.setattr(Config, "AI_BACKGROUND_DEPLOYMENT", "gpt-5-nano")
+    with patch("src.user_data_manager.AsyncOpenAI") as mock_cls:
+        mock_cls.return_value = mock_openai_client
+        from src.user_data_manager import UserDataManager
+        manager = UserDataManager(data_dir=str(tmp_path))
+    manager.ai_client = mock_openai_client
+    fake_openai_response.choices[0].message.content = '["You like hiking"]'
+    assert await manager.extract_and_save_facts(USER_ID, "i really like hiking a lot", "TestUser")
+    call = mock_openai_client.chat.completions.create.call_args[1]
+    assert call["model"] == "gpt-5-nano" and call["reasoning_effort"] == "minimal"
+

@@ -388,7 +388,7 @@ class AIResponseHandler:
         if request:
             request.model_seconds += time.monotonic() - called_at
             request.calls += 1
-            request.cost += UsageGuard.cost_of(getattr(resp, "usage", None))
+            request.cost += UsageGuard.cost_of(getattr(resp, "usage", None), kwargs["model"])
         return resp.choices[0].message
 
     async def generate_reply(self, query: str, conversation_history: str,

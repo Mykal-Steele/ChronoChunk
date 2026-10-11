@@ -114,19 +114,24 @@ class UsageGuard:
             raise BudgetExceededError("daily", date.fromordinal(today.toordinal() + 1))
 
     @staticmethod
-    def cost_of(usage: Any) -> float:
-        """Estimated USD cost of one response from its token usage."""
+    def prices_for(model: Optional[str]) -> tuple:
+        """(input, cached input, output) prices per 1M tokens for the model that answered."""
+        for name, prices in Config.AI_MODEL_PRICES.items():
+            if model and name in model:
+                return prices
+        return Config.AI_PRICE_INPUT_PER_M, Config.AI_PRICE_CACHED_INPUT_PER_M, Config.AI_PRICE_OUTPUT_PER_M
+
+    @staticmethod
+    def cost_of(usage: Any, model: Optional[str] = None) -> float:
+        """Estimated USD cost of one response from its token usage and the model that answered."""
         prompt = _as_int(getattr(usage, "prompt_tokens", 0))
         completion = _as_int(getattr(usage, "completion_tokens", 0))
         cached = _as_int(getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", 0))
         cached = min(cached, prompt)
-        return (
-            (prompt - cached) * Config.AI_PRICE_INPUT_PER_M
-            + cached * Config.AI_PRICE_CACHED_INPUT_PER_M
-            + completion * Config.AI_PRICE_OUTPUT_PER_M
-        ) / 1_000_000
+        input_price, cached_price, output_price = UsageGuard.prices_for(model)
+        return ((prompt - cached) * input_price + cached * cached_price + completion * output_price) / 1_000_000
 
-    def record(self, usage: Any) -> float:
+    def record(self, usage: Any, model: Optional[str] = None) -> float:
         """Add one response's cost to the totals. Returns the cost."""
         prompt = _as_int(getattr(usage, "prompt_tokens", 0))
         completion = _as_int(getattr(usage, "completion_tokens", 0))
@@ -134,7 +139,7 @@ class UsageGuard:
             return 0.0
 
         self._roll_over()
-        cost = self.cost_of(usage)
+        cost = self.cost_of(usage, model)
         self._state["cycle_cost"] += cost
         self._state["day_cost"] += cost
         self._state["requests"] += 1
@@ -165,7 +170,8 @@ class _GuardedCompletions:
     async def create(self, **kwargs):
         self._guard.check()
         response = await self._completions.create(**kwargs)
-        self._guard.record(getattr(response, "usage", None))
+        model = getattr(response, "model", None)
+        self._guard.record(getattr(response, "usage", None), model if isinstance(model, str) else kwargs.get("model"))
         return response
 
 
