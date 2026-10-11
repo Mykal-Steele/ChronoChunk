@@ -82,7 +82,7 @@ class SlashCommandManager:
         """Answer /info and /mydata. Only the person who asked sees it, because it lists personal facts."""
         try:
             summary = self.user_data_manager.get_user_summary(str(interaction.user.id), interaction.user.display_name)
-            if "I don't have any information" in summary or len(summary.strip().split('\n')) <= 3:
+            if "I don't have any information" in summary:
                 summary = "i dont know much about u yet. talk to me a bit and ill pick things up"
             await interaction.response.send_message(summary, ephemeral=True)
         except Exception as e:

@@ -33,7 +33,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-5-mini
 TAVILY_API_KEY=your_tavily_key
 ```
 
-`TAVILY_API_KEY` is optional. Without it the bot opens links but cannot search.
+`TAVILY_API_KEY` is optional. Without it the bot opens ordinary web pages but cannot search, and cannot read PDF links or pages that need JavaScript.
 
 3. In the Discord developer portal, turn on the Message Content and Server Members intents for the bot.
 
@@ -115,7 +115,7 @@ The bot can open links and search the web.
 - Give it a link with a request and it reads the page: `/sum up https://example.com/article`.
 - Ask about something recent, or tell it to look something up, and it searches: `/search the latest on X`. The answer ends with the links it used.
 - Ask for a file in the same message and the document is written from what it found: `/search X and make a one page pdf`.
-- Search uses [Tavily](https://tavily.com). Put the key in `.env` as `TAVILY_API_KEY`. Without a key the bot still opens links, but it cannot search.
+- Search uses [Tavily](https://tavily.com). Put the key in `.env` as `TAVILY_API_KEY`. Without a key the bot cannot search, and it opens ordinary pages only: PDF links and pages that need JavaScript are read through Tavily.
 - A page is downloaded from the bot's own server. When that fails or the page comes back nearly empty, Tavily reads it instead. That covers PDFs and most pages that need JavaScript.
 - One reply makes at most 4 lookups and each page is cut at 12,000 characters. The numbers are at the top of `src/web_tools.py` and `src/ai_response_handler.py`.
 - Links to the server itself, private networks and the cloud metadata address are refused.

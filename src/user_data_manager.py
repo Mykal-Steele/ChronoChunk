@@ -12,12 +12,18 @@ from config.ai_config import CONTRADICTION_CHECK_PROMPT, CORRECTION_PROMPT
 # Setup logger 
 logger = logging.getLogger(__name__)
 
+# Key added to a loaded copy of a user's data, never written to the file
+_LOADED_AT = "_loaded_at_forget_count"
+
+
 class UserDataManager:
     """Manages persistent user data storage and retrieval"""
     
     def __init__(self, data_dir=None, model=None):
         """Initialize the user data manager"""
         # Set data directory
+        # How many times each user ran /forget since the bot started
+        self._forget_count: Dict[str, int] = {}
         self.data_dir = data_dir or os.path.join(os.path.dirname(os.path.dirname(__file__)), "user_data")
         os.makedirs(self.data_dir, exist_ok=True)
         
@@ -44,7 +50,13 @@ class UserDataManager:
         return os.path.join(self.data_dir, f"{user_id}.json")
 
     def load_user_data(self, user_id: str, username: str = None) -> Dict[str, Any]:
-        """Load user data with consistent username handling"""
+        """Load a user's data. The copy is stamped so a save after /forget can be told apart and dropped."""
+        data = self._read_user_data(user_id, username)
+        data[_LOADED_AT] = self._forget_count.get(re.sub(r'[^0-9]', '', user_id), 0)
+        return data
+
+    def _read_user_data(self, user_id: str, username: str = None) -> Dict[str, Any]:
+        """Read the user's file, creating it on first use"""
         # Create file path
         file_path = self._get_user_file_path(user_id)
         
@@ -85,6 +97,10 @@ class UserDataManager:
 
     def forget_user(self, user_id: str) -> None:
         """Delete everything stored about a user: facts, topics and saved conversations."""
+        # A copy loaded before this point must not be written back. Fact extraction loads
+        # a user's data, waits seconds for the model, then saves.
+        key = re.sub(r'[^0-9]', '', user_id)
+        self._forget_count[key] = self._forget_count.get(key, 0) + 1
         try:
             os.remove(self._get_user_file_path(user_id))
         except FileNotFoundError:
@@ -96,6 +112,11 @@ class UserDataManager:
         # Sanitize Discord user ID for consistency 
         user_id = re.sub(r'[^0-9]', '', user_id)
         
+        # Loaded before a /forget: saving it would bring the deleted data back
+        if data.get(_LOADED_AT, self._forget_count.get(user_id, 0)) != self._forget_count.get(user_id, 0):
+            logger.info(f"Skipped saving user data for {user_id}, it was forgotten after this copy was loaded")
+            return
+
         # Update last interaction time
         data["last_interaction"] = datetime.now().isoformat()
         
@@ -104,8 +125,9 @@ class UserDataManager:
             # Ensure the directory exists
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
             
+            stored = {key: value for key, value in data.items() if key != _LOADED_AT}
             with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+                json.dump(stored, f, indent=2, ensure_ascii=False)
                 logger.info(f"Saved user data for {user_id}")
         except Exception as e:
             logger.error(f"Failed to save user data for {user_id}: {e}")
