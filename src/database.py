@@ -88,6 +88,15 @@ MIGRATIONS = [
     );
     CREATE INDEX page_notes_by_use ON page_notes(last_used_at);
     """,
+    """
+    -- What each custom emoji shows, written once from its picture
+    CREATE TABLE emoji_notes (
+        emoji_id   TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        note       TEXT NOT NULL,
+        created_at REAL NOT NULL
+    );
+    """,
 ]
 
 

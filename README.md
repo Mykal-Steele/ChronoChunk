@@ -5,7 +5,8 @@ A Discord bot with a personality. It chats, remembers things about the people it
 ## Features
 
 - Chat in the bot's own voice, with memory of who it is talking to
-- Uses the server's own emoji in chat, and never sends one that would show up broken
+- Uses the server's own emoji in chat, knows what each one shows, and never sends one that would show up broken
+- Reacts to a message with an emoji now and then, on top of its reply
 - Reads images, PDFs, text and code files, and sums up a channel with `/tldr`
 - Writes PDFs, Word files and diagrams
 - Opens web links and searches the web

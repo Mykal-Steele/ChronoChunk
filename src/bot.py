@@ -30,7 +30,7 @@ from src.version import __version__
 from src.web_server import WebServer
 from src.message_processor import MessageProcessor
 from src.music_manager import MusicManager
-from src import backups, pdf_notes, setup_info
+from src import backups, emoji_notes, pdf_notes, setup_info
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -79,6 +79,7 @@ class ChronoChunk(commands.Bot):
         
         # PDFs are described page by page with the same model and budget as chat
         pdf_notes.set_describer(self.ai_response_handler.describe_images)
+        emoji_notes.set_describer(self.ai_response_handler.describe_images)
 
         # Store a reference as ai_handler for compatibility
         self.ai_handler = self.ai_response_handler
@@ -113,6 +114,11 @@ class ChronoChunk(commands.Bot):
     
     def setup_event_handlers(self):
         """Setup all event handlers for the bot"""
+        @self.event
+        async def on_guild_emojis_update(guild, before, after):
+            # A new emoji gets its note as soon as the server adds it
+            self._emoji_notes_task = asyncio.create_task(emoji_notes.describe_missing([guild]))
+
         @self.event
         async def on_voice_state_update(member, before, after):
             try:
@@ -205,14 +211,10 @@ class ChronoChunk(commands.Bot):
             for guild in self.guilds:
                 logger.info(f"Connected to server: {guild.name} ({guild.id}) with {len(guild.members)} members")
                 
-            # Collect all server emojis the bot has access to
-            server_emojis = {}
-            for guild in self.guilds:
-                for emoji in guild.emojis:
-                    server_emojis[emoji.name] = str(emoji)
-            
-            # Log available emojis
-            logger.info(f"Collected {len(server_emojis)} custom emojis from {len(self.guilds)} servers")
+            # Look at every server emoji that has no note yet. It runs behind the bot, which is ready meanwhile.
+            emoji_count = sum(len(guild.emojis) for guild in self.guilds)
+            logger.info(f"{emoji_count} custom emoji across {len(self.guilds)} servers")
+            self._emoji_notes_task = asyncio.create_task(emoji_notes.describe_missing(list(self.guilds)))
             await self.music_manager.start_inactivity_checker()
 
         except Exception as e:

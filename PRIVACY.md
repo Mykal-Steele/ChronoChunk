@@ -17,6 +17,7 @@ It uses these to remember you between conversations. The database is not shared 
 - Other messages in a channel. The bot holds the last 40 per channel in memory so it can follow the conversation. They are never written to disk and are gone when the bot restarts.
 - Images, PDFs and files you point it at, and web pages it opens. They are read for the answer and not saved.
 - For a PDF, the bot writes a description of each page so it can answer about charts and tables. It keeps those descriptions in its database for 7 days after they were last used, so follow-up questions are fast and the same file does not have to be read again. A description is stored under a fingerprint of the file, with no filename and no link to who sent it. The PDF itself is not kept.
+- Server emoji. The bot looks at the picture of each custom emoji once and keeps a few words on what it shows, with the emoji's id and name. No message and no person is stored with it.
 
 ## Logs
 
@@ -29,6 +30,7 @@ The bot cannot answer without sending some of what you write to other services:
 | Service | What it gets | When |
 |---|---|---|
 | Microsoft Azure OpenAI | Your message, the recent channel messages, the facts stored about you, and any image or file you point the bot at | Every answer |
+| Microsoft Azure OpenAI | The picture and name of each custom server emoji | Once per new emoji |
 | Tavily | Your search words, and links the bot cannot open on its own | When the bot searches the web or opens a link |
 | The website behind a link | A normal page request from the bot's server | When you give the bot a link |
 | mermaid.ink, and kroki.io as a backup | The text of a diagram | When the bot draws a diagram |
