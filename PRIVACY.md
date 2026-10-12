@@ -16,7 +16,7 @@ It uses these to remember you between conversations. The database is not shared 
 
 - Other messages in a channel. The bot holds the last 40 per channel in memory so it can follow the conversation. They are never written to disk and are gone when the bot restarts.
 - Images, PDFs and files you point it at, and web pages it opens. They are read for the answer and not saved.
-- For a PDF, the bot writes a description of each page so it can answer about charts and tables. It keeps those descriptions in memory for up to 6 hours so follow-up questions are fast. They are never written to disk and are gone when the bot restarts.
+- For a PDF, the bot writes a description of each page so it can answer about charts and tables. It keeps those descriptions in its database for 7 days after they were last used, so follow-up questions are fast and the same file does not have to be read again. A description is stored under a fingerprint of the file, with no filename and no link to who sent it. The PDF itself is not kept.
 
 ## Logs
 

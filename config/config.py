@@ -67,6 +67,9 @@ class Config:
     # that has a picture, drawing or almost no text, from an image of the page. "on" describes
     # every page. "off" reads the text and the first few embedded pictures only.
     PDF_PAGE_NOTES = os.getenv("PDF_PAGE_NOTES", "auto").strip().lower()
+    # How many days a PDF's page descriptions are kept in the database after they were last
+    # used, so a restart does not mean reading every deck again. 0 keeps them in memory only.
+    PDF_NOTES_KEEP_DAYS = int(os.getenv("PDF_NOTES_KEEP_DAYS", 7))
 
     # A cheaper deployment for jobs that run behind the reply, such as picking facts out of a
     # message. Empty means those jobs use the main deployment.

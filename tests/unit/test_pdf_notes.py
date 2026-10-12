@@ -204,3 +204,79 @@ async def test_a_text_only_pdf_does_not_use_up_a_pdf_read(describer):
     assert await pdf_notes.page_notes(data, "report.pdf", gate=gate) is None
     gate.assert_not_called()
 
+
+# ── descriptions kept in the database ──────────────────────────────────────────
+
+async def test_descriptions_survive_a_restart(describer, database):
+    data = _pdf(["picture"])
+    first = await pdf_notes.page_notes(data, "deck.pdf")
+    pdf_notes.clear_cache()  # what a restart does to the memory copy
+    assert await pdf_notes.page_notes(data, "deck.pdf") == first
+    assert describer.await_count == 1
+    row = database.query("SELECT sha256, mode, notes FROM page_notes")[0]
+    assert row["mode"] == "auto" and len(row["sha256"]) == 64 and row["notes"] == first
+
+
+async def test_a_stored_description_costs_no_pdf_read(describer):
+    from unittest.mock import MagicMock
+    data = _pdf(["picture"])
+    await pdf_notes.page_notes(data, "deck.pdf")
+    pdf_notes.clear_cache()
+    gate = MagicMock()
+    await pdf_notes.page_notes(data, "deck.pdf", gate=gate)
+    gate.assert_not_called()
+
+
+async def test_stored_descriptions_expire_after_the_keep_time(describer, database, monkeypatch):
+    data = _pdf(["picture"])
+    await pdf_notes.page_notes(data, "deck.pdf")
+    pdf_notes.clear_cache()
+    eight_days = 8 * 86400
+    database.execute("UPDATE page_notes SET last_used_at = last_used_at - ?", (eight_days,))
+    await pdf_notes.page_notes(data, "deck.pdf")
+    assert describer.await_count == 2
+
+
+async def test_using_a_stored_description_keeps_it_alive(describer, database):
+    data = _pdf(["picture"])
+    await pdf_notes.page_notes(data, "deck.pdf")
+    pdf_notes.clear_cache()
+    database.execute("UPDATE page_notes SET last_used_at = last_used_at - ?", (6 * 86400,))
+    old = database.query("SELECT last_used_at FROM page_notes")[0]["last_used_at"]
+    await pdf_notes.page_notes(data, "deck.pdf")
+    assert database.query("SELECT last_used_at FROM page_notes")[0]["last_used_at"] > old
+    assert describer.await_count == 1
+
+
+async def test_only_the_most_recently_used_files_are_kept(describer, database, monkeypatch):
+    monkeypatch.setattr(pdf_notes, "STORED_FILES", 2)
+    for number in range(3):
+        pdf_notes._store(f"auto:{number:064d}", f"notes {number}")
+        database.execute("UPDATE page_notes SET last_used_at = last_used_at - 10")
+    kept = sorted(row["notes"] for row in database.query("SELECT notes FROM page_notes"))
+    assert kept == ["notes 1", "notes 2"]
+
+
+async def test_an_incomplete_pass_is_not_stored(describer, monkeypatch, database):
+    monkeypatch.setattr(pdf_notes, "PAGES_PER_REQUEST", 1)
+    calls = []
+
+    async def flaky(prompt, images):
+        calls.append(prompt)
+        if len(calls) == 1:
+            raise RuntimeError("rate limit")
+        return "## Page fine", 0.0
+    pdf_notes.set_describer(flaky)
+    await pdf_notes.page_notes(_pdf(["picture", "picture"]), "deck.pdf")
+    assert database.query("SELECT COUNT(*) AS n FROM page_notes")[0]["n"] == 0
+
+
+async def test_keep_days_zero_keeps_descriptions_in_memory_only(describer, database, monkeypatch):
+    monkeypatch.setattr(Config, "PDF_NOTES_KEEP_DAYS", 0)
+    data = _pdf(["picture"])
+    await pdf_notes.page_notes(data, "deck.pdf")
+    assert database.query("SELECT COUNT(*) AS n FROM page_notes")[0]["n"] == 0
+    pdf_notes.clear_cache()
+    await pdf_notes.page_notes(data, "deck.pdf")
+    assert describer.await_count == 2
+

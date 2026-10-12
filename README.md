@@ -87,7 +87,7 @@ Limits (also shown by `/help`):
 - Images up to 5 MB each, files up to 15 MB each.
 - 3 images and 4 files per message.
 - PDFs are read up to 150 pages. Long text files are cut at 30,000 characters.
-- The first question about a PDF takes longer, up to a minute for a long slide deck, while the bot looks at every page. Later questions about the same file are quick. Set `PDF_PAGE_NOTES` to `off` in `.env` to skip this and read only the text and the first 10 pictures, or to `on` to describe every page of every PDF.
+- The first question about a PDF takes longer, up to a minute for a long slide deck, while the bot looks at every page. Later questions about the same file are quick, for anyone, for 7 days after it was last used (`PDF_NOTES_KEEP_DAYS`). Set `PDF_PAGE_NOTES` to `off` in `.env` to skip this and read only the text and the first 10 pictures, or to `on` to describe every page of every PDF.
 - From recent posts: the last 5 messages, 30 minutes old at most, 2 images and 1 file (cut at 12,000 characters).
 - `/tldr`: 5 to 200 messages, plus the newest 6 images and 3 files in them (each cut at 6,000 characters), and 6 recaps per hour per user.
 - GIFs, videos, voice messages and Word, Excel or PowerPoint files are not read.
