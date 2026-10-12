@@ -14,6 +14,7 @@ import discord
 from pypdf import PdfReader
 from src.exceptions import RateLimitError
 from src.pdf_notes import page_notes
+from src.server_emoji import demote
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +103,9 @@ def _items(value) -> list:
 def _text(message) -> str:
     """A message's text with mentions shown as names (@Alex) instead of raw ids."""
     clean = getattr(message, "clean_content", None)
-    if isinstance(clean, str):
-        return clean.strip()
-    return message.content.strip() if isinstance(message.content, str) else ""
+    text = clean if isinstance(clean, str) else message.content if isinstance(message.content, str) else ""
+    # A custom emoji arrives as <:name:id>. The model reads and writes the short form, :name:
+    return demote(text).strip()
 
 
 def history_text(message, labels: Optional[dict] = None) -> str:

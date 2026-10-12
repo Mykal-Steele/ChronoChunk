@@ -205,7 +205,8 @@ class AIResponseHandler:
                              attached_context: str = "", images: Optional[List[str]] = None,
                              allow_files: bool = False,
                              file_gate: Optional[Callable[[], None]] = None,
-                             web_gate: Optional[Callable[[], None]] = None) -> Reply:
+                             web_gate: Optional[Callable[[], None]] = None,
+                             emoji_prompt: str = "") -> Reply:
         """
         Generate the bot's reply using Azure OpenAI chat completions.
 
@@ -214,7 +215,8 @@ class AIResponseHandler:
         With allow_files the model may also build documents and diagrams, which come
         back in Reply.files. file_gate is called before each file is made and raises
         RateLimitError when this user has made too many. web_gate does the same for
-        web searches and opened links.
+        web searches and opened links. emoji_prompt names the server emoji this reply
+        may use (EmojiSet.prompt()), empty for none.
         """
         images = images or []
 
@@ -249,7 +251,8 @@ class AIResponseHandler:
             request.ask_model = lambda model_messages, limit: self._chat(model_messages, limit, request=request)
             files = request.files
             messages = [
-                {"role": "system", "content": _SYSTEM_PROMPT + "".join(tool.prompt() for tool in offered)},
+                {"role": "system",
+                 "content": _SYSTEM_PROMPT + "".join(tool.prompt() for tool in offered) + emoji_prompt},
                 {"role": "user",   "content": user_content("\n\n".join(user_parts), images)}
             ]
             definitions = [tool.definition for tool in offered]

@@ -10,6 +10,19 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.12.0 (2026-10-12)
+
+### Added
+
+- The bot can use a server's own emoji in chat. It is told the names it may use and writes one as `:name:`, which is turned into the real emoji when the reply is sent. It uses the emoji of the server it is talking in, and those of its other servers where it has the Use External Emoji permission. A slash command answer also needs `@everyone` to have that permission, because Discord posts those through a webhook.
+- A reply shows one server emoji at most, and two emoji in all. After a reply with a server emoji, the bot's next three replies in that channel get none.
+
+### Fixed
+
+- A reply can no longer carry a broken emoji. Every reply is checked right before it is sent: an emoji name or id the bot cannot use there is taken out, and so is one the model cut short or made up. Before this, `:kekw:` went out as plain text, because the code that converted it was never called.
+- A long reply is no longer split through the middle of an emoji.
+- The chat history shows a custom emoji as `:name:` instead of its id, so the model does not copy ids.
+
 ## 3.11.0 (2026-10-12)
 
 ### Added

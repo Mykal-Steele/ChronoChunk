@@ -16,6 +16,7 @@ from src.timing import Stopwatch
 from src.user_data_manager import UserDataManager
 from src.channel_settings import get_channel_settings
 from src.message_context import build_attached_context, history_text, resolve_message_link
+from src.server_emoji import NO_EMOJI, QUIET_REPLIES, render, usable_emoji, used_custom_emoji
 import traceback
 from typing import List
 
@@ -279,7 +280,8 @@ is_correction: bool) -> None:
                 await message.channel.send(embed=cmd_response)
             elif isinstance(cmd_response, Reply):
                 # An answer from the AI, which may come with files
-                await self._send_reply(message, cmd_response.text, cmd_response.files)
+                # A recap or an answer about the channel is not chat, so it gets no server emoji
+                await self._send_reply(message, cmd_response.text, cmd_response.files, custom_emoji=False)
             elif cmd_response:
                 await self._safe_send(message.channel, cmd_response)
             else:
@@ -322,16 +324,20 @@ is_correction: bool) -> None:
                         recent = None
                     attached = await build_attached_context(message, referenced, self.bot.user.id,
                                                             linked=linked, recent=recent, pdf_gate=pdf_gate)
+                # Server emoji are offered only when the bot has not just used one in this channel
+                custom_emoji = self.custom_emoji_due(channel_id)
+                emoji = usable_emoji(message.channel, self.bot.guilds) if custom_emoji else NO_EMOJI
                 with watch.step("model and tools"):
                     reply = await self.ai_handler.generate_reply(
                         enriched_query, conversation_history, username, user_id,
                         attached_context=attached.text, images=attached.images,
-                        allow_files=True, file_gate=file_gate, web_gate=web_gate
+                        allow_files=True, file_gate=file_gate, web_gate=web_gate,
+                        emoji_prompt=emoji.prompt()
                     )
-                ai_response = reply.text
 
             with watch.step("send"):
-                await self._send_reply(message, ai_response, reply.files)
+                # What was sent, with any emoji written :name:, is what the history keeps
+                ai_response = await self._send_reply(message, reply.text, reply.files, custom_emoji=custom_emoji)
             # Everything they waited for is done. What follows runs after the answer is out.
             logger.info(f"Answered {username} in {watch.summary()}")
             await self._maybe_assign_chrono_role(message)
@@ -365,6 +371,10 @@ is_correction: bool) -> None:
                 split_at = limit
             chunk, text = text[:split_at], text[split_at:].lstrip()
             # A split inside a code block closes it here and reopens it in the next chunk
+            # A cut through the middle of a custom emoji would post it as broken text
+            torn = re.search(r'<[\w:]{0,60}$', chunk)
+            if torn and torn.start() > 0 and re.match(r'<a?:\w{2,32}:\d{15,22}>', chunk[torn.start():] + text[:60]):
+                chunk, text = chunk[:torn.start()], chunk[torn.start():] + text
             if chunk.count('```') % 2 == 1:
                 chunk += '\n```'
                 text = '```\n' + text
@@ -378,14 +388,22 @@ is_correction: bool) -> None:
         for chunk in self._split_text(text):
             await channel.send(chunk, allowed_mentions=NO_PINGS)
 
-    async def _send_reply(self, message: discord.Message, text: str, files=None) -> None:
+    def custom_emoji_due(self, channel_id: str) -> bool:
+        """False while one of the bot's last few replies in the channel had a server emoji, so they stay rare."""
+        return not any(used_custom_emoji(text)
+                       for text in self.message_handler.recent_bot_replies(channel_id, QUIET_REPLIES))
+
+    async def _send_reply(self, message: discord.Message, text: str, files=None, custom_emoji: bool = True) -> str:
         """
         Send the answer as a Discord reply to the message that asked, splitting long
-        text. files are BuiltFile objects, uploaded with the first chunk.
+        text. files are BuiltFile objects, uploaded with the first chunk. Emoji names
+        in the text become server emoji the bot can use here, and any other is taken
+        out. Returns the text as the chat history should keep it.
         """
-        chunks = self._split_text(text)
+        shown = render(text, usable_emoji(message.channel, self.bot.guilds), custom_allowed=custom_emoji)
+        chunks = self._split_text(shown.text)
         if not chunks and not files:
-            return
+            return shown.plain
         first = chunks[0] if chunks else None
 
         def extras() -> dict:
@@ -401,6 +419,7 @@ is_correction: bool) -> None:
             await message.channel.send(first, allowed_mentions=NO_PINGS, **extras())
         for chunk in chunks[1:]:
             await message.channel.send(chunk, allowed_mentions=NO_PINGS)
+        return shown.plain
 
     async def _discord_error_response(self, channel, error: discord.HTTPException) -> None:
         """Natural in-character response for specific Discord API errors."""
