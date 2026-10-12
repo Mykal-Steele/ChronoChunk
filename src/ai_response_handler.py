@@ -79,6 +79,8 @@ class Reply:
     """What the bot sends back: the chat text and any files it made along the way."""
     text: str
     files: List[BuiltFile] = field(default_factory=list)
+    # False when the text is a stand-in for an answer the model could not give (no budget, an error, a filter)
+    ok: bool = True
 
 
 class AIResponseHandler:
@@ -335,17 +337,17 @@ class AIResponseHandler:
 
         except BudgetExceededError as e:
             logger.warning(f"AI call skipped: {e}")
-            return Reply(self._budget_response(e))
+            return Reply(self._budget_response(e), ok=False)
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error generating AI response: {error_msg}")
             if "429" in error_msg or "quota" in error_msg.lower() or "rate" in error_msg.lower():
                 fallback = self.fallback_responses[0]
                 self.fallback_responses.rotate(1)
-                return Reply(fallback)
+                return Reply(fallback, ok=False)
             if "content_filter" in error_msg or "content management policy" in error_msg.lower():
-                return Reply(self._content_filter_response(error_msg))
-            return Reply("my brain just glitched fr, try again in a sec 💀")
+                return Reply(self._content_filter_response(error_msg), ok=False)
+            return Reply("my brain just glitched fr, try again in a sec 💀", ok=False)
 
     @staticmethod
     def _log_reply(request: Turn, reply: Reply) -> None:

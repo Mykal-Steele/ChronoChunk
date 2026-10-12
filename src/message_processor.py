@@ -10,6 +10,7 @@ from src.ai_response_handler import AIResponseHandler, Reply
 from config.config import Config
 from src import usage_context
 from src.command_handler import CommandHandler
+from src.conversation import UNCALLED_NOTE, Conversation, stays_out
 from src.exceptions import RateLimitError
 from src.message_handler import MessageHandler
 from src.rate_limiter import RateLimiter
@@ -31,6 +32,8 @@ HISTORY_FETCH_LIMIT = 15
 
 # The bot quotes and sums up other people's messages, so what it sends must never ping anyone
 NO_PINGS = discord.AllowedMentions.none()
+# Pings the person a reply is for and nobody else. Used when several people are talking to the bot at once.
+PING_AUTHOR = discord.AllowedMentions(everyone=False, users=False, roles=False, replied_user=True)
 
 # Stands in for the text when someone only pings the bot or types a bare /chat
 NO_TEXT = "(no text, they just want u to look at what they replied to or attached)"
@@ -114,6 +117,8 @@ class MessageProcessor:
         self.text_commands = text_commands
         # channel id -> when the bot last put a reaction on a message there
         self._last_reaction: dict = {}
+        # Who is talking to the bot in each channel right now
+        self.conversation = Conversation()
     
     async def process_message(self, message: discord.Message) -> None:
         """Process an incoming Discord message - Properly capture ALL channel messages"""
@@ -160,8 +165,9 @@ class MessageProcessor:
                                     self._strip_bot_mention(content), user_data, referenced)
                 return
                 
-            # If we get here, message is neither a command, a reply to the bot nor a ping
-            # Ignore for processing but we've already captured it in history
+            # Neither a command, a reply to the bot nor a ping. The bot may still answer it when
+            # someone was talking to it here a moment ago.
+            await self._maybe_join_in(message, username, channel_id, content, referenced)
 
         except Exception as e:
             logger.error(f"Error processing message: {e}")
@@ -243,6 +249,7 @@ class MessageProcessor:
                 await self._safe_send(message.channel, f"slow down, u hit the message limit. try again in about {minutes} min")
                 return
 
+        self.conversation.called(channel_id, user_id)
         with watch.step("history"):
             recent = await self.sync_channel_history(message.channel)
             conversation_history = self.message_handler.build_conversation_context(
@@ -343,8 +350,10 @@ is_correction: bool) -> None:
                     )
 
             with watch.step("send"):
+                # With several people talking to the bot at once, the answer pings the one it is for
                 shown = await self._send_reply(message, reply.text, reply.files, custom_emoji=custom_emoji,
-                                               listing=asked_about_emoji(query))
+                                               listing=asked_about_emoji(query),
+                                               ping=self.conversation.is_crowd(channel_id))
                 # What was sent, with any emoji written :name:, is what the history keeps
                 ai_response = shown.plain
             if may_react:
@@ -404,6 +413,44 @@ is_correction: bool) -> None:
         return not any(used_custom_emoji(text)
                        for text in self.message_handler.recent_bot_replies(channel_id, QUIET_REPLIES))
 
+    async def _maybe_join_in(self, message: discord.Message, username: str, channel_id: str,
+                             content: str, referenced: Optional[discord.Message]) -> None:
+        """
+        Weigh a message nobody addressed to the bot, and answer it when the model thinks
+        a person in the chat would. Only for a short while after someone called the bot
+        here. Nothing is saved about the person, and no one's own AI limit pays for it.
+        """
+        if not content.strip() or not self.conversation.may_join_in(channel_id):
+            return
+        # Someone answering another person, or pinging one, is talking to them
+        if referenced is not None or getattr(message, "mentions", None) or getattr(message, "role_mentions", None):
+            return
+        self.conversation.start_deciding(channel_id)
+        answered = False
+        try:
+            usage_context.set_user("")
+            usage_context.label("join_in")
+            await self.sync_channel_history(message.channel)
+            history = self.message_handler.build_conversation_context(channel_id=channel_id, user_data={})
+            custom_emoji = self.custom_emoji_due(channel_id)
+            emoji = usable_emoji(message.channel, self.bot.guilds)
+            reply = await self.ai_handler.generate_reply(
+                content, history, username, None,
+                attached_context=UNCALLED_NOTE.format(name=username), emoji_prompt=emoji.prompt())
+            # A stand-in for a failed answer is for someone who asked. Nobody did.
+            if not reply.ok or stays_out(reply.text):
+                return
+            shown = await self._send_reply(message, reply.text, custom_emoji=custom_emoji)
+            answered = True
+            self.message_handler.update_channel_history(
+                channel_id=channel_id, user_id=str(self.bot.user.id),
+                username="ChronoChunk", content=shown.plain, is_bot=True)
+            logger.info(f"Joined in on a message from {username} in channel {channel_id}")
+        except Exception as e:
+            logger.warning(f"Could not weigh an uncalled message: {e!r}")
+        finally:
+            self.conversation.done_deciding(channel_id, answered)
+
     def reaction_due(self, channel_id: str) -> bool:
         """False for a while after the bot put a reaction on a message in the channel."""
         last = self._last_reaction.get(channel_id)
@@ -431,14 +478,15 @@ is_correction: bool) -> None:
                 self._last_reaction[channel_id] = before
 
     async def _send_reply(self, message: discord.Message, text: str, files=None,
-                          custom_emoji: bool = True, listing: bool = False) -> Rendered:
+                          custom_emoji: bool = True, listing: bool = False, ping: bool = False) -> Rendered:
         """
         Send the answer as a Discord reply to the message that asked, splitting long
         text. files are BuiltFile objects, uploaded with the first chunk. Emoji names
         in the text become server emoji the bot can use here, and any other is taken
         out. listing is for an answer to someone who asked about the emoji, which may
-        show several. Returns what was sent, which also has the text as the chat history
-        should keep it and the reaction the model asked for.
+        show several. With ping the person who asked is notified, and nobody else ever
+        is. Returns what was sent, which also has the text as the chat history should
+        keep it and the reaction the model asked for.
         """
         shown = render(text, usable_emoji(message.channel, self.bot.guilds), custom_allowed=custom_emoji,
                        listing=listing)
@@ -454,7 +502,8 @@ is_correction: bool) -> None:
             return {"files": [discord.File(io.BytesIO(f.data), filename=f.filename) for f in files]}
 
         try:
-            await message.reply(first, mention_author=False, allowed_mentions=NO_PINGS, **extras())
+            await message.reply(first, mention_author=ping, allowed_mentions=PING_AUTHOR if ping else NO_PINGS,
+                                **extras())
         except discord.HTTPException:
             # Replying failed (message deleted, or no permission), so send it as a plain message
             await message.channel.send(first, allowed_mentions=NO_PINGS, **extras())

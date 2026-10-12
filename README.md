@@ -108,6 +108,7 @@ Everything else uses the default from `config/config.py` unless `.env` sets it:
 | `PDF_PAGE_NOTES` | `auto` | `auto`, `on` or `off`: whether the bot describes PDF pages from pictures of them |
 | `PDF_NOTES_KEEP_DAYS` | 7 | Days a PDF's page descriptions are kept |
 | `LOG_RETENTION_DAYS` | 30 | Days a log file is kept |
+| `JOIN_IN_SECONDS` | 30 | Seconds after a call in which the bot may answer a message nobody addressed to it. 0 turns it off. |
 | `TEST_BOT_ID`, `TEST_CHANNEL_ID` | empty | For testing the live bot: the one other bot it answers, and the one channel it answers it in. Both must be set. |
 
 The message, file, PDF, web and recap limits are in `RATE_LIMITS` in the same file.
@@ -155,6 +156,8 @@ Slash commands:
 - `/help` - Show every command and the limits below
 - `/code` - Link to this repository
 - The music commands are listed under [Music commands](#music-commands).
+
+For 30 seconds after someone calls the bot in a channel, it may also answer a message there that nobody addressed to it, when it fits the conversation. When several people talk to it at once, its answer pings the person it is for.
 
 You can also type to the bot without picking a slash command. A message that starts with `/`, a ping, or a reply to one of its messages is chat. `/tldr`, `/usage`, `/model`, `/setup`, `/stats` and `/help` work typed as well.
 

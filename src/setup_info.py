@@ -101,6 +101,8 @@ def setup_summary(chat_model: str) -> str:
         ("pdf pages", f"{Config.PDF_PAGE_NOTES}, kept {Config.PDF_NOTES_KEEP_DAYS} days"),
         ("web search", "on" if Config.TAVILY_API_KEY else "off, no search key"),
         ("test bot", "answered in one test channel" if Config.TEST_BOT_ID and Config.TEST_CHANNEL_ID else "off"),
+        ("joins in", f"may answer uncalled messages for {Config.JOIN_IN_SECONDS}s after a call"
+                     if Config.JOIN_IN_SECONDS > 0 else "off"),
         ("", ""),
         ("bot budget", f"${Config.AI_MONTHLY_BUDGET_USD:g} a month, ${Config.AI_DAILY_BUDGET_USD:g} a day, "
                        f"new month on day {Config.AI_BUDGET_RESET_DAY}"),
