@@ -182,6 +182,8 @@ class ChronoChunk(commands.Bot):
     async def on_ready(self):
         """Called when the bot is ready to receive events"""
         try:
+            # on_ready only fires once the bot has logged in
+            assert self.user is not None
             logger.info(f"Logged in as {self.user.name} ({self.user.id})")
             logger.info(f"Connected to {len(self.guilds)} servers")
             
@@ -205,13 +207,7 @@ class ChronoChunk(commands.Bot):
             # Log available emojis
             logger.info(f"Collected {len(server_emojis)} custom emojis from {len(self.guilds)} servers")
             await self.music_manager.start_inactivity_checker()
-            # Store emoji info in your AI handler
-            self.ai_handler.server_emojis = list(server_emojis.keys())
-            
-            # Also pass to message processor if needed
-            if hasattr(self, 'message_processor'):
-                self.message_processor.server_emojis = server_emojis
-                
+
         except Exception as e:
             logger.error(f"Error in on_ready: {e}")
     
@@ -237,7 +233,7 @@ class ChronoChunk(commands.Bot):
         # Generate error ID for tracking
         error_id = f"ERR-{int(time.time())}"
         
-        logger.error(f"Error ID {error_id} | Unhandled exception in {event}: {error_type.__name__}: {error}")
+        logger.error(f"Error ID {error_id} | Unhandled exception in {event}: {getattr(error_type, '__name__', 'unknown')}: {error}")
         logger.error("".join(traceback.format_tb(tb)))
         
         if event == 'on_message' and len(args) > 0:
@@ -295,6 +291,8 @@ def shutdown_bot():
 def main() -> None: 
     """Start up the bot"""
     try:
+        if not DISCORD_TOKEN:
+            raise ValueError("DISCORD_TOKEN is not set")
         bot = ChronoChunk()
         bot.run(DISCORD_TOKEN, log_handler=None)  # logging is already set up in run.py
     except Exception as e:

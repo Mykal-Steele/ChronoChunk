@@ -106,6 +106,8 @@ async def write_document(fmt: str, title: str, brief: str, turn: Turn, max_pages
         "line before and after each heading, list, table and code block."
     )
 
+    if turn.ask_model is None:
+        raise DocumentError("the writer is not set up for this reply")
     with usage_context.feature("document"):
         message = await turn.ask_model(
             [

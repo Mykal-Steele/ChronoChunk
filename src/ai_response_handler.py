@@ -201,7 +201,7 @@ class AIResponseHandler:
         return (message.content if isinstance(message.content, str) else ""), counter.cost
 
     async def generate_reply(self, query: str, conversation_history: str,
-                             username: str, user_id: str = None,
+                             username: str, user_id: Optional[str] = None,
                              attached_context: str = "", images: Optional[List[str]] = None,
                              allow_files: bool = False,
                              file_gate: Optional[Callable[[], None]] = None,
@@ -356,7 +356,7 @@ class AIResponseHandler:
         )
 
     async def generate_response(self, query: str, conversation_history: str,
-                                username: str, user_id: str = None,
+                                username: str, user_id: Optional[str] = None,
                                 attached_context: str = "", images: Optional[List[str]] = None) -> str:
         """Text-only reply, for callers that cannot send files."""
         reply = await self.generate_reply(query, conversation_history, username, user_id,

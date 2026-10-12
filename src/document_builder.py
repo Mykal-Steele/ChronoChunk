@@ -374,7 +374,7 @@ async def _fetch_diagram(url: str, service: str, timeout_seconds: int = MERMAID_
                 status = response.status
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         logger.warning(f"Diagram renderer {service} unreachable: {e!r}")
-        raise DocumentError(f"the diagram renderer ({service}) could not be reached, try again later")
+        raise DocumentError(f"the diagram renderer ({service}) could not be reached, try again later") from e
 
     if status == 400:
         detail = body.decode("utf-8", errors="replace").strip()[:600]
@@ -389,7 +389,7 @@ async def _fetch_diagram(url: str, service: str, timeout_seconds: int = MERMAID_
         Image.open(io.BytesIO(body)).load()
     except Exception as e:
         logger.warning(f"Diagram renderer {service} returned a broken image: {e!r}")
-        raise DocumentError(f"the diagram renderer ({service}) returned a broken image, try again later")
+        raise DocumentError(f"the diagram renderer ({service}) returned a broken image, try again later") from e
     return body
 
 
@@ -411,7 +411,8 @@ async def _render_diagrams(markdown: str, workdir: str) -> Tuple[str, List[str]]
             logger.warning(f"Diagram {index + 1} left as code: {e}")
             continue
         name = f"diagram-{index + 1}.png"
-        with open(os.path.join(workdir, name), "wb") as f:
+        # A diagram is a few hundred KB written to a temp folder, too quick to need a thread
+        with open(os.path.join(workdir, name), "wb") as f:  # noqa: ASYNC230
             f.write(png)
         images.append(name)
         rendered[match.group(0)] = f"![]({name})"
@@ -433,7 +434,7 @@ async def _run_pandoc(markdown: str, workdir: str, images: List[str], extra_args
         stdout, stderr = await asyncio.wait_for(process.communicate(markdown.encode("utf-8")), PANDOC_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
         process.kill()
-        raise DocumentError("converting the document took too long")
+        raise DocumentError("converting the document took too long") from None
     if process.returncode != 0:
         logger.error(f"pandoc failed ({process.returncode}): {stderr.decode('utf-8', errors='replace')[:500]}")
         raise DocumentError("the document could not be converted")
@@ -498,8 +499,10 @@ def _html_to_pdf(body_html: str, title: str, workdir: str, max_pages: Optional[i
         document = HTML(string=page, base_url=workdir + os.sep, url_fetcher=fetcher).render()
         normal = normal or document
         if not max_pages or len(document.pages) <= max_pages:
-            return document.write_pdf()
-    return normal.write_pdf()
+            return document.write_pdf() or b""
+    # PDF_FIT_STEPS is never empty, so the loop ran at least once
+    assert normal is not None
+    return normal.write_pdf() or b""
 
 
 async def build_document(fmt: str, title: str, markdown: str, max_pages: Optional[int] = None) -> BuiltFile:
@@ -536,10 +539,10 @@ async def build_document(fmt: str, title: str, markdown: str, max_pages: Optiona
                         asyncio.to_thread(_html_to_pdf, body_html, title, workdir, max_pages), PDF_TIMEOUT_SECONDS
                     )
                 except asyncio.TimeoutError:
-                    raise DocumentError("laying out the pdf took too long")
+                    raise DocumentError("laying out the pdf took too long") from None
                 except Exception as e:
                     logger.error(f"PDF layout failed: {e!r}")
-                    raise DocumentError("the pdf could not be laid out")
+                    raise DocumentError("the pdf could not be laid out") from e
 
     if len(data) > MAX_FILE_BYTES:
         raise DocumentError(f"the finished file is {len(data) / (1024 * 1024):.1f} MB, too big to upload to discord")

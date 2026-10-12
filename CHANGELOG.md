@@ -10,6 +10,17 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.7.1 (2026-10-12)
+
+### Fixed
+
+- `/music` and `/relate` in a DM answer that you have to be in a voice channel. Before, they failed with "something broke".
+- A song that ends just after the bot leaves the voice channel no longer raises an error in the player.
+
+### Changed
+
+- Every pull request is checked by a linter (ruff) and a type checker (pyright) before the tests run. Their first pass found the two problems above. Settings are in `pyproject.toml`.
+
 ## 3.7.0 (2026-10-12)
 
 ### Changed

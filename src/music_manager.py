@@ -6,7 +6,7 @@ import logging
 import re
 import os
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import yt_dlp
 
 from src import usage_context
@@ -65,6 +65,7 @@ class GuildMusicState:
         self.is_paused = False
         self.loop = False
         self.last_activity = time.time()  # Track when the last activity occurred
+        self.alone_since: Optional[float] = None  # when the last person left the voice channel
 
 class MusicManager:
     """Manages music playback across all guilds"""
@@ -133,7 +134,7 @@ class MusicManager:
                 for guild_id, state in list(self.guild_music_states.items()):
                     if state.voice_client and state.voice_client.is_connected():
                         # Check if bot is alone in the voice channel too long
-                        if hasattr(state, 'alone_since') and current_time - state.alone_since > 600:  # 10 minutes
+                        if state.alone_since is not None and current_time - state.alone_since > 600:  # 10 minutes
                             logger.info(f"Bot has been alone in guild {guild_id} for 10 minutes, disconnecting")
                             await self.leave_voice_channel(guild_id)
                         
@@ -191,7 +192,7 @@ class MusicManager:
 
         return spotify_query_from_page(page) or fallback
 
-    async def extract_info(self, url: str, requested_by: str = None) -> Tuple[str, str, int]:
+    async def extract_info(self, url: str, requested_by: Optional[str] = None) -> Tuple[str, str, int]:
         """Extract audio URL, title and duration from a YouTube or Spotify URL or search query"""
         logger.info(f"Extracting info for: {url}")
         
@@ -237,9 +238,9 @@ class MusicManager:
                 'match_filter': lambda info_dict: None if info_dict.get('availability') == 'subscriber_only' else None if 'members only' in info_dict.get('title', '').lower() else None if info_dict.get('premium') is True else True,
             }
             
-            with yt_dlp.YoutubeDL(options) as ydl:
+            with yt_dlp.YoutubeDL(options) as ydl:  # pyright: ignore[reportArgumentType]
                 logger.info(f"Extracting info with yt-dlp for: {search_url}")
-                info = await asyncio.get_event_loop().run_in_executor(
+                info: Any = await asyncio.get_event_loop().run_in_executor(
                     None, lambda: ydl.extract_info(search_url, download=False)
                 )
                 
@@ -285,9 +286,8 @@ class MusicManager:
             # Update activity timestamp whenever there's user interaction
             self.update_activity(guild_id)
             
-            # If state had an alone_since attribute, remove it since there's user activity
-            if hasattr(state, 'alone_since'):
-                delattr(state, 'alone_since')
+            # There's user activity, so the bot is no longer counted as alone
+            state.alone_since = None
             
             # Rest of the method remains the same
             logger.info(f"Attempting to play: {url} (requested by {requested_by})")
@@ -348,11 +348,6 @@ class MusicManager:
         state.current_song = next_song
             
         try:
-            # Simplified FFmpeg options to improve reliability
-            ffmpeg_options = {
-                'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-                'options': '-vn'  # Simplified options: just disable video
-            }
 
             logger.info(f"Playing URL: {next_song.url[:100]}... with FFmpeg at {self.ffmpeg_path}")
             
@@ -360,12 +355,16 @@ class MusicManager:
             audio_source = discord.FFmpegPCMAudio(
                 next_song.url,
                 executable=self.ffmpeg_path,
-                **ffmpeg_options
+                before_options='-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+                options='-vn',  # just disable video
             )
             
             # Apply volume transformation
             audio_source = discord.PCMVolumeTransformer(audio_source, volume=state.volume)
             
+            # Read now, because the voice client can be gone by the time the song ends
+            loop = state.voice_client.loop
+
             def after_playing(error):
                 if error:
                     logger.error(f"Error playing audio: {error}")
@@ -373,10 +372,7 @@ class MusicManager:
                     logger.info("Song finished playing normally")
                 
                 # Schedule next song in the event loop
-                asyncio.run_coroutine_threadsafe(
-                    self._play_next(guild_id), 
-                    state.voice_client.loop
-                )
+                asyncio.run_coroutine_threadsafe(self._play_next(guild_id), loop)
             
             # Start playing
             state.voice_client.play(audio_source, after=after_playing)
@@ -450,8 +446,9 @@ class MusicManager:
         
         state.volume = volume
         
-        if state.voice_client.source:
-            state.voice_client.source.volume = volume
+        source = state.voice_client.source
+        if isinstance(source, discord.PCMVolumeTransformer):
+            source.volume = volume
             
         return True, f"Volume set to {int(volume * 100)}%"
     
@@ -471,8 +468,7 @@ class MusicManager:
             state.is_playing = False
             state.current_song = None
             state.is_paused = False
-            if hasattr(state, 'alone_since'):
-                delattr(state, 'alone_since')
+            state.alone_since = None
             
             logger.info(f"Left voice channel in guild {guild_id}")
             return True
@@ -491,8 +487,6 @@ class MusicManager:
     
     async def get_related_song(self, guild_id: int, requested_by: str) -> Tuple[bool, str]:
         """Get a related song based on YouTube's recommendations for the currently playing song"""
-        state = self.get_guild_music_state(guild_id)
-        
         # Update activity timestamp
         self.update_activity(guild_id)
         
@@ -520,9 +514,9 @@ class MusicManager:
                     'no_warnings': True
                 }
                 
-                with yt_dlp.YoutubeDL(options) as ydl:
+                with yt_dlp.YoutubeDL(options) as ydl:  # pyright: ignore[reportArgumentType]
                     logger.info(f"Searching YouTube for: {current_song.title}")
-                    search_results = await asyncio.get_event_loop().run_in_executor(
+                    search_results: Any = await asyncio.get_event_loop().run_in_executor(
                         None, lambda: ydl.extract_info(f"ytsearch1:{current_song.title}", download=False)
                     )
                     
@@ -547,7 +541,7 @@ class MusicManager:
                 'match_filter': lambda info_dict: None if info_dict.get('availability') == 'subscriber_only' else None if 'members only' in info_dict.get('title', '').lower() else None if info_dict.get('premium') is True else True,
             }
             
-            with yt_dlp.YoutubeDL(options) as ydl:
+            with yt_dlp.YoutubeDL(options) as ydl:  # pyright: ignore[reportArgumentType]
                 logger.info(f"Getting recommendations for video ID: {video_id}")
                 
                 # Get video info without downloading
@@ -597,7 +591,7 @@ class MusicManager:
         state.queue = []
         return True
 
-    async def _enhance_search_query(self, query: str, requested_by: str = None) -> str:
+    async def _enhance_search_query(self, query: str, requested_by: Optional[str] = None) -> str:
         """Use AI to enhance music search queries"""
         try:
             # Check if query already contains clear indicators it's a game soundtrack

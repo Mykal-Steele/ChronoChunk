@@ -1,6 +1,5 @@
 """Unit tests for MessageHandler — Discord objects are mocked."""
 import pytest
-from unittest.mock import MagicMock, AsyncMock
 from src.message_handler import MessageHandler
 from config.config import Config
 

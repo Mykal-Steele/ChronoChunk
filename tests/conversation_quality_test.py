@@ -190,7 +190,6 @@ async def run_tests():
 
     # ── Summary ───────────────────────────────────────────────────
     print("\n" + "=" * 60)
-    total = 10 + 2 + 1 + 2 + 2 + 1 + 1 + 2 + 1 + 2  # rough count
     if failures:
         print(f"RESULT: {len(failures)} check(s) FAILED:")
         for f in failures:

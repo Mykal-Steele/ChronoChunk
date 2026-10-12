@@ -9,6 +9,7 @@ __pycache__/
 .gitignore
 tests/
 pytest.ini
+pyproject.toml
 *.log
 .idea/
 .vscode/

@@ -72,7 +72,7 @@ class GameManager:
         logger.info(f"User {user_id} lost their game")
         return False, f"rip game over 💀 it was {game.secret_number}, better luck next time"
         
-    def get_active_game(self, user_id: int, channel_id: str = None) -> Optional[GameState]:
+    def get_active_game(self, user_id: int, channel_id: Optional[str] = None) -> Optional[GameState]:
         """Get a user's current game state if they have one"""
         return self.active_games.get(user_id)
 

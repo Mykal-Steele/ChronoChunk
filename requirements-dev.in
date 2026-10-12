@@ -1,6 +1,9 @@
-# What the tests need on top of requirements.txt. requirements-dev.txt is built from this file:
+# What the tests and the checks in CI need on top of requirements.txt. requirements-dev.txt is built from this file:
 #   docker run --rm -v "$PWD":/work -w /work python:3.12-slim sh -c \
 #     "pip install -q pip-tools && pip-compile -q --strip-extras requirements-dev.in"
 -c requirements.txt
 pytest==9.1.1
 pytest-asyncio==1.4.0
+# The [nodejs] extra brings the Node runtime pyright runs on, so it downloads nothing when it starts
+pyright[nodejs]==1.1.414
+ruff==0.17.0

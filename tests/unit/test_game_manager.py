@@ -1,6 +1,6 @@
 """Unit tests for GameManager — no external dependencies."""
 import pytest
-from src.game_manager import GameManager, GameState
+from src.game_manager import GameManager
 from config.config import Config
 
 USER_A = 1001

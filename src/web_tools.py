@@ -73,7 +73,7 @@ def _check_url(url: str) -> None:
         parts = urlsplit(url)
         host = parts.hostname
     except ValueError:
-        raise WebError("that is not a valid web link")
+        raise WebError("that is not a valid web link") from None
     if parts.scheme not in ("http", "https") or not host:
         raise WebError("that is not a valid web link")
     if parts.username or parts.password:
@@ -89,7 +89,7 @@ def _check_url(url: str) -> None:
             socket.inet_aton(host)
         except OSError:
             return  # a hostname, checked when it is resolved
-        raise NotPublicError("that address is not on the public internet")
+        raise NotPublicError("that address is not on the public internet") from None
     if not _is_public(host):
         raise NotPublicError("that address is not on the public internet")
 
@@ -216,7 +216,7 @@ async def _tavily(url: str, payload: dict) -> dict:
                 return await response.json()
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
         logger.warning(f"Tavily request failed: {e!r}")
-        raise WebError("the search service did not answer")
+        raise WebError("the search service did not answer") from e
 
 
 async def _tavily_extract(url: str) -> Tuple[str, str]:

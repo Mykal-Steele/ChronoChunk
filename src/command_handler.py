@@ -27,7 +27,7 @@ class CommandHandler:
     Every other command is a slash command, in src/slash_commands.py.
     """
 
-    def __init__(self, bot=None, rate_limiter: RateLimiter = None):
+    def __init__(self, bot=None, rate_limiter: Optional[RateLimiter] = None):
         self.bot = bot  # can be None in tests
         self.rate_limiter = rate_limiter if rate_limiter else RateLimiter()
         self.command_handlers = {

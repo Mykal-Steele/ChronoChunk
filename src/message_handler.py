@@ -58,7 +58,7 @@ class MessageHandler:
     def _message_age(timestamp: Optional[str]) -> timedelta:
         """How long ago a stored message was sent. A missing or bad timestamp counts as just now."""
         try:
-            sent = datetime.fromisoformat(timestamp)
+            sent = datetime.fromisoformat(timestamp or "")
         except (TypeError, ValueError):
             return timedelta(0)
         if sent.tzinfo is None:
@@ -149,7 +149,7 @@ class MessageHandler:
         "glazing", "stop glazing", "npc energy", "npc behavior", "kindergarten",
         "remedial", "room temp", "brain dead", "cope", "stay cooked", "lowkey cooked",
         "fully cooked", "clowned", "math class", "calculator", "relearn", "basic math",
-        "doubling down", "clown energy", "dumbass numbers", "six seven", "67",
+        "doubling down", "dumbass numbers", "six seven", "67",
     })
 
     # Only messages newer than this can be marked as the live conversation

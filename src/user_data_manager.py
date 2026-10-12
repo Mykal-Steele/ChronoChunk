@@ -86,7 +86,7 @@ class UserDataManager:
             logger.error(f"Failed to initialize fact extraction model: {e}")
             self.ai_client = None
 
-    def load_user_data(self, user_id: str, username: str = None) -> Dict[str, Any]:
+    def load_user_data(self, user_id: str, username: Optional[str] = None) -> Dict[str, Any]:
         """Everything stored about a user. A new user is created on first sight."""
         return self.store.get_profile(user_id, username)
 
@@ -95,12 +95,12 @@ class UserDataManager:
         self.store.forget(user_id)
         logger.info(f"Deleted all stored data for {clean_user_id(user_id)}")
 
-    async def add_conversation(self, user_id: str, message_content: str, bot_response: str, username: str = None) -> None:
+    async def add_conversation(self, user_id: str, message_content: str, bot_response: str, username: Optional[str] = None) -> None:
         """Save one exchange, then pick any facts out of what they said."""
         self.store.add_conversation(user_id, message_content, bot_response, username)
         await self.extract_and_save_facts(user_id, message_content, username)
 
-    async def extract_and_save_facts(self, user_id: str, message_content: str, username: str = None) -> bool:
+    async def extract_and_save_facts(self, user_id: str, message_content: str, username: Optional[str] = None) -> bool:
         """Have the AI pick lasting facts about the user out of one message, and store the new ones."""
         # "/hello" style messages lose the slash
         if message_content.startswith('/') and len(message_content) > 1:
@@ -170,7 +170,7 @@ class UserDataManager:
                         if old["id"] not in remove_ids and any(keyword in old["content"].lower() for keyword in keywords))
         return add, remove_ids
 
-    def remove_fact(self, user_id: str, fact_to_remove: str, username: str = None) -> bool:
+    def remove_fact(self, user_id: str, fact_to_remove: str, username: Optional[str] = None) -> bool:
         """Delete every stored fact that contains the given words. Returns whether any did."""
         if not fact_to_remove:
             return False
@@ -178,7 +178,7 @@ class UserDataManager:
         matching = [fact["id"] for fact in profile["facts"] if fact_to_remove.lower() in fact["content"].lower()]
         return bool(matching) and self.store.change_facts(user_id, remove_ids=matching)
 
-    def get_user_summary(self, user_id: str, username: str = None) -> str:
+    def get_user_summary(self, user_id: str, username: Optional[str] = None) -> str:
         """What the bot knows about a user, for /info. No conversation counts or dates."""
         profile = self.store.get_profile(user_id, username)
         parts: List[str] = []

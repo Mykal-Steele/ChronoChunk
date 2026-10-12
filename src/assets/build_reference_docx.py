@@ -30,7 +30,8 @@ TABLE_BORDERS = "<w:tblBorders>" + "".join(
 
 def restyle_one(style: str) -> str:
     """Apply the look to a single <w:style> element."""
-    style_id = re.search(r'w:styleId="([^"]+)"', style).group(1)
+    found = re.search(r'w:styleId="([^"]+)"', style)
+    style_id = found.group(1) if found else ""
 
     color = LINK_COLOR if style_id == "Hyperlink" else TEXT_COLOR
     style = re.sub(r'<w:color w:val="[0-9A-Fa-f]{6}"[^>]*/>', f'<w:color w:val="{color}" />', style)
