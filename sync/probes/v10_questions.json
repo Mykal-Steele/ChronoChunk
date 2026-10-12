@@ -1,0 +1,251 @@
+[
+ {
+  "language": "english",
+  "question": "what is it called when the helpful and harmful gut bacteria are out of balance?",
+  "expect": [
+   "dysbiosis"
+  ]
+ },
+ {
+  "language": "thai",
+  "question": "ภาวะที่แบคทีเรียดีและไม่ดีในลำไส้เสียสมดุลเรียกว่าอะไร",
+  "expect": [
+   "dysbiosis"
+  ]
+ },
+ {
+  "language": "mixed",
+  "question": "ถ้า gut microbiome ไม่ balance เรียกว่าอะไร แล้วเกี่ยวกับ Parkinson ยังไง",
+  "expect": [
+   "dysbiosis"
+  ]
+ },
+ {
+  "language": "english",
+  "question": "what do we have to write for assignment 2 in the AI class?",
+  "expect": [
+   "techniques for problem solving in ai"
+  ]
+ },
+ {
+  "language": "thai",
+  "question": "การบ้านชิ้นที่สองของวิชาปัญญาประดิษฐ์ต้องเขียนเรื่องอะไร",
+  "expect": [
+   "techniques for problem solving in ai"
+  ]
+ },
+ {
+  "language": "mixed",
+  "question": "assignment 2 วิชา AI ต้องส่งอะไร deadline วันไหน",
+  "expect": [
+   "techniques for problem solving in ai"
+  ]
+ },
+ {
+  "language": "english",
+  "question": "which measure says how often a randomly picked item would be labelled wrong when splitting a decision tree?",
+  "expect": [
+   "gini"
+  ]
+ },
+ {
+  "language": "thai",
+  "question": "ค่าที่ใช้วัดความไม่บริสุทธิ์ของข้อมูลตอนแบ่งกิ่งต้นไม้ตัดสินใจคืออะไร",
+  "expect": [
+   "gini"
+  ]
+ },
+ {
+  "language": "mixed",
+  "question": "ตอนทำ decision tree ใช้ค่าอะไรวัด purity ยิ่งต่ำยิ่งดี",
+  "expect": [
+   "gini"
+  ]
+ },
+ {
+  "language": "english",
+  "question": "which metric should I use instead of accuracy when the classes are very imbalanced?",
+  "expect": [
+   "f1-score",
+   "f1 score"
+  ]
+ },
+ {
+  "language": "thai",
+  "question": "ถ้าข้อมูลไม่สมดุลมากควรใช้ตัววัดผลแบบไหนแทนความแม่นยำ",
+  "expect": [
+   "f1-score",
+   "f1 score"
+  ]
+ },
+ {
+  "language": "mixed",
+  "question": "data imbalanced มากๆ ควรใช้ metric อะไรแทน accuracy",
+  "expect": [
+   "f1-score",
+   "f1 score"
+  ]
+ },
+ {
+  "language": "english",
+  "question": "what human development scores did the teacher give for the US and Singapore?",
+  "expect": [
+   "hdi"
+  ]
+ },
+ {
+  "language": "thai",
+  "question": "อาจารย์บอกว่าคะแนนดัชนีการพัฒนามนุษย์ของสหรัฐและสิงคโปร์เท่าไหร่",
+  "expect": [
+   "hdi"
+  ]
+ },
+ {
+  "language": "mixed",
+  "question": "คะแนน human development ของ US กับ Singapore ที่อาจารย์ยกตัวอย่างคือเท่าไหร่",
+  "expect": [
+   "hdi"
+  ]
+ },
+ {
+  "language": "english",
+  "question": "what technique did the teacher teach for reducing the number of dimensions?",
+  "expect": [
+   "pca"
+  ]
+ },
+ {
+  "language": "thai",
+  "question": "เทคนิคที่ใช้ลดจำนวนมิติของข้อมูลคืออะไร",
+  "expect": [
+   "pca"
+  ]
+ },
+ {
+  "language": "mixed",
+  "question": "เทคนิคลด dimension ของ data ที่อาจารย์สอนคืออะไร",
+  "expect": [
+   "pca"
+  ]
+ },
+ {
+  "language": "english",
+  "question": "which example dataset was used to show attribute selection with information gain?",
+  "expect": [
+   "mushroom"
+  ]
+ },
+ {
+  "language": "thai",
+  "question": "ชุดข้อมูลตัวอย่างเรื่องเห็ดกินได้หรือมีพิษใช้สอนเรื่องอะไร",
+  "expect": [
+   "mushroom"
+  ]
+ },
+ {
+  "language": "mixed",
+  "question": "ตัวอย่าง dataset ที่ใช้สอน information gain คืออะไร",
+  "expect": [
+   "mushroom"
+  ]
+ },
+ {
+  "language": "english",
+  "question": "what are the ways to deal with missing values, with pros and cons?",
+  "expect": [
+   "remove rows"
+  ]
+ },
+ {
+  "language": "thai",
+  "question": "วิธีจัดการกับข้อมูลที่หายไปมีอะไรบ้าง ข้อดีข้อเสียคืออะไร",
+  "expect": [
+   "remove rows"
+  ]
+ },
+ {
+  "language": "mixed",
+  "question": "missing values จัดการยังไงได้บ้าง pros cons",
+  "expect": [
+   "remove rows"
+  ]
+ },
+ {
+  "language": "english",
+  "question": "what is the weakness of the naive bayes classifier?",
+  "expect": [
+   "conditional independence"
+  ]
+ },
+ {
+  "language": "thai",
+  "question": "จุดอ่อนของตัวจำแนกแบบเบส์อย่างง่ายคืออะไร",
+  "expect": [
+   "conditional independence"
+  ]
+ },
+ {
+  "language": "mixed",
+  "question": "weakness ของ Naive Bayes คืออะไร",
+  "expect": [
+   "conditional independence"
+  ]
+ },
+ {
+  "language": "english",
+  "question": "what is the first question to ask before starting a data science project?",
+  "expect": [
+   "who are you helping"
+  ]
+ },
+ {
+  "language": "thai",
+  "question": "ก่อนเริ่มโครงการวิทยาศาสตร์ข้อมูลควรถามคำถามอะไรเป็นอย่างแรก",
+  "expect": [
+   "who are you helping"
+  ]
+ },
+ {
+  "language": "mixed",
+  "question": "ก่อนเริ่ม data science project ต้องถามตัวเองว่าอะไรก่อน",
+  "expect": [
+   "who are you helping"
+  ]
+ },
+ {
+  "language": "english",
+  "question": "what did the lecturer say about quantum annealing in class?",
+  "expect": [],
+  "absent": true
+ },
+ {
+  "language": "english",
+  "question": "explain the Krebs cycle from our biology slides",
+  "expect": [],
+  "absent": true
+ },
+ {
+  "language": "english",
+  "question": "which slide covers the French Revolution timeline?",
+  "expect": [],
+  "absent": true
+ },
+ {
+  "language": "english",
+  "question": "what did the teacher say about proof of stake blockchain consensus?",
+  "expect": [],
+  "absent": true
+ },
+ {
+  "language": "english",
+  "question": "find the lecture part about organic chemistry aldol condensation",
+  "expect": [],
+  "absent": true
+ },
+ {
+  "language": "english",
+  "question": "อาจารย์สอนเรื่องการทำอาหารไทยในคาบไหน",
+  "expect": [],
+  "absent": true
+ }
+]

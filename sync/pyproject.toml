@@ -1,0 +1,15 @@
+# The course sync runs on a PC, not in the bot's image. It has its own packages:
+#   uv run --project sync python -m sync.probes.v02_census census.json
+[project]
+name = "chronochunk-sync"
+version = "0.1.0"
+description = "Collects course material from Microsoft Teams for the ChronoChunk bot"
+requires-python = ">=3.12"
+dependencies = [
+    "openai==3.26.1",
+    "pillow==12.3.0",
+    "playwright==1.63.0",
+    "pypdfium2==5.14.0",
+    "python-dotenv==1.2.4",
+    "sqlite-vec==0.1.9",
+]
