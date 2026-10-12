@@ -117,8 +117,10 @@ async def _describe_group(group: list) -> int:
     text, _ = await _describe(PROMPT.format(count=len(kept), names=", ".join(e.name for e in kept)), pictures)
     notes = _parse(text, len(kept))
     now = time.time()
-    for position, note in notes.items():
-        emoji = kept[position]
+    # Every emoji the model was shown gets a row, also one it wrote nothing usable for. That one
+    # is stored with an empty note, so it is never sent, and paid for, a second time.
+    for position, emoji in enumerate(kept):
+        note = notes.get(position, "")
         get_database().execute(
             "INSERT INTO emoji_notes(emoji_id, name, note, created_at) VALUES (?, ?, ?, ?) "
             "ON CONFLICT(emoji_id) DO UPDATE SET name = excluded.name, note = excluded.note",
@@ -129,9 +131,12 @@ async def _describe_group(group: list) -> int:
 
 async def describe_missing(guilds: Iterable) -> int:
     """
-    Write a note for every emoji that has none yet. Runs at startup and when a server
-    changes its emoji. Returns how many were written. It never raises: without a note
-    an emoji still works, the model just sees its name alone.
+    Look at every emoji that has not been looked at yet. Runs at startup and when a
+    server changes its emoji. An emoji is sent to the model once, ever: a restart or a
+    deploy costs nothing for the ones already seen. Only an emoji whose picture could
+    not be loaded, or whose request failed outright, is tried again. Returns how many
+    notes were written. It never raises: without a note an emoji still works, the
+    model just sees its name alone.
     """
     if _describe is None:
         return 0

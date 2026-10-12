@@ -68,13 +68,28 @@ async def test_notes_are_still_there_after_a_restart(describer, database):
     assert emoji_notes.note_for(1) == "laughing frog, something is funny"
 
 
-async def test_a_line_the_model_left_out_is_tried_again_next_time(describer, database):
+async def test_an_emoji_the_model_wrote_nothing_for_is_not_paid_for_twice(describer, database):
     describer.return_value = ("2: sad cat", 0.001)
     guild = fake_guild([fake_emoji("kekw", 1), fake_emoji("sadge", 2)])
 
     assert await emoji_notes.describe_missing([guild]) == 1
     assert emoji_notes.note_for(1) == ""
     assert emoji_notes.note_for(2) == "sad cat"
+
+    emoji_notes.clear_cache()  # as after a restart
+    assert await emoji_notes.describe_missing([guild]) == 0
+    assert describer.await_count == 1
+
+
+async def test_a_request_that_failed_outright_is_tried_again(describer, database):
+    describer.side_effect = RuntimeError("model down")
+    guild = fake_guild([fake_emoji("kekw", 1)])
+    await emoji_notes.describe_missing([guild])
+
+    describer.side_effect = None
+    describer.return_value = ("1: laughing frog", 0.001)
+    assert await emoji_notes.describe_missing([guild]) == 1
+    assert emoji_notes.note_for(1) == "laughing frog"
 
 
 async def test_a_note_is_cut_down_to_a_short_line_of_plain_words(describer, database):
