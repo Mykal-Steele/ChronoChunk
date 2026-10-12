@@ -15,7 +15,8 @@ def test_a_new_database_has_every_table_and_remembers_its_version(tmp_path):
     path = str(tmp_path / "state" / "bot.db")
     db = Database(path)
     tables = {row["name"] for row in db.query("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    assert {"users", "facts", "topics", "conversations", "channel_settings", "usage_daily", "rate_events", "meta"} <= tables
+    assert {"users", "facts", "topics", "conversations", "channel_settings", "usage_daily", "rate_events", "meta",
+            "page_notes"} <= tables
     assert db.query("PRAGMA user_version")[0][0] == len(MIGRATIONS)
     assert db.query("PRAGMA journal_mode")[0][0] == "wal"
     db.close()

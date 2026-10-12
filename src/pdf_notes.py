@@ -9,6 +9,7 @@ import base64
 import hashlib
 import io
 import logging
+import sqlite3
 import threading
 import time
 from collections import OrderedDict
@@ -16,6 +17,7 @@ from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 from config.config import Config
 from src import usage_context
+from src.database import get_database
 from src.usage_guard import BudgetExceededError
 
 logger = logging.getLogger(__name__)
@@ -35,9 +37,11 @@ NOTES_TIMEOUT_SECONDS = 120
 NOTES_MAX_CHARS = 90000
 # In "auto", a page with less text than this is described even when no picture is found on it
 SPARSE_PAGE_CHARS = 50
-# Descriptions are kept in memory, never on disk: this many files, for this long
+# The newest descriptions are kept in memory: this many files, for this long
 CACHE_FILES = 30
 CACHE_SECONDS = 6 * 3600
+# The database keeps them for Config.PDF_NOTES_KEEP_DAYS after their last use, for at most this many files
+STORED_FILES = 200
 
 PROMPT = (
     "These are pages {pages} of a document, in that order. For each one write a heading '## Page N' and then "
@@ -63,7 +67,60 @@ def set_describer(describe: Optional[Describer]) -> None:
 
 
 def clear_cache() -> None:
+    """Forget the descriptions held in memory. The ones in the database stay."""
     _cache.clear()
+
+
+def _split(key: str) -> Tuple[str, str]:
+    mode, sha256 = key.split(":", 1)
+    return mode, sha256
+
+
+def _remember(key: str, notes: str) -> None:
+    _cache[key] = (time.monotonic(), notes)
+    _cache.move_to_end(key)
+    while len(_cache) > CACHE_FILES:
+        _cache.popitem(last=False)
+
+
+def _load_stored(key: str) -> Optional[str]:
+    """Descriptions written by an earlier run of the bot, if they are still within their keep time."""
+    if Config.PDF_NOTES_KEEP_DAYS <= 0:
+        return None
+    mode, sha256 = _split(key)
+    now = time.time()
+    try:
+        database = get_database()
+        rows = database.query(
+            "SELECT notes FROM page_notes WHERE sha256 = ? AND mode = ? AND last_used_at >= ?",
+            (sha256, mode, now - Config.PDF_NOTES_KEEP_DAYS * 86400))
+        if not rows:
+            return None
+        database.execute("UPDATE page_notes SET last_used_at = ? WHERE sha256 = ? AND mode = ?", (now, sha256, mode))
+        return rows[0]["notes"]
+    except sqlite3.Error as e:
+        logger.error(f"Could not read stored page notes: {e}")
+        return None
+
+
+def _store(key: str, notes: str) -> None:
+    """Write a finished pass to the database, and drop what is past its keep time or over the file cap."""
+    if Config.PDF_NOTES_KEEP_DAYS <= 0:
+        return
+    mode, sha256 = _split(key)
+    now = time.time()
+    try:
+        database = get_database()
+        database.execute(
+            "INSERT INTO page_notes(sha256, mode, notes, created_at, last_used_at) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(sha256, mode) DO UPDATE SET notes = excluded.notes, last_used_at = excluded.last_used_at",
+            (sha256, mode, notes, now, now))
+        database.execute("DELETE FROM page_notes WHERE last_used_at < ?", (now - Config.PDF_NOTES_KEEP_DAYS * 86400,))
+        database.execute(
+            "DELETE FROM page_notes WHERE rowid NOT IN (SELECT rowid FROM page_notes ORDER BY last_used_at DESC LIMIT ?)",
+            (STORED_FILES,))
+    except sqlite3.Error as e:
+        logger.error(f"Could not store page notes: {e}")
 
 
 def _pages_to_describe(data: bytes, mode: str) -> List[int]:
@@ -180,8 +237,8 @@ async def page_notes(data: bytes, filename: str, wait_seconds: Optional[float] =
     """
     What each page of a PDF shows, written from the page images. None when page notes
     are off, the PDF has nothing worth describing, or the pass failed. The first call
-    for a file takes a while. The result is kept in memory, so later questions about
-    the same file get it at once.
+    for a file takes a while. The result is kept in memory and in the database, so
+    later questions about the same file get it at once, also after a restart.
 
     wait_seconds is how long this caller will wait. When it runs out the caller gets
     None, and the pass carries on so the next question about the file finds it done.
@@ -198,6 +255,10 @@ async def page_notes(data: bytes, filename: str, wait_seconds: Optional[float] =
     if cached and time.monotonic() - cached[0] < CACHE_SECONDS:
         _cache.move_to_end(key)
         return cached[1]
+    stored = _load_stored(key)
+    if stored:
+        _remember(key, stored)
+        return stored
 
     # Two people asking about the same new file share one pass
     running = _in_progress.get(key)
@@ -239,7 +300,5 @@ def _finish(key: str, finished: "asyncio.Future") -> None:
     notes, complete = finished.result()
     # A pass that lost pages to a rate limit or a slow model is used once and tried again next time
     if notes and complete:
-        _cache[key] = (time.monotonic(), notes)
-        _cache.move_to_end(key)
-        while len(_cache) > CACHE_FILES:
-            _cache.popitem(last=False)
+        _remember(key, notes)
+        _store(key, notes)

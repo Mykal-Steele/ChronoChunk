@@ -75,6 +75,19 @@ MIGRATIONS = [
         value TEXT NOT NULL
     );
     """,
+    """
+    -- What the pages of a PDF show, keyed by the file's hash and the reading mode.
+    -- No filename and no user is stored with it.
+    CREATE TABLE page_notes (
+        sha256       TEXT NOT NULL,
+        mode         TEXT NOT NULL,
+        notes        TEXT NOT NULL,
+        created_at   REAL NOT NULL,
+        last_used_at REAL NOT NULL,
+        PRIMARY KEY (sha256, mode)
+    );
+    CREATE INDEX page_notes_by_use ON page_notes(last_used_at);
+    """,
 ]
 
 

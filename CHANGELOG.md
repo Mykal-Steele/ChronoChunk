@@ -10,6 +10,13 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.7.0 (2026-10-12)
+
+### Changed
+
+- The descriptions the bot writes of a PDF's pages are kept in the database for 7 days after they were last used, for up to 200 files. A restart or a deploy no longer makes the bot read every slide deck again, and a deck one person has asked about is ready for everyone else that week. `PDF_NOTES_KEEP_DAYS` sets the number of days, and 0 keeps them in memory only, as before.
+- A stored description is found by the file's hash. No filename and no user is stored with it.
+
 ## 3.6.0 (2026-10-12)
 
 ### Added
