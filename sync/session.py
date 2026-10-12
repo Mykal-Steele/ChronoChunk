@@ -12,6 +12,8 @@ import re
 import sys
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any, Callable, Iterator, List, Optional
 from urllib.parse import urlsplit
 
@@ -115,6 +117,20 @@ def open_site(context: BrowserContext, site_url: str) -> Page:
     raise SignInNeeded("SharePoint did not finish loading")
 
 
+def retry_after(header: Optional[str], default: float) -> float:
+    """Seconds to wait from a Retry-After header, which is a number of seconds or a date. default when it is neither."""
+    if not header:
+        return default
+    try:
+        return max(float(header), 0.0)
+    except ValueError:
+        pass
+    try:
+        return max((parsedate_to_datetime(header) - datetime.now(timezone.utc)).total_seconds(), 0.0)
+    except (TypeError, ValueError):
+        return default
+
+
 def get(context: BrowserContext, url: str, accept: str = "application/json"):
     """One GET with the profile's sign-in, retried when the server asks for a pause."""
     wait = 2.0
@@ -122,8 +138,7 @@ def get(context: BrowserContext, url: str, accept: str = "application/json"):
         reply = context.request.get(url, headers={"accept": accept}, timeout=120_000)
         if reply.status not in (429, 503) or attempt == REQUEST_TRIES - 1:
             return reply
-        pause = float(reply.headers.get("retry-after") or wait)
-        time.sleep(min(pause, 120))
+        time.sleep(min(retry_after(reply.headers.get("retry-after"), wait), 120))
         wait *= 2
     raise AssertionError("unreachable")
 

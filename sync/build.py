@@ -9,6 +9,7 @@ fails leaves the old file as it was.
 """
 import logging
 import os
+import shutil
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -256,7 +257,8 @@ def build(materials: Sequence[CourseMaterial], models: Models, cache: Cache, out
         new.unlink(missing_ok=True)
         raise
     if out.exists():
-        os.replace(out, out.with_name(out.name + ".previous"))
+        # Copied, not moved: the old file stays in place until the one step that replaces it
+        shutil.copy2(out, out.with_name(out.name + ".previous"))
     os.replace(new, out)
     report.say(f"Wrote {out} ({out.stat().st_size / 1e6:.1f} MB) in {time.monotonic() - started:.0f}s. "
                f"Model calls: {models.calls}, about ${models.spent:.4f}")

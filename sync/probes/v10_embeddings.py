@@ -43,12 +43,15 @@ def transcript_chunks(folder: Path, courses: list) -> list:
             continue
         entries = json.loads(path.read_text(encoding="utf-8")).get("entries") or []
         group: list = []
+        cut = False
         for entry in entries:
             group.append(entry)
             if seconds(entry["endOffset"]) - seconds(group[0]["startOffset"]) >= CHUNK_SECONDS:
                 chunks.append((course, path.stem, group))
                 group = group[-OVERLAP_ENTRIES:]
-        if len(group) > OVERLAP_ENTRIES:
+                cut = True
+        # What is left is new speech only when it holds more than the overlap carried over
+        if len(group) > (OVERLAP_ENTRIES if cut else 0):
             chunks.append((course, path.stem, group))
     return [{"course": course, "kind": "transcript", "source": name, "where": clock(seconds(group[0]["startOffset"])),
              "text": " ".join(entry.get("text") or "" for entry in group)} for course, name, group in chunks]

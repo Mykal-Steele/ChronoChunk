@@ -14,6 +14,8 @@ FILES_DIR = HOME / "files"
 CACHE_FILE = HOME / "cache.db"
 # The finished course file. The run before it is kept next to it as courses.db.previous.
 OUTPUT_FILE = HOME / "courses.db"
+# Where a run for only some courses writes, so it cannot replace the file that holds all of them
+TRIAL_FILE = HOME / "courses-trial.db"
 
 # Where the bot runs, as user@host, and the file it reads there. With no server set, --upload refuses to run.
 SERVER = os.getenv("CHRONOCHUNK_SERVER", "")

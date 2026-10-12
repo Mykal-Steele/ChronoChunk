@@ -25,9 +25,11 @@ From the repo root:
 
 ```bash
 uv run --project sync python -m sync                  # every course of the semester
-uv run --project sync python -m sync CSC340 CSC345    # only these, for a trial
+uv run --project sync python -m sync CSC340 CSC345    # only these, into courses-trial.db
 uv run --project sync python -m sync --upload         # and put the result on the bot's server
 ```
+
+A run for named courses is a trial. It writes `courses-trial.db`, cannot write to `courses.db`, and cannot be uploaded, because its file holds only those courses.
 
 The run prints what it found per course, what it left out and why, what failed, and what the model calls cost.
 
@@ -66,6 +68,8 @@ All under `~/.local/share/chronochunk-sync/` (change it with `CHRONOCHUNK_SYNC_H
 | `files/` | Downloaded documents |
 | `cache.db` | Transcripts, page descriptions, translations and embeddings |
 | `courses.db` | The finished course file |
+| `courses.db.previous` | The course file from the run before |
+| `courses-trial.db` | What a run for named courses writes |
 
 Deleting `files/` and `cache.db` is safe. The next run downloads and reads everything again, which costs about what the first run did.
 

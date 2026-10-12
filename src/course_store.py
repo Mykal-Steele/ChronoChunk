@@ -82,7 +82,9 @@ CREATE VIRTUAL TABLE chunk_words USING fts5(body, content='', tokenize='porter u
 CREATE VIRTUAL TABLE chunk_vectors USING vec0(
     embedding float[{DIMENSIONS}] distance_metric=cosine,
     course text partition key,
-    kind text
+    kind text,
+    -- The source's date as a number, 20260804, so a search can leave out older sources. 0 when there is no date.
+    day integer
 );
 CREATE TABLE meta (
     key   TEXT PRIMARY KEY,
@@ -119,6 +121,12 @@ def _pack(vector: Sequence[float]) -> bytes:
     if len(vector) != DIMENSIONS:
         raise ValueError(f"an embedding has {DIMENSIONS} numbers, this one has {len(vector)}")
     return struct.pack(f"{DIMENSIONS}f", *vector)
+
+
+def _day(date: str) -> int:
+    """2026-08-04 as 20260804, 0 for anything that is not a date."""
+    digits = date[:10].replace("-", "")
+    return int(digits) if len(digits) == 8 and digits.isdigit() else 0
 
 
 def _keywords(query: str) -> str:
@@ -199,7 +207,7 @@ class CourseStore:
         """Store one chunk with its embedding. text is English, original is the wording it was translated from."""
         blob = _pack(vector)
         with self._lock:
-            source = self._connection.execute("SELECT course, kind, title, section FROM sources WHERE id = ?",
+            source = self._connection.execute("SELECT course, kind, title, section, date FROM sources WHERE id = ?",
                                               (source_id,)).fetchone()
             if source is None:
                 raise ValueError(f"no source {source_id}")
@@ -211,8 +219,8 @@ class CourseStore:
                 "INSERT INTO chunk_words(rowid, body) VALUES (?, ?)",
                 (chunk_id, _indexed_text(source["course"], source["title"], source["section"], locator, text)))
             self._connection.execute(
-                "INSERT INTO chunk_vectors(rowid, embedding, course, kind) VALUES (?, ?, ?, ?)",
-                (chunk_id, blob, source["course"], source["kind"]))
+                "INSERT INTO chunk_vectors(rowid, embedding, course, kind, day) VALUES (?, ?, ?, ?, ?)",
+                (chunk_id, blob, source["course"], source["kind"], _day(source["date"])))
             return chunk_id
 
     def set_meta(self, key: str, value: str) -> None:
@@ -266,19 +274,25 @@ class CourseStore:
         answer, and the bot should say so.
         """
         blob = _pack(vector)
-        narrow_vectors = ("" if course is None else " AND course = ?") + ("" if kind is None else " AND kind = ?")
-        narrow_sources = ("" if course is None else " AND sources.course = ?") + ("" if kind is None else " AND sources.kind = ?")
+        # Everything that narrows the search is applied before the candidates are counted,
+        # so a pile of chunks that do not qualify cannot crowd out the ones that do
+        narrow_vectors = (("" if course is None else " AND course = ?") + ("" if kind is None else " AND kind = ?")
+                          + ("" if not since else " AND day >= ?"))
+        narrow_sources = (("" if course is None else " AND sources.course = ?") + ("" if kind is None else " AND sources.kind = ?")
+                          + ("" if not since else " AND sources.date >= ?"))
         narrowing = tuple(value for value in (course, kind) if value is not None)
+        vector_narrowing = narrowing + ((_day(since),) if since else ())
+        source_narrowing = narrowing + ((since,) if since else ())
         keywords = _keywords(query)
         with self._lock:
             near = self._connection.execute(
                 f"SELECT rowid, distance FROM chunk_vectors WHERE embedding MATCH ? AND k = ?{narrow_vectors}",
-                (blob, CANDIDATES) + narrowing).fetchall()
+                (blob, CANDIDATES) + vector_narrowing).fetchall()
             worded = self._connection.execute(
                 "SELECT chunk_words.rowid FROM chunk_words "
                 "JOIN chunks ON chunks.id = chunk_words.rowid JOIN sources ON sources.id = chunks.source_id "
                 f"WHERE chunk_words MATCH ?{narrow_sources} ORDER BY chunk_words.rank LIMIT ?",
-                (keywords,) + narrowing + (CANDIDATES,)).fetchall() if keywords else []
+                (keywords,) + source_narrowing + (CANDIDATES,)).fetchall() if keywords else []
 
             # Reciprocal rank fusion: a chunk both rankings like beats one that tops a single ranking
             score: Dict[int, float] = {}
@@ -318,8 +332,6 @@ class CourseStore:
                 if len(taken) >= PER_SOURCE or any(abs(row["position"] - position) <= 1 for position in taken):
                     continue
                 if similarity.get(chunk_id, 0.0) < MIN_SIMILARITY:
-                    continue
-                if since and row["date"] < since:
                     continue
                 chosen.setdefault(row["source_id"], []).append(row["position"])
                 seen_texts.add(row["text"])

@@ -174,6 +174,20 @@ def test_since_drops_older_sources(store):
     assert [hit.date for hit in store.search("lecture", everything, since="2026-09-15")] == ["2026-10-06"]
 
 
+def test_since_is_applied_before_the_candidates_are_counted(path):
+    store = CourseStore.create(path)
+    store.add_course("CSC340", "Artificial Intelligence")
+    old = store.add_source("CSC340", "transcript", "old lecture", date="2026-08-04")
+    for position in range(120):
+        store.add_chunk(old, position, f"{position}", "principal component analysis", direction(pca=1))
+    store.add_chunk(store.add_source("CSC340", "slide", "new deck", date="2026-10-06"), 0, "page 1",
+                    "principal component analysis again", direction(pca=0.8, other=0.6))
+    store.add_chunk(store.add_source("CSC340", "slide", "undated"), 0, "page 1", "principal component analysis", direction(pca=1))
+    # 120 older chunks are closer by meaning and by keyword, and the newer one is still found
+    assert [hit.title for hit in store.search("principal component analysis", direction(pca=1), since="2026-09-01")] == ["new deck"]
+    store.close()
+
+
 def test_the_limit_caps_the_results(store):
     assert len(store.search("lecture", direction(pca=1, agents=1, bayes=1), limit=2)) == 2
 

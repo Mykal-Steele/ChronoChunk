@@ -24,7 +24,7 @@ def main() -> None:
         found: dict = {}
         for tab in frame.get_by_role("tab").all_inner_texts():
             mark = len(recorder.answers)
-            frame.get_by_role("tab", name=re.compile(tab)).first.click()
+            frame.get_by_role("tab", name=re.compile(re.escape(tab))).first.click()
             page.wait_for_timeout(6000)
             for _ in range(8):
                 page.mouse.move(650, 500)

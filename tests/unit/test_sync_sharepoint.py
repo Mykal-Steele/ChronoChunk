@@ -222,3 +222,17 @@ def test_a_transcript_that_cannot_be_fetched_keeps_its_last_copy(cache):
     assert sharepoint.fetch_transcripts(FakePage(answers), [_video("rec1")], cache) == {"rec1": ENTRIES}
     # A recording never fetched before has nothing to fall back to
     assert sharepoint.fetch_transcripts(FakePage({"new/media/transcripts": (503, "")}), [_video("new")], cache) == {}
+
+
+def test_a_retry_after_header_is_read_as_seconds_or_as_a_date():
+    from datetime import datetime, timedelta, timezone
+    from email.utils import format_datetime
+
+    from sync.session import retry_after
+    assert retry_after("7", 2.0) == 7.0
+    assert retry_after(None, 2.0) == 2.0
+    assert retry_after("soon", 2.0) == 2.0
+    assert retry_after("-5", 2.0) == 0.0
+    later = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=30), usegmt=True)
+    assert 25 < retry_after(later, 2.0) <= 30
+    assert retry_after("Wed, 21 Oct 2015 07:28:00 GMT", 2.0) == 0.0
