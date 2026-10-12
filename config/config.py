@@ -38,6 +38,13 @@ class Config:
     AI_DAILY_BUDGET_USD = float(os.getenv("AI_DAILY_BUDGET_USD", 2))
     AI_BUDGET_RESET_DAY = int(os.getenv("AI_BUDGET_RESET_DAY", 14))  # the Azure credit renews on the 14th
 
+    # What one person may spend, so nobody can use up the bot for everyone. A heavy study day
+    # on gpt-6-luna (150 messages, 6 slide decks, 10 documents) is about $0.13. The 7 days roll.
+    AI_USER_DAILY_BUDGET_USD = float(os.getenv("AI_USER_DAILY_BUDGET_USD", 0.20))
+    AI_USER_WEEKLY_BUDGET_USD = float(os.getenv("AI_USER_WEEKLY_BUDGET_USD", 0.60))
+    # Discord user ids, separated by commas, that the two limits above do not apply to
+    AI_UNLIMITED_USER_IDS = {part.strip() for part in os.getenv("AI_UNLIMITED_USER_IDS", "").split(",") if part.strip()}
+
     # Reasoning effort for chat replies. "low" answers about twice as fast and costs less than the default.
     AI_CHAT_REASONING_EFFORT = os.getenv("AI_CHAT_REASONING_EFFORT", "low")
 
@@ -78,6 +85,8 @@ class Config:
         "mydata": (10, 1800),  # 10 data requests per 30 minutes
         "file": (15, 86400),   # 15 generated documents or diagrams per day
         "tldr": (6, 3600),     # 6 channel summaries per hour
+        "pdf": (10, 86400),    # 10 PDFs described page by page per day. One already described is free.
+        "web": (20, 86400),    # 20 web searches or opened links per day
     }
     
     # Dynamic settings like directories are initialized in a method rather than duplicated

@@ -154,6 +154,10 @@ async def test_usage_shows_the_budget_line(commands):
     await registered["usage"](interaction)
 
     assert "ai budget" in interaction.response.send_message.call_args[0][0]
+    # their own numbers: asked for by their id, and shown only to them
+    bot = commands[1]
+    bot.command_handler.usage_summary.assert_called_once_with(str(interaction.user.id))
+    assert interaction.response.send_message.call_args[1]["ephemeral"] is True
 
 
 # ── /help ─────────────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 import sqlite3
 import time
 from collections import defaultdict
-from typing import DefaultDict, Dict, Optional
+from typing import DefaultDict, Dict, Optional, Tuple
 
 from config.config import Config
 from src.database import Database, get_database
@@ -62,6 +62,18 @@ class RateLimiter:
         except sqlite3.Error as e:
             # The count in memory still holds until the next restart
             logger.error(f"Could not save a rate limit event: {e}")
+
+    def remaining(self, user_id: str, action: str) -> Tuple[int, int, int, float]:
+        """
+        How much of an allowance is left, without using any of it. Returns what is
+        left, the limit, the length of the window in seconds, and how many seconds
+        until the oldest use drops out (0 when nothing is used).
+        """
+        max_requests, window = self._limits.get(action, self._limits["default"])
+        now = time.time()
+        recent = [t for t in self._history.get(str(user_id), {}).get(action, []) if now - t < window]
+        wait = window - (now - recent[0]) if recent else 0.0
+        return max(0, max_requests - len(recent)), max_requests, window, wait
 
     def _cleanup(self, now: float) -> None:
         """Drop users with no recent activity so the history does not grow forever."""

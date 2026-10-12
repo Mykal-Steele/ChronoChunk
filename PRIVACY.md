@@ -10,7 +10,7 @@ When you talk to the bot (a `/` message, a slash command, a ping or a reply to i
 - Your last 20 messages to the bot and its answers.
 - Short facts it picks out of what you tell it, such as "likes hiking", and the topics you talk about.
 
-It uses these to remember you between conversations. The database is not shared with anyone and is not in this repository. It also keeps the time of your recent messages and files for up to a day, to enforce the limits in `/help`.
+It uses these to remember you between conversations. The database is not shared with anyone and is not in this repository. It also keeps the time of your recent messages, files, PDF reads and web lookups for up to a day, to enforce the limits in `/help`, and a daily total of what your requests cost in AI spending, which is what `/usage` shows you.
 
 ## What the bot reads but does not store
 

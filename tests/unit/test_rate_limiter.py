@@ -101,3 +101,19 @@ def test_old_events_are_not_loaded_after_a_restart(limiter, clock, database):
     RateLimiter()
     assert database.query("SELECT COUNT(*) AS n FROM rate_events")[0]["n"] == 0
 
+
+def test_remaining_reports_what_is_left_without_using_any(limiter, clock):
+    assert limiter.remaining("1", "chat") == (3, 3, 60, 0.0)
+    limiter.check_rate_limit("1", "chat")
+    clock["t"] += 10
+    limiter.check_rate_limit("1", "chat")
+    left, limit, window, wait = limiter.remaining("1", "chat")
+    assert (left, limit, window) == (1, 3, 60) and wait == pytest.approx(50)
+    assert limiter.remaining("1", "chat")[0] == 1  # asking did not count
+    assert limiter.remaining("2", "chat")[0] == 3
+
+
+def test_real_config_has_the_pdf_and_web_limits():
+    from config.config import Config
+    assert Config.RATE_LIMITS["pdf"] == (10, 86400) and Config.RATE_LIMITS["web"] == (20, 86400)
+

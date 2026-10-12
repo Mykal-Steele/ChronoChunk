@@ -6,7 +6,9 @@ from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 from config.config import Config
+from src import usage_context
 from src.database import Database, get_database
+from src.user_store import clean_user_id
 from src.exceptions import BotError
 
 logger = logging.getLogger(__name__)
@@ -16,8 +18,9 @@ class BudgetExceededError(BotError):
     """Raised instead of calling the model once a spending cap is reached."""
 
     def __init__(self, scope: str, resets_on: date):
-        self.scope = scope          # "monthly" or "daily"
-        self.resets_on = resets_on  # first day the bot may spend again
+        # "monthly" and "daily" are the bot's own caps. "user_daily" and "user_weekly" are one person's.
+        self.scope = scope
+        self.resets_on = resets_on  # first day the bot, or this person, may spend again
         super().__init__(f"AI {scope} budget reached, resets on {resets_on.isoformat()}")
 
 
@@ -55,7 +58,14 @@ class UsageGuard:
         self.monthly_budget = Config.AI_MONTHLY_BUDGET_USD if monthly_budget is None else monthly_budget
         self.daily_budget = Config.AI_DAILY_BUDGET_USD if daily_budget is None else daily_budget
         self.reset_day = Config.AI_BUDGET_RESET_DAY if reset_day is None else reset_day
+        self.user_daily_budget = Config.AI_USER_DAILY_BUDGET_USD
+        self.user_weekly_budget = Config.AI_USER_WEEKLY_BUDGET_USD
         self._state = self._load(self._today())
+        # Per person, for the current day only: what they spent today, what they spent on the
+        # six days before, and whether they have been told they are near the daily limit
+        self._user_today: Dict[str, float] = {}
+        self._user_earlier: Dict[str, float] = {}
+        self._user_warned: set = set()
 
     @staticmethod
     def _today() -> date:
@@ -87,6 +97,39 @@ class UsageGuard:
             if self._state["cycle_start"] != cycle_start_for(today, self.reset_day).isoformat():
                 logger.info(f"New AI budget cycle started, last cycle cost ${self._state['cycle_cost']:.4f}")
             self._state = self._load(today)
+            self._user_today.clear()
+            self._user_earlier.clear()
+            self._user_warned.clear()
+
+    def _user_costs(self, user_id: str) -> tuple:
+        """(spent today, spent on the six days before) for one person. Read from the database once a day."""
+        if user_id not in self._user_today:
+            today = self._today()
+            week_start = date.fromordinal(today.toordinal() - 6).isoformat()
+            rows = self._database.query(
+                "SELECT day, SUM(cost) AS cost FROM usage_daily WHERE user_id = ? AND day >= ? GROUP BY day",
+                (user_id, week_start))
+            by_day = {row["day"]: float(row["cost"]) for row in rows}
+            self._user_today[user_id] = by_day.pop(today.isoformat(), 0.0)
+            self._user_earlier[user_id] = sum(by_day.values())
+        return self._user_today[user_id], self._user_earlier[user_id]
+
+    @staticmethod
+    def is_unlimited(user_id: str) -> bool:
+        return user_id in Config.AI_UNLIMITED_USER_IDS
+
+    def _check_user(self, user_id: str) -> None:
+        today_cost, earlier = self._user_costs(user_id)
+        today = self._today()
+        if today_cost >= self.user_daily_budget:
+            raise BudgetExceededError("user_daily", date.fromordinal(today.toordinal() + 1))
+        if today_cost + earlier >= self.user_weekly_budget:
+            # The oldest day they spent on leaves the 7-day window first
+            rows = self._database.query(
+                "SELECT MIN(day) AS day FROM usage_daily WHERE user_id = ? AND day >= ? AND cost > 0",
+                (user_id, date.fromordinal(today.toordinal() - 6).isoformat()))
+            oldest = date.fromisoformat(rows[0]["day"]) if rows and rows[0]["day"] else today
+            raise BudgetExceededError("user_weekly", date.fromordinal(oldest.toordinal() + 7))
 
     def check(self) -> None:
         """Raise BudgetExceededError if a cap is reached. Call before every model request."""
@@ -96,6 +139,9 @@ class UsageGuard:
             raise BudgetExceededError("monthly", next_cycle_start(today, self.reset_day))
         if self._state["day_cost"] >= self.daily_budget:
             raise BudgetExceededError("daily", date.fromordinal(today.toordinal() + 1))
+        user_id, _ = usage_context.current()
+        if user_id and not self.is_unlimited(user_id):
+            self._check_user(user_id)
 
     @staticmethod
     def prices_for(model: Optional[str]) -> tuple:
@@ -137,18 +183,53 @@ class UsageGuard:
         self._state["requests"] += 1
         self._state["input_tokens"] += prompt
         self._state["output_tokens"] += completion
+        user_id, feature = usage_context.current()
+        if user_id:
+            self._user_costs(user_id)
+            self._user_today[user_id] += cost
         try:
             self._database.execute(
                 "INSERT INTO usage_daily(day, user_id, feature, model, requests, input_tokens, output_tokens, cost) "
-                "VALUES (?, '', '', ?, 1, ?, ?, ?) "
+                "VALUES (?, ?, ?, ?, 1, ?, ?, ?) "
                 "ON CONFLICT(day, user_id, feature, model) DO UPDATE SET requests = requests + 1, "
                 "input_tokens = input_tokens + excluded.input_tokens, "
                 "output_tokens = output_tokens + excluded.output_tokens, cost = cost + excluded.cost",
-                (self._state["day"], model or "", prompt, completion, cost))
+                (self._state["day"], user_id, feature, model or "", prompt, completion, cost))
         except sqlite3.Error as e:
             # The totals stay in memory, so the caps still hold until the next restart
             logger.error(f"Could not record AI usage: {e}")
         return cost
+
+    def user_summary(self, user_id: str) -> Dict[str, Any]:
+        """One person's spending against their limits, for /usage."""
+        self._roll_over()
+        user_id = clean_user_id(user_id)
+        today_cost, earlier = self._user_costs(user_id)
+        now = datetime.now(timezone.utc)
+        midnight = datetime.combine(date.fromordinal(self._today().toordinal() + 1), datetime.min.time(), timezone.utc)
+        return {
+            "unlimited": self.is_unlimited(user_id),
+            "day_cost": today_cost,
+            "daily_budget": self.user_daily_budget,
+            "week_cost": today_cost + earlier,
+            "weekly_budget": self.user_weekly_budget,
+            "seconds_to_reset": max(0, int((midnight - now).total_seconds())),
+        }
+
+    def take_daily_warning(self, user_id: str) -> bool:
+        """
+        True once a day per person, the first time they are past 80% of their daily
+        limit, so the reply can tell them before they hit it.
+        """
+        user_id = clean_user_id(user_id)
+        if not user_id or self.is_unlimited(user_id) or user_id in self._user_warned:
+            return False
+        self._roll_over()
+        today_cost, _ = self._user_costs(user_id)
+        if today_cost < 0.8 * self.user_daily_budget or today_cost >= self.user_daily_budget:
+            return False
+        self._user_warned.add(user_id)
+        return True
 
     def summary(self) -> Dict[str, Any]:
         """Current totals and limits, for the /usage command and the status page."""

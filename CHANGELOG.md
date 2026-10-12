@@ -10,6 +10,21 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.6.0 (2026-10-12)
+
+### Added
+
+- `/usage` is personal. It shows what you have left of each allowance (messages, PDFs read in full, files made, web lookups, recaps) and how much of your AI limit and the bot's is used, as bars with a reset time. The slash command answers only to you.
+- Every person has their own AI limit: $0.20 a day and $0.60 over any 7 days by default (`AI_USER_DAILY_BUDGET_USD`, `AI_USER_WEEKLY_BUDGET_USD`). One person can no longer use up the bot for everyone. A heavy study day costs about $0.13, so normal use stays far below it.
+- Past 80% of the daily limit, one reply that day ends with a small heads-up. At the limit the bot says when it resets.
+- Two new daily counts: 10 PDFs read in full and 20 web lookups. A PDF that the bot has already described is free. Past the PDF count a PDF is read from its text and first pictures, and the bot says why.
+- `AI_UNLIMITED_USER_IDS` lists Discord user ids the AI limits do not apply to.
+
+### Changed
+
+- The spending ledger records who each model call was for and what it was doing (chat, facts, document, pdf_notes, music).
+- The bot-wide caps of $2 a day and $15 a month stay as the backstop.
+
 ## 3.5.0 (2026-10-11)
 
 ### Changed

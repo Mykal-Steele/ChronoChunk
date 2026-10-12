@@ -3,6 +3,7 @@ import json
 import re
 import logging
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from openai import AsyncOpenAI
 from typing import Callable, List, Optional, Tuple
@@ -10,7 +11,7 @@ from config.ai_config import PERSONALITY_PROMPT
 from config.config import Config
 from collections import deque
 from src.document_builder import BuiltFile, strip_filler
-from src.usage_guard import BudgetExceededError, UsageGuard, guard_client
+from src.usage_guard import BudgetExceededError, UsageGuard, get_usage_guard, guard_client
 from src.tools import Tool, ToolResult, Turn, default_tools
 from src.tools.base import user_content
 from src.pdf_notes import NOTES_MAX_TOKENS
@@ -203,7 +204,8 @@ class AIResponseHandler:
                              username: str, user_id: str = None,
                              attached_context: str = "", images: Optional[List[str]] = None,
                              allow_files: bool = False,
-                             file_gate: Optional[Callable[[], None]] = None) -> Reply:
+                             file_gate: Optional[Callable[[], None]] = None,
+                             web_gate: Optional[Callable[[], None]] = None) -> Reply:
         """
         Generate the bot's reply using Azure OpenAI chat completions.
 
@@ -211,7 +213,8 @@ class AIResponseHandler:
         replied to, file contents, channel messages to sum up). images are data URLs.
         With allow_files the model may also build documents and diagrams, which come
         back in Reply.files. file_gate is called before each file is made and raises
-        RateLimitError when this user has made too many.
+        RateLimitError when this user has made too many. web_gate does the same for
+        web searches and opened links.
         """
         images = images or []
 
@@ -242,7 +245,7 @@ class AIResponseHandler:
             offered = [tool for tool in self.tools if tool.available()] if allow_files else []
             by_name = {tool.name: tool for tool in offered}
             request = Turn(clean_query, username, conversation_history or "", attached_context, images,
-                           file_gate=file_gate)
+                           file_gate=file_gate, web_gate=web_gate)
             request.ask_model = lambda model_messages, limit: self._chat(model_messages, limit, request=request)
             files = request.files
             messages = [
@@ -322,6 +325,9 @@ class AIResponseHandler:
                             self.response_cache.pop(k, None)
 
             self._log_reply(request, reply)
+            if user_id and get_usage_guard().take_daily_warning(user_id):
+                # Discord shows a line that starts with "-# " as small grey text
+                reply.text += "\n-# heads up, u used 80% of ur ai for today. `/usage` shows whats left"
             return reply
 
         except BudgetExceededError as e:
@@ -381,6 +387,14 @@ class AIResponseHandler:
     @staticmethod
     def _budget_response(error: BudgetExceededError) -> str:
         """In-character message for when a spending cap stops the bot from calling the model."""
+        if error.scope == "user_daily":
+            now = datetime.now(timezone.utc)
+            midnight = datetime.combine(error.resets_on, datetime.min.time(), timezone.utc)
+            hours = max(1, round((midnight - now).total_seconds() / 3600))
+            return f"u used up ur ai for today, back in about {hours}h. `/usage` shows it"
+        if error.scope == "user_weekly":
+            return (f"u hit ur ai limit for the week, more opens up on {error.resets_on:%b} {error.resets_on.day}. "
+                    "`/usage` shows it")
         if error.scope == "daily":
             return "hit my daily ai limit, my dev capped me. im back tomorrow"
         return f"im out of ai budget till {error.resets_on:%b} {error.resets_on.day}, my dev capped me. try again then"

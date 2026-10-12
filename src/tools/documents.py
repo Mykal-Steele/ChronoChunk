@@ -7,6 +7,7 @@ from config.ai_config import WRITER_PROMPT
 from src.document_builder import (
     DiagramSyntaxError, DocumentError, build_diagram, build_document, clean_document_text, clean_title, split_mermaid,
 )
+from src import usage_context
 from src.exceptions import RateLimitError
 from src.tools.base import Tool, ToolResult, Turn, user_content
 from src.usage_guard import BudgetExceededError
@@ -105,13 +106,14 @@ async def write_document(fmt: str, title: str, brief: str, turn: Turn, max_pages
         "line before and after each heading, list, table and code block."
     )
 
-    message = await turn.ask_model(
-        [
-            {"role": "system", "content": WRITER_PROMPT},
-            {"role": "user",   "content": user_content("\n\n".join(parts), turn.images)}
-        ],
-        WRITER_MAX_TOKENS,
-    )
+    with usage_context.feature("document"):
+        message = await turn.ask_model(
+            [
+                {"role": "system", "content": WRITER_PROMPT},
+                {"role": "user",   "content": user_content("\n\n".join(parts), turn.images)}
+            ],
+            WRITER_MAX_TOKENS,
+        )
     markdown = (message.content if isinstance(message.content, str) else "").strip()
 
     # Drop a code fence wrapped around the whole document

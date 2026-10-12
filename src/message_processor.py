@@ -4,6 +4,7 @@ import re
 import discord
 from typing import Optional, Set
 from src.ai_response_handler import Reply
+from src import usage_context
 from src.exceptions import RateLimitError
 from src.channel_settings import get_channel_settings
 from src.message_context import build_attached_context, history_text, resolve_message_link
@@ -83,6 +84,8 @@ class MessageProcessor:
             # Get basic info
             content = message.content
             user_id = str(message.author.id)
+            # Every model call this message leads to is counted against its author
+            usage_context.set_user(user_id)
             username = message.author.display_name
             channel_id = str(message.channel.id)
             
@@ -261,16 +264,18 @@ is_correction: bool) -> None:
                 # unless that was switched off for this channel.
                 if not get_channel_settings().reads_recent_posts(channel_id):
                     recent = None
-                attached = await build_attached_context(message, referenced, self.bot.user.id,
-                                                        linked=linked, recent=recent)
-                # Files (documents, diagrams) count against a per-user daily limit
-                file_gate = None
+                # Files made, PDFs read in full and web lookups each count against a daily limit per user
+                file_gate = pdf_gate = web_gate = None
                 if self.rate_limiter:
                     file_gate = lambda: self.rate_limiter.check_rate_limit(user_id, "file")
+                    pdf_gate = lambda: self.rate_limiter.check_rate_limit(user_id, "pdf")
+                    web_gate = lambda: self.rate_limiter.check_rate_limit(user_id, "web")
+                attached = await build_attached_context(message, referenced, self.bot.user.id,
+                                                        linked=linked, recent=recent, pdf_gate=pdf_gate)
                 reply = await self.ai_handler.generate_reply(
                     enriched_query, conversation_history, username, user_id,
                     attached_context=attached.text, images=attached.images,
-                    allow_files=True, file_gate=file_gate
+                    allow_files=True, file_gate=file_gate, web_gate=web_gate
                 )
                 ai_response = reply.text
 
