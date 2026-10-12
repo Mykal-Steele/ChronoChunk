@@ -9,10 +9,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # The job only reads the code, and the steps below run third-party tools over the checkout
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       # The test stage is the bot's image plus pytest: pandoc, the fonts and every pinned package
       - name: Build the test image
