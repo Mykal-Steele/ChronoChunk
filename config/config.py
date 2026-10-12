@@ -75,6 +75,11 @@ class Config:
     # message. Empty means those jobs use the main deployment.
     AI_BACKGROUND_DEPLOYMENT = os.getenv("AZURE_OPENAI_BACKGROUND_DEPLOYMENT", "").strip()
 
+    # For testing the live bot. The bot ignores every other bot, except this one bot's messages in
+    # this one channel. Both are Discord ids and both must be set. Empty means no bot is answered.
+    TEST_BOT_ID = os.getenv("TEST_BOT_ID", "").strip()
+    TEST_CHANNEL_ID = os.getenv("TEST_CHANNEL_ID", "").strip()
+
     # Tavily key for web search. Without it the bot can still open links, it just cannot search.
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
     

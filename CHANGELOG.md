@@ -10,6 +10,12 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.11.0 (2026-10-12)
+
+### Added
+
+- The live bot can be tested by another bot. With `TEST_BOT_ID` and `TEST_CHANNEL_ID` set, the bot answers that one bot in that one channel. It still ignores every other bot, and that bot everywhere else. With either one empty, which is the default, nothing changes. `/setup` shows whether it is on.
+
 ## 3.10.1 (2026-10-12)
 
 ### Fixed

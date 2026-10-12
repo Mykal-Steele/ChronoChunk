@@ -106,6 +106,7 @@ Everything else uses the default from `config/config.py` unless `.env` sets it:
 | `PDF_PAGE_NOTES` | `auto` | `auto`, `on` or `off`: whether the bot describes PDF pages from pictures of them |
 | `PDF_NOTES_KEEP_DAYS` | 7 | Days a PDF's page descriptions are kept |
 | `LOG_RETENTION_DAYS` | 30 | Days a log file is kept |
+| `TEST_BOT_ID`, `TEST_CHANNEL_ID` | empty | For testing the live bot: the one other bot it answers, and the one channel it answers it in. Both must be set. |
 
 The message, file, PDF, web and recap limits are in `RATE_LIMITS` in the same file.
 
