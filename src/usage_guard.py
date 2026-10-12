@@ -124,12 +124,19 @@ class UsageGuard:
         if today_cost >= self.user_daily_budget:
             raise BudgetExceededError("user_daily", date.fromordinal(today.toordinal() + 1))
         if today_cost + earlier >= self.user_weekly_budget:
-            # The oldest day they spent on leaves the 7-day window first
+            # Days leave the 7-day window oldest first. They can spend again on the first
+            # day when enough of them have left for the rest to fit under the limit.
             rows = self._database.query(
-                "SELECT MIN(day) AS day FROM usage_daily WHERE user_id = ? AND day >= ? AND cost > 0",
+                "SELECT day, SUM(cost) AS cost FROM usage_daily WHERE user_id = ? AND day >= ? GROUP BY day ORDER BY day",
                 (user_id, date.fromordinal(today.toordinal() - 6).isoformat()))
-            oldest = date.fromisoformat(rows[0]["day"]) if rows and rows[0]["day"] else today
-            raise BudgetExceededError("user_weekly", date.fromordinal(oldest.toordinal() + 7))
+            still_counted = today_cost + earlier
+            opens = date.fromordinal(today.toordinal() + 7)
+            for row in rows:
+                still_counted -= float(row["cost"])
+                if still_counted < self.user_weekly_budget:
+                    opens = date.fromordinal(date.fromisoformat(row["day"]).toordinal() + 7)
+                    break
+            raise BudgetExceededError("user_weekly", opens)
 
     def check(self) -> None:
         """Raise BudgetExceededError if a cap is reached. Call before every model request."""

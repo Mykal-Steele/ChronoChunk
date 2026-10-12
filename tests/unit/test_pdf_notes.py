@@ -194,3 +194,13 @@ async def test_a_pdf_over_the_daily_limit_is_read_the_short_way_and_says_so(desc
     assert "what the pages of" not in block and "Plain words about the plan" in block
     describer.assert_not_awaited()
 
+
+async def test_a_text_only_pdf_does_not_use_up_a_pdf_read(describer):
+    import weasyprint
+    from unittest.mock import MagicMock
+    gate = MagicMock()
+    data = weasyprint.HTML(string="<p>" + "Only words here, nothing to look at. " * 40 + "</p>").write_pdf()
+    assert await pdf_notes.page_notes(data, "report.pdf", gate=gate) is None
+    assert await pdf_notes.page_notes(data, "report.pdf", gate=gate) is None
+    gate.assert_not_called()
+

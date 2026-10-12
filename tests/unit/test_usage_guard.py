@@ -307,3 +307,24 @@ def test_a_feature_label_ends_with_its_block(as_user):
         assert usage_context.current() == ("111", "facts")
     assert usage_context.current() == ("111", "chat")
 
+
+def test_the_weekly_reset_waits_for_enough_days_to_leave(user_guard, as_user, monkeypatch):
+    as_user("111")
+    for day in (5, 6, 7, 8):  # $0.90 on four days is $3.60 against a $2.50 week
+        set_today(monkeypatch, date(2026, 10, day))
+        try:
+            user_guard.check()
+        except BudgetExceededError:
+            pass
+        user_guard.record(usage(completion=450_000))
+    set_today(monkeypatch, date(2026, 10, 9))
+    with pytest.raises(BudgetExceededError) as stopped:
+        user_guard.check()
+    # the 5th leaving still leaves $2.70. the 6th has to go too, which happens on the 13th.
+    assert stopped.value.resets_on == date(2026, 10, 13)
+    set_today(monkeypatch, date(2026, 10, 12))
+    with pytest.raises(BudgetExceededError):
+        user_guard.check()
+    set_today(monkeypatch, date(2026, 10, 13))
+    user_guard.check()
+

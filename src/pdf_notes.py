@@ -122,17 +122,14 @@ async def _in_render_thread(function, *args):
     return await asyncio.to_thread(_locked, function, *args)
 
 
-async def _build(data: bytes, filename: str, mode: str) -> Tuple[Optional[str], bool]:
+async def _build(data: bytes, filename: str, pages: List[int]) -> Tuple[Optional[str], bool]:
     """
-    Describe the pages of one PDF. Returns the descriptions (None when there is nothing
-    to add) and whether every page that should be described was.
+    Describe the given pages of one PDF. Returns the descriptions (None when none could
+    be written) and whether every page was described.
     """
     started = time.monotonic()
     # This runs as its own task, so the label stays with the pass and nothing else
     usage_context.label("pdf_notes")
-    pages = await _in_render_thread(_pages_to_describe, data, mode)
-    if not pages:
-        return None, True
 
     limit = asyncio.Semaphore(REQUESTS_AT_ONCE)
     costs: List[float] = []
@@ -205,9 +202,19 @@ async def page_notes(data: bytes, filename: str, wait_seconds: Optional[float] =
     # Two people asking about the same new file share one pass
     running = _in_progress.get(key)
     if running is None:
+        # Looked at before the gate, so a PDF with nothing to describe costs no allowance
+        try:
+            pages = await _in_render_thread(_pages_to_describe, data, mode)
+        except Exception as e:
+            logger.error(f"Page notes for {filename} failed: {e!r}")
+            return None
+        if not pages:
+            return None
+        running = _in_progress.get(key)  # someone else may have started the pass meanwhile
+    if running is None:
         if gate:
             gate()
-        running = asyncio.ensure_future(_build(data, filename, mode))
+        running = asyncio.ensure_future(_build(data, filename, pages))
         _in_progress[key] = running
         running.add_done_callback(lambda finished: _finish(key, finished))
     try:
