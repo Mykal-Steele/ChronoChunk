@@ -125,3 +125,12 @@ def test_the_summary_adds_up_everything_used_so_far(database):
 def test_no_file_path_is_shown():
     text = setup_info.setup_summary("gpt-6-luna")
     assert "chronochunk.db" not in text and "update.sh" not in text and "deployment/" not in text
+
+
+def test_the_summary_says_whether_the_test_bot_is_answered(monkeypatch):
+    assert "test bot    off" in setup_info.setup_summary("gpt-6-luna")
+    monkeypatch.setattr(Config, "TEST_BOT_ID", "777000777000777000")
+    monkeypatch.setattr(Config, "TEST_CHANNEL_ID", "999000999000999000")
+    text = setup_info.setup_summary("gpt-6-luna")
+    assert "test bot    answered in one test channel" in text
+    assert "777000777000777000" not in text and "999000999000999000" not in text

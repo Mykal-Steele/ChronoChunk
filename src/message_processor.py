@@ -6,6 +6,7 @@ import discord
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Optional, Set
 from src.ai_response_handler import AIResponseHandler, Reply
+from config.config import Config
 from src import usage_context
 from src.command_handler import CommandHandler
 from src.exceptions import RateLimitError
@@ -111,8 +112,8 @@ class MessageProcessor:
     async def process_message(self, message: discord.Message) -> None:
         """Process an incoming Discord message - Properly capture ALL channel messages"""
         try:
-            # Skip bot messages
-            if message.author.bot:
+            # Skip bot messages, except the test bot's in the test channel
+            if message.author.bot and not self._is_test_message(message):
                 return
                 
             # Get basic info
@@ -160,6 +161,15 @@ class MessageProcessor:
             logger.error(f"Error processing message: {e}")
             logger.error(traceback.format_exc())
     
+    def _is_test_message(self, message: discord.Message) -> bool:
+        """True for a message from the one bot the settings name, in the one channel they name."""
+        if not Config.TEST_BOT_ID or not Config.TEST_CHANNEL_ID:
+            return False
+        # Never the bot itself, whatever the settings say, or it would answer its own answers
+        if message.author.id == self.bot.user.id:
+            return False
+        return str(message.author.id) == Config.TEST_BOT_ID and str(message.channel.id) == Config.TEST_CHANNEL_ID
+
     async def _get_referenced_message(self, message: discord.Message) -> Optional[discord.Message]:
         """Return the message this one replies to, or None if it is not a reply or it is gone."""
         reference = message.reference

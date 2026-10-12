@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, AsyncMock
 
 import discord
 
+from config.config import Config
+
 
 from src.ai_response_handler import Reply
 from tests.fakes import AsyncIterator
@@ -61,6 +63,58 @@ async def test_bot_message_ignored(pipeline):
     msg = _make_message(bot.user, is_bot_author=True)
     await processor.process_message(msg)
     msg.channel.send.assert_not_called()
+    ai_handler.generate_reply.assert_not_called()
+
+
+def _test_bot_message(bot_user, author_id=777, channel_id=99999, content="/yo"):
+    msg = _make_message(bot_user, content=content, is_bot_author=True)
+    msg.author.id = author_id
+    msg.channel.id = channel_id
+    return msg
+
+
+async def test_the_test_bot_is_answered_in_the_test_channel(pipeline, monkeypatch):
+    processor, _, _, _, ai_handler, bot = pipeline
+    monkeypatch.setattr(Config, "TEST_BOT_ID", "777")
+    monkeypatch.setattr(Config, "TEST_CHANNEL_ID", "99999")
+    msg = _test_bot_message(bot.user)
+    await processor.process_message(msg)
+    ai_handler.generate_reply.assert_called_once()
+    msg.reply.assert_called_once()
+
+
+async def test_the_test_bot_is_ignored_in_any_other_channel(pipeline, monkeypatch):
+    processor, _, _, _, ai_handler, bot = pipeline
+    monkeypatch.setattr(Config, "TEST_BOT_ID", "777")
+    monkeypatch.setattr(Config, "TEST_CHANNEL_ID", "99999")
+    await processor.process_message(_test_bot_message(bot.user, channel_id=55555))
+    ai_handler.generate_reply.assert_not_called()
+
+
+async def test_another_bot_is_ignored_in_the_test_channel(pipeline, monkeypatch):
+    processor, _, _, _, ai_handler, bot = pipeline
+    monkeypatch.setattr(Config, "TEST_BOT_ID", "777")
+    monkeypatch.setattr(Config, "TEST_CHANNEL_ID", "99999")
+    await processor.process_message(_test_bot_message(bot.user, author_id=888))
+    ai_handler.generate_reply.assert_not_called()
+
+
+async def test_one_setting_alone_answers_no_bot(pipeline, monkeypatch):
+    processor, _, _, _, ai_handler, bot = pipeline
+    monkeypatch.setattr(Config, "TEST_BOT_ID", "777")
+    monkeypatch.setattr(Config, "TEST_CHANNEL_ID", "")
+    await processor.process_message(_test_bot_message(bot.user))
+    monkeypatch.setattr(Config, "TEST_BOT_ID", "")
+    monkeypatch.setattr(Config, "TEST_CHANNEL_ID", "99999")
+    await processor.process_message(_test_bot_message(bot.user))
+    ai_handler.generate_reply.assert_not_called()
+
+
+async def test_the_bot_never_answers_itself_even_when_named_as_the_test_bot(pipeline, monkeypatch):
+    processor, _, _, _, ai_handler, bot = pipeline
+    monkeypatch.setattr(Config, "TEST_BOT_ID", str(bot.user.id))
+    monkeypatch.setattr(Config, "TEST_CHANNEL_ID", "99999")
+    await processor.process_message(_test_bot_message(bot.user, author_id=bot.user.id))
     ai_handler.generate_reply.assert_not_called()
 
 
