@@ -259,3 +259,110 @@ async def test_fact_extraction_skipped_for_short_message(pipeline, mock_genai_cl
     await processor.process_message(msg)
     # With message "ok" (1 word), extract_and_save_facts should return early
     # API should not have been called for fact extraction (it is for the AI response though)
+
+
+# ── several people at once, and joining in uncalled ───────────────────────────
+
+def _plain(msg):
+    """A message with no pings and no reply, the way a real one arrives."""
+    msg.mentions = []
+    msg.role_mentions = []
+    return msg
+
+
+async def test_an_answer_pings_its_asker_only_when_two_people_are_talking_to_the_bot(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("yo"))
+    first = _plain(_make_message(bot.user, content="/yo"))
+    await processor.process_message(first)
+    assert first.reply.await_args.kwargs["mention_author"] is False
+
+    second = _plain(_make_message(bot.user, content="/hey"))
+    second.author.id = 67890
+    await processor.process_message(second)
+
+    assert second.reply.await_args.kwargs["mention_author"] is True
+    allowed = second.reply.await_args.kwargs["allowed_mentions"]
+    assert allowed.replied_user is True and allowed.everyone is False and allowed.users is False and allowed.roles is False
+
+
+async def test_the_bot_can_answer_an_uncalled_message_right_after_a_call(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("yo"))
+    await processor.process_message(_plain(_make_message(bot.user, content="/yo")))
+
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("lmao same"))
+    uncalled = _plain(_make_message(bot.user, content="bro that exam was brutal"))
+    uncalled.author.id = 67890
+    await processor.process_message(uncalled)
+
+    assert uncalled.reply.await_args.args[0] == "lmao same"
+    assert uncalled.reply.await_args.kwargs["mention_author"] is False
+    call = ai_handler.generate_reply.await_args
+    assert "nobody called u" in call.kwargs["attached_context"]
+    assert call.args[3] is None  # no user id, so nobody's own limit pays and nothing is saved about them
+
+
+async def test_the_bot_stays_out_when_the_model_says_so(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("yo"))
+    await processor.process_message(_plain(_make_message(bot.user, content="/yo")))
+
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("SKIP"))
+    uncalled = _plain(_make_message(bot.user, content="anyone seen my keys"))
+    await processor.process_message(uncalled)
+
+    ai_handler.generate_reply.assert_awaited_once()
+    uncalled.reply.assert_not_called()
+    uncalled.channel.send.assert_not_called()
+
+
+async def test_a_failed_answer_is_never_sent_to_someone_who_did_not_ask(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("yo"))
+    await processor.process_message(_plain(_make_message(bot.user, content="/yo")))
+
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("my brain just glitched fr", ok=False))
+    uncalled = _plain(_make_message(bot.user, content="what a day"))
+    await processor.process_message(uncalled)
+
+    uncalled.reply.assert_not_called()
+    uncalled.channel.send.assert_not_called()
+
+
+async def test_an_uncalled_message_is_not_weighed_without_a_recent_call(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    await processor.process_message(_plain(_make_message(bot.user, content="just chatting")))
+    ai_handler.generate_reply.assert_not_called()
+
+
+async def test_a_message_to_someone_else_is_left_alone(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("yo"))
+    await processor.process_message(_plain(_make_message(bot.user, content="/yo")))
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("should not be sent"))
+
+    pinging = _plain(_make_message(bot.user, content="<@222> u coming tonight?"))
+    pinging.mentions = [MagicMock(id=222)]
+    await processor.process_message(pinging)
+
+    answering = _plain(_make_message(bot.user, content="yeah for sure"))
+    other = MagicMock()
+    other.author.id = 222
+    answering.reference = MagicMock(message_id=5, resolved=None)
+    answering.channel.fetch_message = AsyncMock(return_value=other)
+    await processor.process_message(answering)
+
+    ai_handler.generate_reply.assert_not_called()
+
+
+async def test_joining_in_stops_after_what_one_call_allows(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("yo"))
+    await processor.process_message(_plain(_make_message(bot.user, content="/yo")))
+
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("lol"))
+    for number in range(5):
+        await processor.process_message(_plain(_make_message(bot.user, content=f"message {number}")))
+
+    assert ai_handler.generate_reply.await_count == 2

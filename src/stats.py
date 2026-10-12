@@ -17,6 +17,7 @@ JOBS = {
     "document": "documents",
     "pdf_notes": "pdf pages",
     "emoji_notes": "emoji",
+    "join_in": "joining in",
     "music": "music search",
     "": "earlier",
 }

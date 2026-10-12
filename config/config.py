@@ -80,6 +80,10 @@ class Config:
     TEST_BOT_ID = os.getenv("TEST_BOT_ID", "").strip()
     TEST_CHANNEL_ID = os.getenv("TEST_CHANNEL_ID", "").strip()
 
+    # For this many seconds after someone calls the bot in a channel, it may answer a message there
+    # that nobody addressed to it, when the model thinks a person in the chat would. 0 turns that off.
+    JOIN_IN_SECONDS = int(os.getenv("JOIN_IN_SECONDS", 30))
+
     # Tavily key for web search. Without it the bot can still open links, it just cannot search.
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
     

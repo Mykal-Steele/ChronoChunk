@@ -10,6 +10,14 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.14.0 (2026-10-12)
+
+### Added
+
+- The bot can join a conversation it is part of. For 30 seconds after someone calls it in a channel, it reads the messages there that nobody addressed to it, and answers one when the model thinks a person in the chat would. Otherwise it says nothing. One call allows it to weigh three such messages and answer two. It leaves alone a message that replies to or pings someone else. `JOIN_IN_SECONDS` sets the time, and 0 turns it off. `/setup` shows the setting.
+- Nothing is saved about a person the bot answers this way, and the cost does not count against their own AI limit. It counts against the bot's daily and monthly caps and shows in `/stats` as "joining in".
+- When two or more people are talking to the bot in a channel within a minute, its answer pings the person it is for. With one person it stays a quiet reply, as before.
+
 ## 3.13.0 (2026-10-12)
 
 ### Added

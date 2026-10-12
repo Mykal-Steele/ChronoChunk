@@ -9,6 +9,7 @@ from src.exceptions import RateLimitError
 from src.game_manager import GameManager
 from src.help_menu import build_help_embed
 from src.channel_settings import get_channel_settings
+from src.conversation import Conversation
 from src.message_context import gather_context, resolve_message_link
 from src.message_handler import MessageHandler
 from src.message_processor import MessageProcessor, NO_PINGS, give_first_use_role
@@ -242,6 +243,10 @@ class SlashCommandManager:
 
                 # Defer the response to give us time to process
                 await interaction.response.defer(thinking=True)
+                # /chat is a call like any other, so the bot may join in afterwards
+                conversation = getattr(getattr(self.bot, "message_processor", None), "conversation", None)
+                if isinstance(conversation, Conversation):
+                    conversation.called(channel_id, user_id)
                 
                 # Get user data for context
                 user_data = self.user_data_manager.load_user_data(user_id, username)
