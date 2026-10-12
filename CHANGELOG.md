@@ -10,6 +10,14 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.9.0 (2026-10-12)
+
+### Added
+
+- `/setup` shows where the bot runs and the settings it runs with: the host, the Python and discord.py versions, uptime and memory, both AI models, the budgets and the limits. It works typed as well. No key, token, address or user id is in it.
+- On an Azure VM the bot asks Azure for the VM's name, size and region at startup, so `/setup` names the real machine. Anywhere else it says it is not on an Azure VM.
+- The README has a "Where it runs" section: the server, its folders, every setting, how to deploy a change and how to set up a new server.
+
 ## 3.8.0 (2026-10-12)
 
 ### Added

@@ -6,6 +6,7 @@ from src.ai_response_handler import Reply
 from src.exceptions import RateLimitError
 from src.help_menu import build_help_embed
 from src.rate_limiter import RateLimiter
+from src.setup_info import setup_summary
 from src.message_context import read_channel_messages
 from src.usage_guard import get_usage_guard
 from src.logger import logger
@@ -23,7 +24,7 @@ CHANNEL_ANSWER_RULE = (
 
 class CommandHandler:
     """
-    Handles the commands that also work as typed messages: /tldr, /usage, /model and /help.
+    Handles the commands that also work as typed messages: /tldr, /usage, /model, /setup and /help.
     Every other command is a slash command, in src/slash_commands.py.
     """
 
@@ -34,6 +35,7 @@ class CommandHandler:
             "tldr": self._handle_tldr,
             "usage": self._handle_usage,
             "model": self._handle_model,
+            "setup": self._handle_setup,
             "help": self._handle_help,
         }
 
@@ -115,6 +117,15 @@ class CommandHandler:
     async def _handle_model(self, args: List[str], message: discord.Message, user_id: str) -> Optional[str]:
         """Show the AI models for a bare '/model'. With more words, like '/model this for me', it is chat."""
         return None if args else self.model_summary()
+
+    async def _handle_setup(self, args: List[str], message: discord.Message, user_id: str) -> Optional[str]:
+        """Show where and how the bot runs for a bare '/setup'. With more words it is chat."""
+        return None if args else self.setup_summary()
+
+    def setup_summary(self) -> str:
+        """Where the bot runs and the settings it runs with, for other developers."""
+        ai_handler = getattr(self.bot, "ai_handler", None)
+        return setup_summary(getattr(ai_handler, "deployment", None) or "unknown")
 
     def model_summary(self) -> str:
         """One line on which AI models the bot is running on right now."""

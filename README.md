@@ -48,6 +48,91 @@ To run it on a server and keep its data between rebuilds, use `deployment/docker
 
 The bot runs inside the container as user 1000, not root. The folders mounted for `user_data`, `logs` and `state` must belong to that user: `sudo chown -R 1000:1000 data`.
 
+## Where it runs
+
+The live bot runs on one small Azure VM. Type `/setup` in Discord to see the same facts from the running bot, with the values it is using right now.
+
+| What | Value |
+| --- | --- |
+| Host | Azure VM `chronochunk-vm`, size `Standard_B2ats_v2` (1 GiB of RAM), region `southeastasia`, Ubuntu 24.04 |
+| Swap | 2 GiB, because image builds need more than 1 GiB |
+| Runs in | Docker Compose, from `deployment/docker-compose.yml`. One container named `chronochunk`. |
+| Container limits | 640 MB of memory, 256 processes, user 1000, no Linux capabilities. It restarts by itself unless stopped. |
+| Health check | `http://localhost:8080/health` once a minute. `/status` on the same port gives the version and uptime as JSON. |
+| Chat model | Azure OpenAI deployment `gpt-6-luna`, with reasoning switched off (`none`) |
+| Background model | `gpt-5-nano`, which picks facts out of messages after the answer is sent |
+| Data | One SQLite file, `state/chronochunk.db`, kept on the host so a rebuild does not touch it |
+| Deploys from | The `main` branch |
+
+### Folders on the server
+
+Everything is under `/opt/chronochunk`:
+
+- `app/` is a git checkout of `main`. The image is built from it.
+- `docker-compose.yml` is a copy of `deployment/docker-compose.yml`. Copy it again when that file changes.
+- `.env` holds the secrets. It is not in the repo.
+- `data/user_data`, `data/logs` and `data/state` are mounted into the container and belong to user 1000.
+
+### Settings
+
+Secrets go in `.env` on the server:
+
+| Name | What it is |
+| --- | --- |
+| `DISCORD_TOKEN` | The bot's Discord token |
+| `AZURE_OPENAI_KEY` | Key for the Azure OpenAI resource |
+| `AZURE_OPENAI_ENDPOINT` | The resource's address, ending in `/openai/v1` |
+| `TAVILY_API_KEY` | Key for web search. Optional. |
+
+These three are set in `docker-compose.yml`, which wins over `.env`:
+
+| Name | Value on the server |
+| --- | --- |
+| `AZURE_OPENAI_DEPLOYMENT` | `gpt-6-luna` |
+| `AI_CHAT_REASONING_EFFORT` | `none` |
+| `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` | `gpt-5-nano` |
+
+Everything else uses the default from `config/config.py` unless `.env` sets it:
+
+| Name | Default | What it does |
+| --- | --- | --- |
+| `AI_MONTHLY_BUDGET_USD` | 15 | The bot stops calling the model past this much in a billing month |
+| `AI_DAILY_BUDGET_USD` | 2 | The same, per day |
+| `AI_BUDGET_RESET_DAY` | 14 | Day of the month the billing month starts |
+| `AI_USER_DAILY_BUDGET_USD` | 0.20 | What one person may use in a day |
+| `AI_USER_WEEKLY_BUDGET_USD` | 0.60 | What one person may use over 7 days |
+| `AI_UNLIMITED_USER_IDS` | empty | Discord user ids the two limits above skip, separated by commas |
+| `PDF_PAGE_NOTES` | `auto` | `auto`, `on` or `off`: whether the bot describes PDF pages from pictures of them |
+| `PDF_NOTES_KEEP_DAYS` | 7 | Days a PDF's page descriptions are kept |
+| `LOG_RETENTION_DAYS` | 30 | Days a log file is kept |
+
+The message, file, PDF, web and recap limits are in `RATE_LIMITS` in the same file.
+
+### Deploying a change
+
+1. Merge the pull request into `main`.
+2. If `deployment/docker-compose.yml` changed, copy it to `/opt/chronochunk/docker-compose.yml` on the server.
+3. Run the update script on the server. It pulls `main`, rebuilds the image and restarts the container:
+
+```bash
+ssh azureuser@<server address> /opt/chronochunk/update.sh
+```
+
+4. Check it came back: `docker logs --tail 50 chronochunk`, or `/setup` in Discord, which shows the new version and a fresh uptime.
+
+### Setting up a new server
+
+1. Create the VM with the first-boot file. It installs Docker, adds the swap file, makes the folders and clones the repo:
+
+```bash
+az vm create -g ChronoChunk -n chronochunk-vm --image Ubuntu2404 --size Standard_B2ats_v2 \
+  --admin-username azureuser --generate-ssh-keys --custom-data deployment/cloud-init.yml
+```
+
+2. Copy `deployment/docker-compose.yml` and `deployment/update.sh` to `/opt/chronochunk/`, and create `/opt/chronochunk/.env` with the secrets above.
+3. Give the data folders to the container's user: `sudo chown -R 1000:1000 /opt/chronochunk/data`.
+4. Start it: `cd /opt/chronochunk && docker compose up -d --build`.
+
 ## Commands
 
 Slash commands:
@@ -60,12 +145,13 @@ Slash commands:
 - `/game <max>`, `/guess <number>`, `/end` - The number guessing game
 - `/usage` - What you have left today: messages, PDFs, files, web lookups and your AI limit. Only you see the answer.
 - `/model` - Which AI model the bot is running on
+- `/setup` - Where the bot runs and the settings it runs with, for developers
 - `/recent-posts on|off` - Turn reading of just-posted images and files on or off in a channel (needs Manage Channels)
 - `/help` - Show every command and the limits below
 - `/code` - Link to this repository
 - The music commands are listed under [Music commands](#music-commands).
 
-You can also type to the bot without picking a slash command. A message that starts with `/`, a ping, or a reply to one of its messages is chat. `/tldr`, `/usage`, `/model` and `/help` work typed as well.
+You can also type to the bot without picking a slash command. A message that starts with `/`, a ping, or a reply to one of its messages is chat. `/tldr`, `/usage`, `/model`, `/setup` and `/help` work typed as well.
 
 ## Reading messages and files
 

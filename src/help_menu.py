@@ -84,7 +84,8 @@ def build_help_embed() -> discord.Embed:
         "ask for it as a pdf or docx (`/make this a pdf`, `/write a proposal for X as docx`) and i attach the file",
         "ask for a diagram or flowchart and i send it as an image",
         "`/usage` - what u have left today: messages, pdfs, files, web lookups and ur ai limit. only u see it",
-        "`/model` - which ai model im running on"
+        "`/model` - which ai model im running on",
+        "`/setup` - where i run and with which settings, for the devs"
     ]
     embed.add_field(name="📝 writing and files", value="\n".join(writing_cmds), inline=False)
 
