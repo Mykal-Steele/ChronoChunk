@@ -690,3 +690,22 @@ async def test_setup_with_more_words_is_chat(pipeline):
     _channel_with(trigger)
     await processor.process_message(trigger)
     ai_handler.generate_reply.assert_called_once()
+
+
+async def test_typed_stats_shows_what_the_bot_has_used(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    processor.text_commands = {"tldr", "usage", "model", "setup", "stats", "help"}  # how the real bot is wired
+    trigger = fake_message(fake_author("Kruskal"), "/stats", message_id=1)
+    _channel_with(trigger)
+    await processor.process_message(trigger)
+    assert trigger.channel.send.call_args[0][0].startswith("nothing to count yet")
+    ai_handler.generate_reply.assert_not_called()
+
+
+async def test_stats_with_more_words_is_chat(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    processor.text_commands = {"tldr", "usage", "model", "setup", "stats", "help"}
+    trigger = fake_message(fake_author("Kruskal"), "/stats homework is killing me", message_id=1)
+    _channel_with(trigger)
+    await processor.process_message(trigger)
+    ai_handler.generate_reply.assert_called_once()

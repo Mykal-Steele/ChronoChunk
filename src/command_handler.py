@@ -7,6 +7,7 @@ from src.exceptions import RateLimitError
 from src.help_menu import build_help_embed
 from src.rate_limiter import RateLimiter
 from src.setup_info import setup_summary
+from src.stats import stats_summary
 from src.message_context import read_channel_messages
 from src.usage_guard import get_usage_guard
 from src.logger import logger
@@ -24,7 +25,7 @@ CHANNEL_ANSWER_RULE = (
 
 class CommandHandler:
     """
-    Handles the commands that also work as typed messages: /tldr, /usage, /model, /setup and /help.
+    Handles the commands that also work as typed messages: /tldr, /usage, /model, /setup, /stats and /help.
     Every other command is a slash command, in src/slash_commands.py.
     """
 
@@ -36,6 +37,7 @@ class CommandHandler:
             "usage": self._handle_usage,
             "model": self._handle_model,
             "setup": self._handle_setup,
+            "stats": self._handle_stats,
             "help": self._handle_help,
         }
 
@@ -121,6 +123,10 @@ class CommandHandler:
     async def _handle_setup(self, args: List[str], message: discord.Message, user_id: str) -> Optional[str]:
         """Show where and how the bot runs for a bare '/setup'. With more words it is chat."""
         return None if args else self.setup_summary()
+
+    async def _handle_stats(self, args: List[str], message: discord.Message, user_id: str) -> Optional[str]:
+        """Show everything the bot has used so far for a bare '/stats'. With more words it is chat."""
+        return None if args else stats_summary()
 
     def setup_summary(self) -> str:
         """Where the bot runs and the settings it runs with, for other developers."""

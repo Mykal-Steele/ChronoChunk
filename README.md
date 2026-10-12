@@ -62,6 +62,7 @@ The live bot runs on one small Azure VM. Type `/setup` in Discord to see the sam
 | Chat model | Azure OpenAI deployment `gpt-6-luna`, with reasoning switched off (`none`) |
 | Background model | `gpt-5-nano`, which picks facts out of messages after the answer is sent |
 | Data | One SQLite file, `state/chronochunk.db`, kept on the host so a rebuild does not touch it |
+| Backups | A copy of that file in `state/backups` at startup and once a day. The newest 7 are kept. They are on the same disk, so they do not cover losing the VM. |
 | Deploys from | The `main` branch |
 
 ### Folders on the server
@@ -146,12 +147,13 @@ Slash commands:
 - `/usage` - What you have left today: messages, PDFs, files, web lookups and your AI limit. Only you see the answer.
 - `/model` - Which AI model the bot is running on
 - `/setup` - Where the bot runs and the settings it runs with, for developers
+- `/stats` - Everything the bot has used so far: AI calls, tokens and cost, by day, by job and by model
 - `/recent-posts on|off` - Turn reading of just-posted images and files on or off in a channel (needs Manage Channels)
 - `/help` - Show every command and the limits below
 - `/code` - Link to this repository
 - The music commands are listed under [Music commands](#music-commands).
 
-You can also type to the bot without picking a slash command. A message that starts with `/`, a ping, or a reply to one of its messages is chat. `/tldr`, `/usage`, `/model`, `/setup` and `/help` work typed as well.
+You can also type to the bot without picking a slash command. A message that starts with `/`, a ping, or a reply to one of its messages is chat. `/tldr`, `/usage`, `/model`, `/setup`, `/stats` and `/help` work typed as well.
 
 ## Reading messages and files
 
@@ -274,6 +276,7 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/app -w /app c
 - Changes are made on a branch, such as `feature/web-search` or `fix/spotify-links`, and reach `main` through a pull request once the tests pass. The server runs `main`.
 - Packages are pinned. `requirements.in` lists what the bot imports and `requirements.txt` is built from it. To change a version, edit `requirements.in` and run the command at the top of that file. `requirements-dev.in` works the same way for the test packages.
 - Data is in one SQLite file, `state/chronochunk.db`. To look inside: `sqlite3 state/chronochunk.db ".tables"`. The schema is the `MIGRATIONS` list in `src/database.py`. To change it, add a new entry at the end.
+- The bot copies that file to `state/backups/chronochunk-<day>.db` at startup and once a day, and keeps 7 copies. To go back to one: stop the bot, delete `state/chronochunk.db-wal` and `state/chronochunk.db-shm` if they exist, copy the backup over `state/chronochunk.db`, and start the bot.
 - Logs go to `logs/chronochunk.log`. A new file starts each day and files older than 30 days are deleted.
 - Every answer writes an `Answered <name> in ...` line to the log with the seconds each step took: history, context, model and tools, and send. Start there when a reply was slow.
 

@@ -150,6 +150,15 @@ class Database:
         self.execute("INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                      (key, value))
 
+    def backup(self, path: str) -> None:
+        """Write a complete copy of the database to path. Safe while the bot is using it."""
+        target = sqlite3.connect(path)
+        try:
+            with self._lock:
+                self._connection.backup(target)
+        finally:
+            target.close()
+
     def close(self) -> None:
         with self._lock:
             self._connection.close()

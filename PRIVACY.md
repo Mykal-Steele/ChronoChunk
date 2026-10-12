@@ -42,6 +42,8 @@ The bot cannot answer without sending some of what you write to other services:
 
 Nothing about you is deleted on a timer. Your rows stay until you run `/forget`, or until the person running the bot removes them.
 
+The bot copies its database once a day, on the same server, so a damaged file does not lose everyone's data. It keeps 7 copies. What you delete with `/forget` is gone from the database at once and from the last copy 7 days later. The copies are not shared with anyone.
+
 ## Questions
 
 Ask the person who runs the bot on your server, or open an issue at https://github.com/Mykal-Steele/ChronoChunk/issues.

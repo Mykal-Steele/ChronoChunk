@@ -12,6 +12,7 @@ from src.channel_settings import get_channel_settings
 from src.message_context import gather_context, resolve_message_link
 from src.message_handler import MessageHandler
 from src.message_processor import MessageProcessor, NO_PINGS, give_first_use_role
+from src.stats import stats_summary
 from src.timing import Stopwatch
 from src.user_data_manager import UserDataManager
 
@@ -58,6 +59,7 @@ class SlashCommandManager:
             await self._register_usage_command()
             await self._register_model_command()
             await self._register_setup_command()
+            await self._register_stats_command()
             await self._register_recent_posts_command()
             await self._register_help_command()  # Make sure this line is here
             
@@ -367,6 +369,12 @@ class SlashCommandManager:
         @self.bot.tree.command(name="setup", description="See where the bot runs and the settings it runs with")
         async def setup(interaction: discord.Interaction):
             await interaction.response.send_message(self.bot.command_handler.setup_summary())
+
+    async def _register_stats_command(self):
+        """Register the stats command"""
+        @self.bot.tree.command(name="stats", description="See everything the bot has used so far")
+        async def stats(interaction: discord.Interaction):
+            await interaction.response.send_message(stats_summary())
 
     async def _register_music_command(self):
         """Register the music command"""

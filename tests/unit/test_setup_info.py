@@ -39,6 +39,7 @@ def test_the_summary_names_the_version_the_models_and_the_budget(monkeypatch):
     assert "per person  $0.20 a day, $0.60 over 7 days" in text
     assert "chat 50 per 30 min" in text and "file 15 a day" in text
     assert text.endswith("#where-it-runs>")
+    assert "`/stats` has the full count" in text
 
 
 def test_the_summary_fits_in_one_discord_message():
