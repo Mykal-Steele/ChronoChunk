@@ -16,7 +16,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 - The bot knows what each server emoji shows. It looks at every emoji's picture once, writes a few words about it ("sad frog, disappointment or sympathy") and keeps them in its database. The chat model sees the name with that note and picks by it. A new emoji gets its note when the server adds it.
 - The bot can put an emoji reaction on the message it is answering. It still writes its reply. The model asks for a reaction only for a message that is funny or where one emoji fits, and the bot reacts at most once every 10 minutes in a channel. Only an emoji it may use there is ever put on a message.
-- Asked which emoji it has, the bot lists their names as plain words. A reply that names three or more different server emoji is treated as such a list, so it is never cut down to one emoji and never fills the chat with them.
+- Asked about its emoji, the bot shows a handful of them, eight at most and each once. This only happens when the message it answers is about emoji. In any other reply the limit of one server emoji stands.
 
 ### Changed
 

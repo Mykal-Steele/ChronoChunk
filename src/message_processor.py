@@ -17,7 +17,9 @@ from src.timing import Stopwatch
 from src.user_data_manager import UserDataManager
 from src.channel_settings import get_channel_settings
 from src.message_context import build_attached_context, history_text, resolve_message_link
-from src.server_emoji import QUIET_REPLIES, REACTION_GAP_SECONDS, Rendered, render, usable_emoji, used_custom_emoji
+from src.server_emoji import (
+    QUIET_REPLIES, REACTION_GAP_SECONDS, Rendered, asked_about_emoji, render, usable_emoji, used_custom_emoji,
+)
 import traceback
 from typing import List
 
@@ -341,7 +343,8 @@ is_correction: bool) -> None:
                     )
 
             with watch.step("send"):
-                shown = await self._send_reply(message, reply.text, reply.files, custom_emoji=custom_emoji)
+                shown = await self._send_reply(message, reply.text, reply.files, custom_emoji=custom_emoji,
+                                               listing=asked_about_emoji(query))
                 # What was sent, with any emoji written :name:, is what the history keeps
                 ai_response = shown.plain
             if may_react:
@@ -428,15 +431,17 @@ is_correction: bool) -> None:
                 self._last_reaction[channel_id] = before
 
     async def _send_reply(self, message: discord.Message, text: str, files=None,
-                          custom_emoji: bool = True) -> Rendered:
+                          custom_emoji: bool = True, listing: bool = False) -> Rendered:
         """
         Send the answer as a Discord reply to the message that asked, splitting long
         text. files are BuiltFile objects, uploaded with the first chunk. Emoji names
         in the text become server emoji the bot can use here, and any other is taken
-        out. Returns what was sent, which also has the text as the chat history should
-        keep it and the reaction the model asked for.
+        out. listing is for an answer to someone who asked about the emoji, which may
+        show several. Returns what was sent, which also has the text as the chat history
+        should keep it and the reaction the model asked for.
         """
-        shown = render(text, usable_emoji(message.channel, self.bot.guilds), custom_allowed=custom_emoji)
+        shown = render(text, usable_emoji(message.channel, self.bot.guilds), custom_allowed=custom_emoji,
+                       listing=listing)
         chunks = self._split_text(shown.text)
         if not chunks and not files:
             return shown

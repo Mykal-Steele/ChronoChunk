@@ -11,7 +11,8 @@ from src.message_handler import MessageHandler
 from src.message_processor import MessageProcessor
 from src.slash_commands import SlashCommandManager
 from src.server_emoji import (
-    MAX_NAMES_IN_PROMPT, NO_EMOJI, EmojiSet, demote, render, usable_emoji, used_custom_emoji,
+    MAX_LISTED, MAX_NAMES_IN_PROMPT, NO_EMOJI, EmojiSet, asked_about_emoji, demote, render, usable_emoji,
+    used_custom_emoji,
 )
 from tests.fakes import fake_author, fake_message
 
@@ -130,16 +131,45 @@ def test_the_history_keeps_the_short_form_of_what_was_sent():
 
 # A list of emoji names, and a reaction
 
-def test_a_reply_that_lists_the_emoji_goes_out_as_plain_names():
-    emoji = EmojiSet({"kekw": KEKW, "pog": POG, "sadge": "<:sadge:323456789012345678>"}, ["kekw", "pog", "sadge"])
-    shown = render("i got :kekw: :pog: :sadge: and thats it", emoji)
-    assert shown.text == "i got kekw pog sadge and thats it"
-    assert not used_custom_emoji(shown.plain)
+MANY = EmojiSet({f"e{i}": f"<:e{i}:{123456789012345600 + i}>" for i in range(12)}, [f"e{i}" for i in range(12)])
 
 
-def test_a_list_is_still_plain_names_while_custom_emoji_are_switched_off():
-    emoji = EmojiSet({"kekw": KEKW, "pog": POG, "sadge": "<:sadge:323456789012345678>"}, ["kekw", "pog", "sadge"])
-    assert render(":kekw:, :pog:, :sadge:", emoji, custom_allowed=False).text == "kekw, pog, sadge"
+def test_asked_about_the_emoji_the_bot_shows_several_real_ones():
+    shown = render("i got :e0: :e1: :e2: and thats the good ones", MANY, listing=True)
+    assert shown.text == f"i got {MANY.by_name['e0']} {MANY.by_name['e1']} {MANY.by_name['e2']} and thats the good ones"
+
+
+def test_a_list_stops_at_a_handful_and_shows_each_emoji_once():
+    shown = render(" ".join(f":e{i}:" for i in range(12)) + " :e0: :e1:", MANY, listing=True)
+    assert [m.group(0) for m in re.finditer(r"<:e\d+:\d+>", shown.text)] == [MANY.by_name[f"e{i}"] for i in range(MAX_LISTED)]
+
+
+def test_a_list_is_shown_even_right_after_a_reply_with_an_emoji():
+    shown = render(":e0: :e1: :e2:", MANY, custom_allowed=False, listing=True)
+    assert shown.text.count("<:e") == 3
+
+
+def test_in_normal_chat_several_emoji_are_still_cut_to_one():
+    assert render("lol :e0: :e1: :e2: :e3:", MANY).text == f"lol {MANY.by_name['e0']}"
+
+
+def test_one_or_two_emoji_in_an_answer_about_emoji_keep_the_normal_limit():
+    assert render("yeah i got :e0: and :e1:", MANY, listing=True).text == f"yeah i got {MANY.by_name['e0']} and"
+
+
+def test_a_list_never_shows_an_emoji_the_bot_cannot_use():
+    shown = render(":e0: :fake: :e1: <:nope:999999999999999999> :e2:", MANY, listing=True)
+    assert shown.text == f"{MANY.by_name['e0']} {MANY.by_name['e1']} {MANY.by_name['e2']}"
+
+
+@pytest.mark.parametrize("message", ["which emoji can u use", "show me ur emotes", "what EMOJIS do u have here", "มีอีโมจิอะไรบ้าง"])
+def test_a_message_about_emoji_is_recognized(message):
+    assert asked_about_emoji(message)
+
+
+@pytest.mark.parametrize("message", ["lol thats wild", "remote work is mid", "demote him", "i got the job", ""])
+def test_a_message_about_anything_else_is_not(message):
+    assert not asked_about_emoji(message)
 
 
 @pytest.mark.parametrize("asked, expected", [
@@ -447,7 +477,7 @@ def test_random_replies_never_carry_a_broken_emoji(seed):
     chooser = random.Random(seed)
     text = "".join(chooser.choice(BITS) for _ in range(chooser.randint(1, 25)))
     for emoji, allowed in ((EMOJI, True), (EMOJI, False), (NO_EMOJI, True)):
-        shown = render(text, emoji, custom_allowed=allowed).text
+        shown = render(text, emoji, custom_allowed=allowed, listing=bool(seed % 2)).text
         usable = ALLOWED if (emoji and allowed) else set()
         found = [m.group(0) for m in ANY_MARKUP.finditer(shown)]
         assert all(markup in usable for markup in found), (text, shown)

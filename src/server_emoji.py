@@ -25,9 +25,10 @@ QUIET_REPLIES = 3
 REACTION_GAP_SECONDS = 600
 # How many emoji the model is told about, this server's first
 MAX_NAMES_IN_PROMPT = 30
-# A reply that names this many different server emoji is a list of them, not a reaction.
-# Their names are sent as plain words then, so a question like "which emoji do u have" gets an answer.
+# When someone asks the bot about its emoji, a reply that names this many different ones is a list
+# of them. It may show up to MAX_LISTED, each once. Any other reply keeps the limits above.
 LIST_NAMES = 3
+MAX_LISTED = 8
 
 # Standard emoji the model sometimes writes by name. Discord does not turn these into emoji for a bot.
 STANDARD = {"skull": "💀", "fire": "🔥", "sob": "😭", "pray": "🙏", "joy": "😂"}
@@ -49,6 +50,8 @@ _PROTECTED = re.compile(r"(```.*?```|`[^`\n]+`|https?://\S+)", re.DOTALL)
 _STANDARD_CHAR = ("[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF"
                   "\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U00002702-\U000027B0]")
 _STANDARD = re.compile(rf"{_STANDARD_CHAR}(?:[\U0001F3FB-\U0001F3FF\uFE0F]|\u200D{_STANDARD_CHAR})*")
+# A message that is about emoji themselves, in English or Thai
+_ABOUT_EMOJI = re.compile(r"\b(?:emoji|emote|emoticon)s?\b|อีโมจิ|อิโมจิ", re.IGNORECASE)
 # How the model asks for a reaction on the message it is answering: [react :name:] or [react 💀]
 _REACT = re.compile(r"\[\s*react(?:ion)?\b\s*:?\s*([^\]\n]{0,80})\]", re.IGNORECASE)
 
@@ -60,7 +63,7 @@ SERVER EMOJI:
 - these are not counted by the EMOJI RULE above, that rule is about normal emoji. for these: when u react to something funny, dumb, sad or hype and one fits, end the message with it. roughly one reply in four. one per message, never two.
 - serious answers, explanations and anything they are upset about get none.
 - what each one shows is in the brackets after its name. pick by that, not by the name alone.
-- if they ask which emoji u have, list the names.
+- if they ask which emoji u have, show a handful of the best ones, each written :name:. eight at most, never the whole list.
 - only these names work. never make one up and never write the <:name:id> form:
 {names}
 """
@@ -177,6 +180,11 @@ def used_custom_emoji(text: str) -> bool:
     return any(name.lower() not in STANDARD and not name.isdigit() for name in names)
 
 
+def asked_about_emoji(message: str) -> bool:
+    """Whether what someone wrote to the bot is about emoji, so that an answer may show several of them."""
+    return bool(_ABOUT_EMOJI.search(message or ""))
+
+
 @dataclass(frozen=True)
 class Rendered:
     """A reply ready to send, and the same reply as the chat history should remember it."""
@@ -187,22 +195,25 @@ class Rendered:
 
 
 def render(text: str, emoji: EmojiSet = NO_EMOJI, custom_allowed: bool = True,
-           limit: int = MAX_EMOJI_PER_REPLY) -> Rendered:
+           limit: int = MAX_EMOJI_PER_REPLY, listing: bool = False) -> Rendered:
     """
     Make a reply safe to send. Emoji names the bot can use become emoji, at most limit
     per reply with standard emoji counted in, and no custom ones when custom_allowed is
     off. Every other emoji name or id is removed. Code and links are not touched.
 
+    listing is for an answer to someone who asked about the emoji. A reply that then
+    names several different ones shows up to MAX_LISTED of them, each once.
+
     A [react ...] note from the model is always taken out of the text. When it names
     an emoji the bot can use, that emoji comes back as Rendered.reaction.
     """
     # Each emoji found is swapped for a numbered slot first. The limit is applied afterwards, in reading order.
-    slots: List[list] = []  # [what is sent, what the history keeps, is it custom, is it a plain word]
+    slots: List[tuple] = []  # (what is sent, what the history keeps, is it custom)
     reactions: List[str] = []
 
     def slot(shown: str = "", plain: str = "", custom: bool = False) -> str:
         """Leave a slot in the text. An empty one marks something that is always taken out."""
-        slots.append([shown, plain, custom, False])
+        slots.append((shown, plain, custom))
         return f"\x00{len(slots) - 1}\x00"
 
     def react(found: re.Match) -> str:
@@ -241,18 +252,18 @@ def render(text: str, emoji: EmojiSet = NO_EMOJI, custom_allowed: bool = True,
         piece = _ATTACHED.sub(lambda found: named(found.group(1), found.group(0)), piece)
         pieces[index] = _STANDARD.sub(lambda found: slot(found.group(0), found.group(0)), piece)
 
-    # Several different server emoji in one reply is a list of them. Their names go out as words, and no emoji is spent.
-    if len({entry[1].lower() for entry in slots if entry[2]}) >= LIST_NAMES:
-        for entry in slots:
-            if entry[2]:
-                entry[:] = [entry[1].strip(":"), entry[1].strip(":"), False, True]
+    # They asked about the emoji and the reply names several: that is a list, not a reaction
+    listing = listing and len({plain.lower() for _, plain, custom in slots if custom}) >= LIST_NAMES
+    listed: set = set()
 
     keep = [False] * len(slots)
     kept = kept_custom = 0
     for number in (int(n) for piece in pieces[::2] for n in re.findall(r"\x00(\d+)\x00", piece)):
-        shown, _, custom, word = slots[number]
-        if word:
-            keep[number] = True
+        shown, plain, custom = slots[number]
+        if listing and custom:
+            if plain.lower() not in listed and len(listed) < MAX_LISTED:
+                listed.add(plain.lower())
+                keep[number] = True
             continue
         if not shown or kept >= limit:
             continue
