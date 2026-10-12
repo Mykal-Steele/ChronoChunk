@@ -29,7 +29,7 @@ from src.version import __version__
 from src.web_server import WebServer
 from src.message_processor import MessageProcessor
 from src.music_manager import MusicManager
-from src import pdf_notes
+from src import pdf_notes, setup_info
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -88,11 +88,11 @@ class ChronoChunk(commands.Bot):
         # One music player for the whole bot, so the voice events and the commands see the same queues
         self.music_manager = MusicManager()
 
-        # Typed commands: /tldr, /usage and /help
+        # Typed commands: /tldr, /usage, /model, /setup and /help
         self.command_handler = CommandHandler(bot=self, rate_limiter=self.rate_limiter)
         
         # Create message processor with correct parameter.
-        # Only /tldr, /usage, a bare /model and a bare /help are typed commands. Any other "/word" message
+        # Only /tldr, /usage and a bare /model, /setup or /help are typed commands. Any other "/word" message
         # is chat, so "/stop being weird" does not get mistaken for the music command.
         self.message_processor = MessageProcessor(
             bot=self,
@@ -102,7 +102,7 @@ class ChronoChunk(commands.Bot):
             game_manager=self.game_manager,
             command_handler=self.command_handler,
             rate_limiter=self.rate_limiter,
-            text_commands={"tldr", "usage", "model", "help"}
+            text_commands={"tldr", "usage", "model", "setup", "help"}
         )
         
         # Register event handlers
@@ -131,6 +131,9 @@ class ChronoChunk(commands.Bot):
         except Exception as e:
             logger.warning(f"Web server couldn't start (may be already running): {e}")
         
+        # /setup names the machine the bot is on
+        await setup_info.find_host()
+
         # Initialize slash commands WITHOUT rate limiter
         self.slash_commands = SlashCommandManager(
             bot=self,

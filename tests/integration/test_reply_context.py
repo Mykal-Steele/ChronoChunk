@@ -667,3 +667,26 @@ async def test_model_with_more_words_is_chat(pipeline):
     await processor.process_message(trigger)
     ai_handler.generate_reply.assert_called_once()
 
+
+
+async def test_typed_setup_shows_where_and_how_the_bot_runs(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    processor.text_commands = {"tldr", "usage", "model", "setup", "help"}  # how the real bot is wired
+    processor.command_handler.bot = bot
+    bot.ai_handler.deployment = "gpt-6-luna"
+    trigger = fake_message(fake_author("Kruskal"), "/setup", message_id=1)
+    _channel_with(trigger)
+    await processor.process_message(trigger)
+    sent = trigger.channel.send.call_args[0][0]
+    assert sent.startswith("**how im set up**") and "chat model  gpt-6-luna" in sent
+    ai_handler.generate_reply.assert_not_called()
+
+
+async def test_setup_with_more_words_is_chat(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    processor.text_commands = {"tldr", "usage", "model", "setup", "help"}
+    processor.command_handler.bot = bot
+    trigger = fake_message(fake_author("Kruskal"), "/setup a study plan for me", message_id=1)
+    _channel_with(trigger)
+    await processor.process_message(trigger)
+    ai_handler.generate_reply.assert_called_once()
