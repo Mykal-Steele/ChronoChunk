@@ -15,6 +15,7 @@ from collections import OrderedDict
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 from config.config import Config
+from src import usage_context
 from src.usage_guard import BudgetExceededError
 
 logger = logging.getLogger(__name__)
@@ -121,15 +122,14 @@ async def _in_render_thread(function, *args):
     return await asyncio.to_thread(_locked, function, *args)
 
 
-async def _build(data: bytes, filename: str, mode: str) -> Tuple[Optional[str], bool]:
+async def _build(data: bytes, filename: str, pages: List[int]) -> Tuple[Optional[str], bool]:
     """
-    Describe the pages of one PDF. Returns the descriptions (None when there is nothing
-    to add) and whether every page that should be described was.
+    Describe the given pages of one PDF. Returns the descriptions (None when none could
+    be written) and whether every page was described.
     """
     started = time.monotonic()
-    pages = await _in_render_thread(_pages_to_describe, data, mode)
-    if not pages:
-        return None, True
+    # This runs as its own task, so the label stays with the pass and nothing else
+    usage_context.label("pdf_notes")
 
     limit = asyncio.Semaphore(REQUESTS_AT_ONCE)
     costs: List[float] = []
@@ -175,7 +175,8 @@ async def _build(data: bytes, filename: str, mode: str) -> Tuple[Optional[str], 
     return notes, complete
 
 
-async def page_notes(data: bytes, filename: str, wait_seconds: Optional[float] = None) -> Optional[str]:
+async def page_notes(data: bytes, filename: str, wait_seconds: Optional[float] = None,
+                     gate: Optional[Callable[[], None]] = None) -> Optional[str]:
     """
     What each page of a PDF shows, written from the page images. None when page notes
     are off, the PDF has nothing worth describing, or the pass failed. The first call
@@ -184,6 +185,9 @@ async def page_notes(data: bytes, filename: str, wait_seconds: Optional[float] =
 
     wait_seconds is how long this caller will wait. When it runs out the caller gets
     None, and the pass carries on so the next question about the file finds it done.
+
+    gate is called only when this call has to start a new pass, and may raise
+    RateLimitError to refuse it. A file that is already described costs nobody anything.
     """
     mode = Config.PDF_PAGE_NOTES
     if _describe is None or mode not in ("auto", "on"):
@@ -198,7 +202,19 @@ async def page_notes(data: bytes, filename: str, wait_seconds: Optional[float] =
     # Two people asking about the same new file share one pass
     running = _in_progress.get(key)
     if running is None:
-        running = asyncio.ensure_future(_build(data, filename, mode))
+        # Looked at before the gate, so a PDF with nothing to describe costs no allowance
+        try:
+            pages = await _in_render_thread(_pages_to_describe, data, mode)
+        except Exception as e:
+            logger.error(f"Page notes for {filename} failed: {e!r}")
+            return None
+        if not pages:
+            return None
+        running = _in_progress.get(key)  # someone else may have started the pass meanwhile
+    if running is None:
+        if gate:
+            gate()
+        running = asyncio.ensure_future(_build(data, filename, pages))
         _in_progress[key] = running
         running.add_done_callback(lambda finished: _finish(key, finished))
     try:

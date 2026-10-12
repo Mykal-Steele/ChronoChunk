@@ -58,7 +58,7 @@ Slash commands:
 - `/info` or `/mydata` - See what the bot has stored about you. Only you see the answer.
 - `/forget` - Delete everything the bot has stored about you. `/forget <text>` deletes one fact.
 - `/game <max>`, `/guess <number>`, `/end` - The number guessing game
-- `/usage` - How much of the AI budget is used
+- `/usage` - What you have left today: messages, PDFs, files, web lookups and your AI limit. Only you see the answer.
 - `/model` - Which AI model the bot is running on
 - `/recent-posts on|off` - Turn reading of just-posted images and files on or off in a channel (needs Manage Channels)
 - `/help` - Show every command and the limits below
@@ -137,12 +137,15 @@ The bot stops calling the model when it reaches its spending cap, and starts aga
 | `AI_DAILY_BUDGET_USD` | 2 | Hard cap per day |
 | `AI_BUDGET_RESET_DAY` | 14 | Day of the month the cycle restarts |
 | `AZURE_OPENAI_DEPLOYMENT` | gpt-5-mini | The chat model. `deployment/docker-compose.yml` sets it to gpt-6-luna |
+| `AI_USER_DAILY_BUDGET_USD` | 0.20 | What one person may spend per day |
+| `AI_USER_WEEKLY_BUDGET_USD` | 0.60 | What one person may spend over any 7 days |
+| `AI_UNLIMITED_USER_IDS` | empty | Discord user ids, separated by commas, with no personal limit |
 | `AI_CHAT_REASONING_EFFORT` | low | Reasoning effort for chat replies. Must be `none` for gpt-6-luna and gpt-5.6-luna, which do not take tool calls with reasoning on |
 | `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` | empty | A cheaper deployment, such as gpt-5-nano, for picking facts out of messages. Empty uses the main one |
 
 Set these in `.env`. Costs are estimated from token counts and each model's price, and kept in the database, one row per day and model. `/usage` shows the current totals. Each reply also writes one log line with the images and files it read, the number of model calls and the estimated cost.
 
-Per user, the bot answers 50 messages per 30 minutes and makes 15 files per day, 2 per reply.
+Per user, the bot answers 50 messages per 30 minutes, makes 15 files per day (2 per reply), reads 10 new PDFs in full per day and makes 20 web lookups per day. `/usage` shows each person what they have left.
 
 ## Music commands
 

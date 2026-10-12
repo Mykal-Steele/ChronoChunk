@@ -2,6 +2,7 @@
 import logging
 from datetime import datetime, timezone
 
+from src.exceptions import RateLimitError
 from src.tools.base import Tool, ToolResult, Turn
 from src.web_tools import SEARCH_TIME_RANGES, SEARCH_TOPICS, WebError, read_page, search_available, search_web
 
@@ -44,6 +45,14 @@ class _LookupTool(Tool):
         target = str(args.get(self.argument) or "").strip()
         if not target:
             return ToolResult(f"error: {self.name} was called with nothing to look up")
+        if turn.web_gate:
+            try:
+                turn.web_gate()
+            except RateLimitError as e:
+                hours = max(1, round(e.retry_after / 3600))
+                return ToolResult(
+                    "error: this person has used all their web lookups for today. Answer without the web, "
+                    f"and tell them they get more lookups in about {hours} hours")
         try:
             result = await self._look_up(target, args)
         except WebError as e:

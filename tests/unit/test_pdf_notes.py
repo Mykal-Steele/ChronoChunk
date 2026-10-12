@@ -168,3 +168,39 @@ async def test_tldr_reads_a_pdf_the_short_way(describer):
     lines, _ = await mc._read_attachment(attachment, mc._ImageBudget(0, mc.MAX_PDF_IMAGES), mc.TLDR_FILE_CHARS)
     assert "what each page shows" not in "\n".join(lines)
     describer.assert_not_awaited()
+
+
+async def test_the_gate_is_asked_only_when_a_new_pass_starts(describer):
+    from unittest.mock import MagicMock
+    gate = MagicMock()
+    data = _pdf(["picture"])
+    await pdf_notes.page_notes(data, "deck.pdf", gate=gate)
+    await pdf_notes.page_notes(data, "deck.pdf", gate=gate)  # already described: free
+    assert gate.call_count == 1
+
+
+async def test_a_pdf_over_the_daily_limit_is_read_the_short_way_and_says_so(describer):
+    from src import message_context as mc
+    from src.exceptions import RateLimitError
+    from tests.fakes import fake_attachment
+
+    def gate():
+        raise RateLimitError(retry_after=3 * 3600)
+    attachment = fake_attachment("deck.pdf", _pdf(["picture", "text"]), "application/pdf")
+    budget = mc._ImageBudget(mc.MAX_IMAGES, mc.MAX_PDF_IMAGES, pdf_gate=gate)
+    lines, _ = await mc._read_attachment(attachment, budget)
+    block = "\n".join(lines)
+    assert "used up their full pdf reads for today" in lines[0] and "about 3 hours" in lines[0]
+    assert "what the pages of" not in block and "Plain words about the plan" in block
+    describer.assert_not_awaited()
+
+
+async def test_a_text_only_pdf_does_not_use_up_a_pdf_read(describer):
+    import weasyprint
+    from unittest.mock import MagicMock
+    gate = MagicMock()
+    data = weasyprint.HTML(string="<p>" + "Only words here, nothing to look at. " * 40 + "</p>").write_pdf()
+    assert await pdf_notes.page_notes(data, "report.pdf", gate=gate) is None
+    assert await pdf_notes.page_notes(data, "report.pdf", gate=gate) is None
+    gate.assert_not_called()
+

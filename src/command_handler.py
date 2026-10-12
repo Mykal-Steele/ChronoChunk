@@ -1,4 +1,5 @@
 import discord
+from datetime import date
 from typing import List, Optional
 
 from src.ai_response_handler import Reply
@@ -100,6 +101,7 @@ class CommandHandler:
             images=channel_messages.images,
             allow_files=bool(prompt),
             file_gate=lambda: self.rate_limiter.check_rate_limit(user_id, "file"),
+            web_gate=lambda: self.rate_limiter.check_rate_limit(user_id, "web"),
         )
 
     async def _handle_help(self, args: List[str], message: discord.Message, user_id: str) -> Optional[discord.Embed]:
@@ -108,7 +110,7 @@ class CommandHandler:
 
     async def _handle_usage(self, args: List[str], message: discord.Message, user_id: str) -> str:
         """Show how much of the AI budget is used"""
-        return self.usage_summary()
+        return self.usage_summary(user_id)
 
     async def _handle_model(self, args: List[str], message: discord.Message, user_id: str) -> Optional[str]:
         """Show the AI models for a bare '/model'. With more words, like '/model this for me', it is chat."""
@@ -124,11 +126,63 @@ class CommandHandler:
             f"background model for memory: `{background}`. bot version {__version__}"
         )
 
-    def usage_summary(self) -> str:
-        """One line on AI spending so far against the caps."""
-        usage = get_usage_guard().summary()
-        return (
-            f"ai budget: ${usage['cycle_cost']:.2f} of ${usage['monthly_budget']:.2f} used this cycle "
-            f"({usage['requests']} requests), ${usage['day_cost']:.2f} of ${usage['daily_budget']:.2f} today. "
-            f"resets on {usage['resets_on']}"
-        )
+    def usage_summary(self, user_id: str) -> str:
+        """What one person has left of each allowance, and how much of their AI limit and the bot's is used."""
+        lines = ["left right now"]
+        for label, action in USAGE_ROWS:
+            left, limit, window, wait = self.rate_limiter.remaining(user_id, action)
+            line = f"{label:<12} {left:>3} of {limit:<3}  {_window_words(window)}"
+            if left == 0:
+                line += f", more in {_duration(wait)}"
+            lines.append(line)
+
+        guard = get_usage_guard()
+        mine, bot = guard.user_summary(user_id), guard.summary()
+        lines += ["", "ai overall"]
+        if mine["unlimited"]:
+            lines.append("today    no limit for u")
+        else:
+            lines.append(f"today    {_bar(mine['day_cost'], mine['daily_budget'])}   resets in {_duration(mine['seconds_to_reset'])}")
+            lines.append(f"7 days   {_bar(mine['week_cost'], mine['weekly_budget'])}")
+        lines.append(f"bot      {_bar(bot['cycle_cost'], bot['monthly_budget'])}   this month, resets {_short_date(bot['resets_on'])}")
+        return "**ur usage**\n```\n" + "\n".join(lines) + "\n```"
+
+
+# The allowances /usage lists, as (label, key in Config.RATE_LIMITS)
+USAGE_ROWS = (
+    ("messages", "chat"),
+    ("pdfs read", "pdf"),
+    ("files made", "file"),
+    ("web lookups", "web"),
+    ("recaps", "tldr"),
+)
+
+
+def _window_words(seconds: float) -> str:
+    if seconds >= 86400:
+        return "per day"
+    if seconds >= 3600:
+        return "per hour"
+    return f"per {int(seconds // 60)} min"
+
+
+def _duration(seconds: float) -> str:
+    """A wait in the two largest units that matter, like "6h 10m" or "4m"."""
+    minutes = max(1, int(round(seconds / 60)))
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m" if hours else f"{minutes}m"
+
+
+def _bar(used: float, limit: float) -> str:
+    """A ten-step bar and a percentage."""
+    share = min(1.0, used / limit) if limit > 0 else 1.0
+    filled = int(round(share * 10))
+    # Any use at all shows as one step, so the bar never reads as untouched
+    if used > 0 and filled == 0:
+        filled = 1
+    return f"{'▓' * filled}{'░' * (10 - filled)} {int(round(share * 100)):>3}%"
+
+
+def _short_date(iso_day: str) -> str:
+    day = date.fromisoformat(iso_day)
+    return f"{day:%b} {day.day}".lower()

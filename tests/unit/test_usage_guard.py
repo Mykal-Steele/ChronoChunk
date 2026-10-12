@@ -187,3 +187,144 @@ def test_cache_writes_are_charged_at_their_own_price():
     # a model with no cache-write price charges those tokens as plain input
     assert UsageGuard.cost_of(tokens, "gpt-5-mini") == pytest.approx(0.6 * 0.25 + 0.4 * 0.025)
 
+
+# ── per-user limits ───────────────────────────────────────────────────────────
+
+@pytest.fixture
+def as_user():
+    """Mark the calls that follow as one person's, the way an incoming message does."""
+    from src import usage_context
+    def switch(user_id, feature="chat"):
+        usage_context._current.set((user_id, feature))
+    yield switch
+    usage_context._current.set(("", "chat"))
+
+
+@pytest.fixture
+def user_guard(database):
+    guard = UsageGuard(database, monthly_budget=100.0, daily_budget=50.0, reset_day=14)
+    guard.user_daily_budget, guard.user_weekly_budget = 1.0, 2.5
+    return guard
+
+
+def test_spending_is_recorded_against_the_person_and_the_feature(user_guard, as_user, database):
+    as_user("111", "chat")
+    user_guard.record(usage(prompt=1_000_000), "gpt-5-mini")
+    as_user("111", "facts")
+    user_guard.record(usage(prompt=1_000_000), "gpt-5-nano")
+    as_user("222", "chat")
+    user_guard.record(usage(prompt=1_000_000), "gpt-5-mini")
+    rows = {(r["user_id"], r["feature"]): r["cost"] for r in database.query("SELECT user_id, feature, cost FROM usage_daily")}
+    assert rows == {("111", "chat"): pytest.approx(0.25), ("111", "facts"): pytest.approx(0.05), ("222", "chat"): pytest.approx(0.25)}
+    assert user_guard.user_summary("111")["day_cost"] == pytest.approx(0.30)
+    assert user_guard.summary()["cycle_cost"] == pytest.approx(0.55)
+
+
+def test_a_person_over_their_daily_limit_is_stopped_and_others_are_not(user_guard, as_user):
+    as_user("111")
+    user_guard.record(usage(completion=500_000))  # $1.00, their whole day
+    with pytest.raises(BudgetExceededError) as stopped:
+        user_guard.check()
+    assert stopped.value.scope == "user_daily"
+    as_user("222")
+    user_guard.check()
+    as_user("")  # a call that belongs to nobody
+    user_guard.check()
+
+
+def test_the_daily_limit_clears_the_next_day_and_the_weekly_one_then_applies(user_guard, as_user, monkeypatch):
+    as_user("111")
+    for day in (5, 6, 7):
+        set_today(monkeypatch, date(2026, 10, day))
+        user_guard.check()
+        user_guard.record(usage(completion=450_000))  # $0.90 a day, $2.70 in three days
+    set_today(monkeypatch, date(2026, 10, 8))
+    with pytest.raises(BudgetExceededError) as stopped:
+        user_guard.check()
+    assert stopped.value.scope == "user_weekly"
+    assert stopped.value.resets_on == date(2026, 10, 12)  # the 5th leaves the window
+    set_today(monkeypatch, date(2026, 10, 12))
+    user_guard.check()
+
+
+def test_listed_people_have_no_limit(user_guard, as_user, monkeypatch):
+    from config.config import Config
+    monkeypatch.setattr(Config, "AI_UNLIMITED_USER_IDS", {"111"})
+    as_user("111")
+    user_guard.record(usage(completion=5_000_000))
+    user_guard.check()
+    assert user_guard.user_summary("111")["unlimited"] is True
+    assert user_guard.take_daily_warning("111") is False
+
+
+def test_a_persons_spending_survives_a_restart(database, as_user):
+    as_user("111")
+    first = UsageGuard(database, monthly_budget=100.0, daily_budget=50.0, reset_day=14)
+    first.record(usage(completion=100_000))  # $0.20, the default daily limit
+    second = UsageGuard(database, monthly_budget=100.0, daily_budget=50.0, reset_day=14)
+    assert second.user_summary("111")["day_cost"] == pytest.approx(0.20)
+    with pytest.raises(BudgetExceededError):
+        second.check()
+
+
+def test_the_heads_up_comes_once_past_80_percent(user_guard, as_user):
+    as_user("111")
+    user_guard.record(usage(completion=350_000))  # 70%
+    assert user_guard.take_daily_warning("111") is False
+    user_guard.record(usage(completion=75_000))   # 85%
+    assert user_guard.take_daily_warning("111") is True
+    assert user_guard.take_daily_warning("111") is False
+    assert user_guard.take_daily_warning("222") is False
+
+
+def test_no_heads_up_once_the_limit_itself_is_reached(user_guard, as_user):
+    as_user("111")
+    user_guard.record(usage(completion=600_000))  # 120%, the refusal says it instead
+    assert user_guard.take_daily_warning("111") is False
+
+
+async def test_a_background_task_is_billed_to_whoever_started_it(user_guard, as_user, database):
+    import asyncio
+    from src import usage_context
+
+    async def background_job():
+        usage_context.label("pdf_notes")
+        await asyncio.sleep(0)
+        user_guard.record(usage(prompt=1_000_000))
+    as_user("111")
+    task = asyncio.ensure_future(background_job())
+    as_user("222")  # the next request arrives while the job is still running
+    await task
+    rows = [(r["user_id"], r["feature"]) for r in database.query("SELECT user_id, feature FROM usage_daily")]
+    assert rows == [("111", "pdf_notes")]
+    assert usage_context.current() == ("222", "chat")
+
+
+def test_a_feature_label_ends_with_its_block(as_user):
+    from src import usage_context
+    as_user("111")
+    with usage_context.feature("facts"):
+        assert usage_context.current() == ("111", "facts")
+    assert usage_context.current() == ("111", "chat")
+
+
+def test_the_weekly_reset_waits_for_enough_days_to_leave(user_guard, as_user, monkeypatch):
+    as_user("111")
+    for day in (5, 6, 7, 8):  # $0.90 on four days is $3.60 against a $2.50 week
+        set_today(monkeypatch, date(2026, 10, day))
+        try:
+            user_guard.check()
+        except BudgetExceededError:
+            pass
+        user_guard.record(usage(completion=450_000))
+    set_today(monkeypatch, date(2026, 10, 9))
+    with pytest.raises(BudgetExceededError) as stopped:
+        user_guard.check()
+    # the 5th leaving still leaves $2.70. the 6th has to go too, which happens on the 13th.
+    assert stopped.value.resets_on == date(2026, 10, 13)
+    set_today(monkeypatch, date(2026, 10, 12))
+    with pytest.raises(BudgetExceededError):
+        user_guard.check()
+    set_today(monkeypatch, date(2026, 10, 13))
+    user_guard.check()
+

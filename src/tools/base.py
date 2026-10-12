@@ -30,6 +30,8 @@ class Turn:
     files: List[BuiltFile] = field(default_factory=list)
     # Called before a file is made. Raises RateLimitError when this user has made too many.
     file_gate: Optional[Callable[[], None]] = None
+    # Called before each web search or opened link. Raises RateLimitError when they have had their daily lookups.
+    web_gate: Optional[Callable[[], None]] = None
     # Runs a model call that is counted against this reply: ask_model(messages, max_tokens)
     ask_model: Optional[Callable[[list, int], Awaitable]] = None
     # Search results and pages read for this reply, for tools that run later (the document writer)

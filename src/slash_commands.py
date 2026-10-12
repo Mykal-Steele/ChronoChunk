@@ -3,6 +3,7 @@ import logging
 import discord
 from discord import app_commands
 from typing import Optional
+from src import usage_context
 from src.exceptions import RateLimitError
 from src.help_menu import build_help_embed
 from src.channel_settings import get_channel_settings
@@ -197,6 +198,7 @@ class SlashCommandManager:
         )
         async def chat(interaction: discord.Interaction, message: str, file: Optional[discord.Attachment] = None):
             user_id = str(interaction.user.id)
+            usage_context.set_user(user_id)
             username = interaction.user.display_name
             channel_id = str(interaction.channel_id)
             rate_limiter = getattr(self.bot, "rate_limiter", None)
@@ -234,15 +236,19 @@ class SlashCommandManager:
                 # was switched off for this channel.
                 if not get_channel_settings().reads_recent_posts(channel_id):
                     recent = []
+                # Files made, PDFs read in full and web lookups each count against a daily limit per user
+                file_gate = pdf_gate = web_gate = None
+                if rate_limiter:
+                    file_gate = lambda: rate_limiter.check_rate_limit(user_id, "file")
+                    pdf_gate = lambda: rate_limiter.check_rate_limit(user_id, "pdf")
+                    web_gate = lambda: rate_limiter.check_rate_limit(user_id, "web")
                 attached = await gather_context([file] if file else [], bot_user_id=self.bot.user.id,
-                                                linked=linked, recent=recent)
+                                                linked=linked, recent=recent, pdf_gate=pdf_gate)
 
-                # Process through AI. Files it makes count against the per-user daily limit.
-                file_gate = (lambda: rate_limiter.check_rate_limit(user_id, "file")) if rate_limiter else None
                 reply = await self.ai_handler.generate_reply(
                     enriched_message, conversation_history, username, user_id,
                     attached_context=attached.text, images=attached.images,
-                    allow_files=True, file_gate=file_gate
+                    allow_files=True, file_gate=file_gate, web_gate=web_gate
                 )
                 ai_response = reply.text
 
@@ -294,6 +300,7 @@ class SlashCommandManager:
             prompt="What to do with them instead of a recap, like 'what did we decide' or 'make a pdf of the plan'"
         )
         async def tldr(interaction: discord.Interaction, count: Optional[int] = 50, prompt: Optional[str] = None):
+            usage_context.set_user(interaction.user.id)
             try:
                 await interaction.response.defer(thinking=True)
                 reply = await self.bot.command_handler.summarize_channel(
@@ -330,7 +337,9 @@ class SlashCommandManager:
         """Register the usage command"""
         @self.bot.tree.command(name="usage", description="See how much of the AI budget is used")
         async def usage(interaction: discord.Interaction):
-            await interaction.response.send_message(self.bot.command_handler.usage_summary())
+            # Their own numbers, so only they see them
+            await interaction.response.send_message(
+                self.bot.command_handler.usage_summary(str(interaction.user.id)), ephemeral=True)
     
     async def _register_model_command(self):
         """Register the model command"""
@@ -343,6 +352,7 @@ class SlashCommandManager:
         @self.bot.tree.command(name="music", description="Play music from YouTube or Spotify")
         @app_commands.describe(query="YouTube/Spotify URL or search term")
         async def music(interaction: discord.Interaction, query: str):
+            usage_context.set_user(interaction.user.id)
             if not interaction.user.voice:
                 await interaction.response.send_message("yo, u gotta be in a voice channel to play music")
                 return
@@ -481,6 +491,7 @@ class SlashCommandManager:
         """Register the relate command"""
         @self.bot.tree.command(name="relate", description="Play a song related to the current one based on YouTube recommendations")
         async def relate(interaction: discord.Interaction):
+            usage_context.set_user(interaction.user.id)
             if not interaction.user.voice:
                 await interaction.response.send_message("yo, u gotta be in a voice channel to play related music")
                 return

@@ -31,6 +31,8 @@ def limit_lines() -> List[str]:
     chat_count, chat_window = Config.RATE_LIMITS["chat"]
     file_count, file_window = Config.RATE_LIMITS["file"]
     tldr_count, tldr_window = Config.RATE_LIMITS["tldr"]
+    pdf_count, pdf_window = Config.RATE_LIMITS["pdf"]
+    web_count, web_window = Config.RATE_LIMITS["web"]
     return [
         f"images: png, jpg or webp, up to {MAX_IMAGE_BYTES // MB} MB each. files: pdf, md, txt and code files, up to {MAX_FILE_BYTES // MB} MB each",
         f"i read up to {MAX_IMAGES} images and {MAX_FILES} files per message",
@@ -42,6 +44,8 @@ def limit_lines() -> List[str]:
         f"(each cut at {TLDR_FILE_CHARS:,} characters). {tldr_count} recaps {_window(tldr_window)}",
         f"chat: {chat_count} messages {_window(chat_window)}. files i make: {file_count} {_window(file_window)}, "
         f"{MAX_FILES_PER_REPLY} per reply",
+        f"new pdfs i read in full: {pdf_count} {_window(pdf_window)}. web lookups: {web_count} {_window(web_window)}. "
+        "`/usage` shows what u have left",
         "cant read yet: gifs, videos, voice messages, word, excel and powerpoint files",
     ]
 
@@ -79,7 +83,7 @@ def build_help_embed() -> discord.Embed:
         "ask for an email, proposal, report, cover letter or notes and i write it properly, no slang",
         "ask for it as a pdf or docx (`/make this a pdf`, `/write a proposal for X as docx`) and i attach the file",
         "ask for a diagram or flowchart and i send it as an image",
-        "`/usage` - how much of the ai budget is used",
+        "`/usage` - what u have left today: messages, pdfs, files, web lookups and ur ai limit. only u see it",
         "`/model` - which ai model im running on"
     ]
     embed.add_field(name="📝 writing and files", value="\n".join(writing_cmds), inline=False)

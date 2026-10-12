@@ -9,6 +9,8 @@ import time
 from typing import Dict, List, Optional, Tuple
 import yt_dlp
 
+from src import usage_context
+
 logger = logging.getLogger(__name__)
 
 # YouTube and Spotify URL regex patterns
@@ -654,16 +656,17 @@ Request: "{query}"
 
             client = guard_client(AsyncOpenAI(base_url=endpoint, api_key=api_key))
 
-            resp = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model=deployment,
-                    messages=[{"role": "user", "content": prompt}],
-                    max_completion_tokens=500,
-                    # Same picks as the default effort in testing, and it stays under the timeout below
-                    reasoning_effort="low",
-                ),
-                timeout=5.0
-            )
+            with usage_context.feature("music"):
+                resp = await asyncio.wait_for(
+                    client.chat.completions.create(
+                        model=deployment,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_completion_tokens=500,
+                        # Same picks as the default effort in testing, and it stays under the timeout below
+                        reasoning_effort="low",
+                    ),
+                    timeout=5.0
+                )
             response = (resp.choices[0].message.content or "").strip()
             
             # Clean up the response

@@ -8,10 +8,11 @@ import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import discord
 from pypdf import PdfReader
+from src.exceptions import RateLimitError
 from src.pdf_notes import page_notes
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,9 @@ class _ImageBudget:
     pdf_images: int  # pictures taken out of PDFs
     # When the wait for PDF page descriptions ends, for all the PDFs of one request together
     notes_deadline: float = field(default_factory=lambda: time.monotonic() + NOTES_WAIT_SECONDS)
+    # Called before a PDF is described for the first time. Raises RateLimitError when this
+    # person has had their full PDF reads for the day. None means no limit.
+    pdf_gate: Optional[Callable[[], None]] = None
 
 
 def _items(value) -> list:
@@ -292,8 +296,14 @@ async def _read_attachment(attachment, budget: _ImageBudget,
         # A PDF someone points at directly is described page by page from its page images.
         # In /tldr and for recent posts (max_chars set) it is read the short way.
         notes = None
+        over_limit = ""
         if max_chars is None and budget.notes_deadline > time.monotonic():
-            notes = await page_notes(data, filename, budget.notes_deadline - time.monotonic())
+            try:
+                notes = await page_notes(data, filename, budget.notes_deadline - time.monotonic(), budget.pdf_gate)
+            except RateLimitError as e:
+                hours = max(1, round(e.retry_after / 3600))
+                over_limit = (f". this person has used up their full pdf reads for today, so only its text and first "
+                              f"pictures were read. tell them that, and that they get more in about {hours} hours")
         if notes:
             max_chars = NOTED_PDF_CHARS
         try:
@@ -315,7 +325,7 @@ async def _read_attachment(attachment, budget: _ImageBudget,
             return lines, []
 
         budget.pdf_images -= len(pictures)
-        detail = f"pdf, {pages} pages"
+        detail = f"pdf, {pages} pages{over_limit}"
         if found == 1 and pictures:
             detail += ", the picture in it is attached to this prompt as an image, look at it"
         elif pictures:
@@ -557,7 +567,8 @@ async def read_recent_posts(messages: list, bot_user_id: Optional[int] = None, b
 
 
 async def gather_context(own_attachments: list, referenced=None, bot_user_id: Optional[int] = None,
-                         linked=None, recent: Optional[list] = None, before=None) -> MessageContext:
+                         linked=None, recent: Optional[list] = None, before=None,
+                         pdf_gate: Optional[Callable[[], None]] = None) -> MessageContext:
     """
     Gather what a request points at: the message it replies to, a message it links
     to, and the files attached to it, each with its files and images. When it points
@@ -566,7 +577,7 @@ async def gather_context(own_attachments: list, referenced=None, bot_user_id: Op
     """
     blocks = []
     images = []
-    budget = _ImageBudget(MAX_IMAGES, MAX_PDF_IMAGES)
+    budget = _ImageBudget(MAX_IMAGES, MAX_PDF_IMAGES, pdf_gate=pdf_gate)
 
     if referenced is not None:
         replied = await _read_message(referenced, budget)
@@ -598,6 +609,8 @@ async def gather_context(own_attachments: list, referenced=None, bot_user_id: Op
 
 
 async def build_attached_context(message, referenced=None, bot_user_id: Optional[int] = None,
-                                 linked=None, recent: Optional[list] = None) -> MessageContext:
+                                 linked=None, recent: Optional[list] = None,
+                                 pdf_gate: Optional[Callable[[], None]] = None) -> MessageContext:
     """gather_context for a typed message: its own attachments, and itself as the cut-off for recent posts."""
-    return await gather_context(message.attachments, referenced, bot_user_id, linked, recent, before=message)
+    return await gather_context(message.attachments, referenced, bot_user_id, linked, recent, before=message,
+                                pdf_gate=pdf_gate)

@@ -801,3 +801,50 @@ async def test_diagram_is_only_forced_when_the_user_asked_for_one(handler, mock_
     mock_openai_client.chat.completions.create.side_effect = responses("Include a timeline and a diagram")
     await handler.generate_reply("/write a one page proposal as pdf", "", "Kruskal", "2", allow_files=True)
     assert "DIAGRAM: none" in writer_request()
+
+
+# ── per-user limits ───────────────────────────────────────────────────────────
+
+async def test_web_lookups_stop_at_the_persons_daily_limit(handler, mock_openai_client, web):
+    from src.exceptions import RateLimitError
+    search, _ = web
+
+    def gate():
+        raise RateLimitError(retry_after=5 * 3600)
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("web_search", {"query": "news"})]),
+        _message(content="u are out of lookups today"),
+    ]
+    reply = await handler.generate_reply("/search news", "", "Kruskal", "1", allow_files=True, web_gate=gate)
+    assert reply.text == "u are out of lookups today"
+    search.assert_not_awaited()
+    told = mock_openai_client.chat.completions.create.call_args[1]["messages"][-1]["content"]
+    assert "used all their web lookups for today" in told and "about 5 hours" in told
+
+
+async def test_a_person_over_their_ai_limit_is_told_when_it_resets(handler, mock_openai_client):
+    from datetime import date, datetime, timedelta, timezone
+    from src.usage_guard import BudgetExceededError
+    tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).date()
+    mock_openai_client.chat.completions.create.side_effect = BudgetExceededError("user_daily", tomorrow)
+    reply = await handler.generate_reply("/yo", "", "Kruskal", "1")
+    assert reply.text.startswith("u used up ur ai for today, back in about ") and "/usage" in reply.text
+    mock_openai_client.chat.completions.create.side_effect = BudgetExceededError("user_weekly", date(2026, 10, 15))
+    reply = await handler.generate_reply("/yo again", "", "Kruskal", "1")
+    assert "limit for the week" in reply.text and "Oct 15" in reply.text
+
+
+async def test_the_reply_carries_a_heads_up_once_near_the_daily_limit(handler, mock_openai_client):
+    from src import usage_context
+    from src.usage_guard import get_usage_guard
+    guard = get_usage_guard()
+    guard.user_daily_budget = 1.0
+    usage_context._current.set(("77", "chat"))
+    guard.record(_message().usage or __import__("types").SimpleNamespace(prompt_tokens=0, completion_tokens=450_000,
+                                                                            prompt_tokens_details=None))
+    first = await handler.generate_reply("/yo", "", "Kruskal", "77")
+    second = await handler.generate_reply("/yo again", "", "Kruskal", "77")
+    usage_context._current.set(("", "chat"))
+    assert "80% of ur ai for today" in first.text and first.text.splitlines()[-1].startswith("-# ")
+    assert "80%" not in second.text
+

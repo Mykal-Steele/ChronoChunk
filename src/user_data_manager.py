@@ -7,7 +7,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from openai import AsyncOpenAI
 
 from config.config import Config
-from src.usage_guard import guard_client
+from src import usage_context
+from src.usage_guard import BudgetExceededError, guard_client
 from src.user_store import UserStore, clean_user_id
 
 logger = logging.getLogger(__name__)
@@ -112,13 +113,16 @@ class UserDataManager:
         # facts from this older message are not written back.
         profile = self.store.get_profile(user_id, username)
         try:
-            resp = await self.ai_client.chat.completions.create(
-                model=self.fact_deployment,
-                messages=[{"role": "user", "content": FACT_PROMPT + message_content}],
-                max_completion_tokens=1500,
-                reasoning_effort=self.fact_reasoning_effort,
-            )
+            with usage_context.feature("facts"):
+                resp = await self.ai_client.chat.completions.create(
+                    model=self.fact_deployment,
+                    messages=[{"role": "user", "content": FACT_PROMPT + message_content}],
+                    max_completion_tokens=1500,
+                    reasoning_effort=self.fact_reasoning_effort,
+                )
             facts_text = (resp.choices[0].message.content or "").strip()
+        except BudgetExceededError:
+            return False  # they or the bot are out of budget. the reply already said so.
         except Exception as e:
             if "429" not in str(e):  # a rate limit is expected now and then
                 logger.error(f"Unexpected error in extract_and_save_facts: {e}")

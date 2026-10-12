@@ -537,7 +537,7 @@ async def test_typed_usage_reports_the_budget(pipeline):
 
     ai_handler.generate_reply.assert_not_called()
     sent = trigger.channel.send.call_args[0][0]
-    assert "ai budget" in sent and "resets on" in sent
+    assert "ur usage" in sent and "messages" in sent and "resets in" in sent
 
 
 async def test_typed_tldr_works_with_the_real_wiring(pipeline):
