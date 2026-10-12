@@ -30,6 +30,7 @@ The bot cannot answer without sending some of what you write to other services:
 | Service | What it gets | When |
 |---|---|---|
 | Microsoft Azure OpenAI | Your message, the recent channel messages, the facts stored about you, and any image or file you point the bot at | Every answer |
+| Microsoft Azure OpenAI | The picture and name of each custom server emoji | Once per new emoji |
 | Tavily | Your search words, and links the bot cannot open on its own | When the bot searches the web or opens a link |
 | The website behind a link | A normal page request from the bot's server | When you give the bot a link |
 | mermaid.ink, and kroki.io as a backup | The text of a diagram | When the bot draws a diagram |

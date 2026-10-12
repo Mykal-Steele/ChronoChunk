@@ -1,4 +1,5 @@
 """Unit tests for server emoji: which ones a reply may use, and that a reply never carries a broken one."""
+import asyncio
 import random
 import re
 from unittest.mock import AsyncMock, MagicMock
@@ -362,6 +363,24 @@ async def test_a_reaction_goes_on_the_message_and_then_the_channel_waits():
     assert str(message.add_reaction.await_args.args[0]) == KEKW
     assert not processor.reaction_due("c")
     assert processor.reaction_due("another channel")
+
+
+async def test_two_answers_finishing_together_give_one_reaction():
+    processor, message = reacting_processor()
+    release = asyncio.Event()
+
+    async def slow_reaction(emoji):
+        await release.wait()
+    message.add_reaction.side_effect = slow_reaction
+
+    first = asyncio.create_task(processor._react(message, KEKW, "c"))
+    await asyncio.sleep(0)
+    second = asyncio.create_task(processor._react(message, KEKW, "c"))
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(first, second)
+
+    assert message.add_reaction.await_count == 1
 
 
 async def test_no_reaction_without_the_permission_to_add_one():

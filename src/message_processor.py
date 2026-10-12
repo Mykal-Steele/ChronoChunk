@@ -408,16 +408,24 @@ is_correction: bool) -> None:
 
     async def _react(self, message: discord.Message, reaction: str, channel_id: str) -> None:
         """Put the emoji the model asked for on the message it answered. The reply is out already, so this may fail quietly."""
-        if not reaction:
+        # Two answers in one channel can finish together. Only the first one through here reacts.
+        if not reaction or not self.reaction_due(channel_id):
             return
+        before = self._last_reaction.get(channel_id)
         try:
             me = message.guild.me if message.guild else None
             if me is not None and message.channel.permissions_for(me).add_reactions is not True:
                 return
-            await message.add_reaction(discord.PartialEmoji.from_str(reaction))
+            # Taken before the wait on Discord, so a second answer sees the channel as used
             self._last_reaction[channel_id] = time.monotonic()
+            await message.add_reaction(discord.PartialEmoji.from_str(reaction))
         except Exception as e:
             logger.warning(f"Could not react to a message: {e!r}")
+            # A reaction that did not happen does not use up the wait
+            if before is None:
+                self._last_reaction.pop(channel_id, None)
+            else:
+                self._last_reaction[channel_id] = before
 
     async def _send_reply(self, message: discord.Message, text: str, files=None,
                           custom_emoji: bool = True) -> Rendered:
