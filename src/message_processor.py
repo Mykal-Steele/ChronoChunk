@@ -5,7 +5,7 @@ import re
 import time
 import discord
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Optional, Set
+from typing import Callable, AsyncIterator, Optional, Set
 from src.ai_response_handler import AIResponseHandler, Reply
 from config.config import Config
 from src import usage_context
@@ -272,7 +272,17 @@ class MessageProcessor:
         self.conversation.called(channel_id, user_id, getattr(message, "created_at", None))
         # One answer at a time in a channel, in the order the messages came. The second one
         # then reads the first answer, the way a person would have said it before going on.
-        async with self.channel_lock(channel_id):
+        lock = self.channel_lock(channel_id)
+        await lock.acquire()
+        held = [True]
+
+        def answer_is_out() -> None:
+            """Let the next answer in this channel start. What is left of this one is bookkeeping."""
+            if held[0]:
+                held[0] = False
+                lock.release()
+
+        try:
             with watch.step("history"):
                 recent = await self.sync_channel_history(message.channel)
                 conversation_history = self.message_handler.build_conversation_context(
@@ -280,7 +290,10 @@ class MessageProcessor:
                     session_start=self.conversation.session_start(channel_id), current_id=message.id
                 )
             await self._handle_ai_response(message, user_id, username, channel_id, query,
-                                           conversation_history, referenced, recent, watch)
+                                           conversation_history, referenced, recent, watch,
+                                           answer_is_out=answer_is_out)
+        finally:
+            answer_is_out()
 
     def channel_lock(self, channel_id: str) -> asyncio.Lock:
         """The lock that keeps the bot's answers in one channel in order."""
@@ -343,7 +356,12 @@ is_correction: bool) -> None:
                               conversation_history: str,
                               referenced: Optional[discord.Message] = None,
                               recent: Optional[list] = None,
-                              watch: Optional[Stopwatch] = None) -> None:
+                              watch: Optional[Stopwatch] = None,
+                              answer_is_out: Optional[Callable[[], None]] = None) -> None:
+        """
+        Build the answer to one message and send it. answer_is_out is called once the
+        answer is sent and in the history, before the slower work that nobody waits for.
+        """
         original_query = query  # preserve clean version for history/user data storage
         watch = watch or Stopwatch()
         try:
@@ -388,7 +406,6 @@ is_correction: bool) -> None:
                 await self._react(message, shown.reaction, channel_id)
             # Everything they waited for is done. What follows runs after the answer is out.
             logger.info(f"Answered {username} in {watch.summary()}")
-            await self._maybe_assign_chrono_role(message)
 
             # A stand-in for an answer the model could not give must not come back as context
             if not reply.ok:
@@ -399,6 +416,10 @@ is_correction: bool) -> None:
                 username="ChronoChunk", content=ai_response, is_bot=True,
                 reply_to=username, reply_to_id=user_id
             )
+            # The next message in this channel can be answered while this one is saved
+            if answer_is_out:
+                answer_is_out()
+            await self._maybe_assign_chrono_role(message)
 
             # add_conversation also extracts facts from the message
             if self.user_data_manager:

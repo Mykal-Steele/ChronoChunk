@@ -413,3 +413,29 @@ async def test_the_model_is_told_what_is_being_answered_once(pipeline):
     call = ai_handler.generate_reply.await_args
     assert call.args[0] == "/a very particular question"
     assert "a very particular question" not in call.args[1]
+
+
+async def test_the_next_answer_does_not_wait_for_the_first_one_to_be_saved(pipeline):
+    processor, _, _, udm, ai_handler, bot = pipeline
+    events = []
+    saving = asyncio.Event()
+
+    async def slow_save(user_id, said, answered, username=None):
+        events.append(f"saving {said}")
+        if said == "/one":
+            await saving.wait()
+    udm.add_conversation = slow_save
+
+    async def model(query, history, *args, **kwargs):
+        events.append(f"answer {query}")
+        return Reply(f"answer to {query}")
+    ai_handler.generate_reply = model
+
+    first = asyncio.create_task(processor.process_message(_plain(_make_message(bot.user, content="/one"))))
+    await asyncio.sleep(0.05)
+    second = asyncio.create_task(processor.process_message(_plain(_make_message(bot.user, content="/two"))))
+    await asyncio.sleep(0.05)
+
+    assert events == ["answer /one", "saving /one", "answer /two", "saving /two"]
+    saving.set()
+    await asyncio.gather(first, second)
