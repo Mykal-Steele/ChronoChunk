@@ -9,6 +9,7 @@ from src.command_handler import CommandHandler
 from src.exceptions import RateLimitError
 from src.message_handler import MessageHandler
 from src.rate_limiter import RateLimiter
+from src.timing import Stopwatch
 from src.user_data_manager import UserDataManager
 from src.channel_settings import get_channel_settings
 from src.message_context import build_attached_context, history_text, resolve_message_link
@@ -189,6 +190,7 @@ class MessageProcessor:
                        channel_id: str, query: str, user_data: dict,
                        referenced: Optional[discord.Message] = None) -> None:
         """Answer a message with the AI, using fresh channel history and whatever the message points at."""
+        watch = Stopwatch(getattr(message, "created_at", None))
         if self.rate_limiter:
             try:
                 self.rate_limiter.check_rate_limit(user_id, "chat")
@@ -197,12 +199,13 @@ class MessageProcessor:
                 await self._safe_send(message.channel, f"slow down, u hit the message limit. try again in about {minutes} min")
                 return
 
-        recent = await self.sync_channel_history(message.channel)
-        conversation_history = self.message_handler.build_conversation_context(
-            channel_id=channel_id, user_data=user_data, is_correction=False
-        )
+        with watch.step("history"):
+            recent = await self.sync_channel_history(message.channel)
+            conversation_history = self.message_handler.build_conversation_context(
+                channel_id=channel_id, user_data=user_data, is_correction=False
+            )
         await self._handle_ai_response(message, user_id, username, channel_id, query,
-                                       conversation_history, referenced, recent)
+                                       conversation_history, referenced, recent, watch)
 
     async def _handle_command_message(self, message: discord.Message, user_id: str, 
                               username: str, channel_id: str, user_data: dict,
@@ -259,16 +262,12 @@ is_correction: bool) -> None:
                               username: str, channel_id: str, query: str,
                               conversation_history: str,
                               referenced: Optional[discord.Message] = None,
-                              recent: Optional[list] = None) -> None:
+                              recent: Optional[list] = None,
+                              watch: Optional[Stopwatch] = None) -> None:
         original_query = query  # preserve clean version for history/user data storage
+        watch = watch or Stopwatch()
         try:
             async with message.channel.typing():
-                enriched_query, linked = await resolve_message_link(self.bot, query)
-                # Read the message they replied to or linked and any files or images involved.
-                # With none of those, what was posted just before their message is read,
-                # unless that was switched off for this channel.
-                if not get_channel_settings().reads_recent_posts(channel_id):
-                    recent = None
                 # Files made, PDFs read in full and web lookups each count against a daily limit per user
                 file_gate = pdf_gate = web_gate = None
                 limiter = self.rate_limiter
@@ -276,16 +275,27 @@ is_correction: bool) -> None:
                     file_gate = lambda: limiter.check_rate_limit(user_id, "file")
                     pdf_gate = lambda: limiter.check_rate_limit(user_id, "pdf")
                     web_gate = lambda: limiter.check_rate_limit(user_id, "web")
-                attached = await build_attached_context(message, referenced, self.bot.user.id,
-                                                        linked=linked, recent=recent, pdf_gate=pdf_gate)
-                reply = await self.ai_handler.generate_reply(
-                    enriched_query, conversation_history, username, user_id,
-                    attached_context=attached.text, images=attached.images,
-                    allow_files=True, file_gate=file_gate, web_gate=web_gate
-                )
+                with watch.step("context"):
+                    enriched_query, linked = await resolve_message_link(self.bot, query)
+                    # Read the message they replied to or linked and any files or images involved.
+                    # With none of those, what was posted just before their message is read,
+                    # unless that was switched off for this channel.
+                    if not get_channel_settings().reads_recent_posts(channel_id):
+                        recent = None
+                    attached = await build_attached_context(message, referenced, self.bot.user.id,
+                                                            linked=linked, recent=recent, pdf_gate=pdf_gate)
+                with watch.step("model and tools"):
+                    reply = await self.ai_handler.generate_reply(
+                        enriched_query, conversation_history, username, user_id,
+                        attached_context=attached.text, images=attached.images,
+                        allow_files=True, file_gate=file_gate, web_gate=web_gate
+                    )
                 ai_response = reply.text
 
-            await self._send_reply(message, ai_response, reply.files)
+            with watch.step("send"):
+                await self._send_reply(message, ai_response, reply.files)
+            # Everything they waited for is done. What follows runs after the answer is out.
+            logger.info(f"Answered {username} in {watch.summary()}")
             await self._maybe_assign_chrono_role(message)
 
             # The user's message is already in the history, so only the answer is added

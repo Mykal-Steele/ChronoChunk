@@ -41,6 +41,7 @@ class Turn:
     cost: float = 0.0
     started: float = field(default_factory=time.monotonic)
     model_seconds: float = 0.0  # time spent waiting for the model, out of the whole reply
+    tool_seconds: float = 0.0  # time spent inside tools, not counting the model calls they make
 
 
 @dataclass

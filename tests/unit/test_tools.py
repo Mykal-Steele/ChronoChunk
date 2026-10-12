@@ -1,4 +1,6 @@
 """The tool interface: how the reply loop drives any tool, shown with a made-up one."""
+import asyncio
+
 import pytest
 from unittest.mock import patch
 
@@ -91,3 +93,20 @@ async def test_a_call_to_a_tool_that_does_not_exist_is_answered_with_an_error(ha
     await handler.generate_reply("/fly", "", "Kruskal", "1", allow_files=True)
     last = mock_openai_client.chat.completions.create.call_args[1]["messages"][-1]["content"]
     assert last == "error: there is no tool called fly_to_moon"
+
+
+async def test_tool_time_leaves_out_the_model_calls_a_tool_makes(handler):
+    from src.tools import Turn
+
+    class Writer(Dice):
+        async def run(self, args, turn):
+            await asyncio.sleep(0.05)
+            # As if 40 ms of that was a model call the tool made
+            turn.model_seconds += 0.04
+            return ToolResult("written")
+
+    turn = Turn("q", "Kruskal", "", "", [])
+    result = await handler._timed_tool({"roll_dice": Writer()}, _tool_call("roll_dice", {}), turn)
+
+    assert result.text == "written"
+    assert 0.0 < turn.tool_seconds < 0.04
