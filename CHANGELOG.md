@@ -10,6 +10,13 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.10.1 (2026-10-12)
+
+### Fixed
+
+- The bot no longer waits for Discord to confirm the typing indicator before it starts on an answer. On the server that wait was about 0.3 seconds of every reply, and over 2.5 seconds on 2 of the first 15. The indicator still shows.
+- A typing indicator that Discord refuses no longer costs the answer.
+
 ## 3.10.0 (2026-10-12)
 
 ### Added

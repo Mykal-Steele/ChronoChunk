@@ -4,8 +4,11 @@ Real components: MessageHandler, GameManager, UserDataManager (tmp dir)
 Mocked: AIResponseHandler (no real API), MusicManager (no FFmpeg),
         discord.TextChannel.send, discord.TextChannel.history
 """
+import asyncio
 import re
 from unittest.mock import MagicMock, AsyncMock
+
+import discord
 
 
 from src.ai_response_handler import Reply
@@ -110,6 +113,61 @@ async def test_an_answer_logs_how_long_each_step_took(pipeline, caplog):
     line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("Answered TestUser in "))
     assert re.search(r"in \d+\.\d\ds: history \d+\.\d\ds, context \d+\.\d\ds, "
                      r"model and tools \d+\.\d\ds, send \d+\.\d\ds, other \d+\.\d\ds$", line)
+
+
+async def test_a_slow_typing_indicator_does_not_hold_up_the_answer(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+
+    async def reply(*args, **kwargs):
+        await asyncio.sleep(0.01)  # a model call gives the indicator time to start
+        return Reply("here's my take fr")
+    ai_handler.generate_reply = AsyncMock(side_effect=reply)
+    msg = _make_message(bot.user, content="what do you think?", is_reply_to_bot=True)
+
+    async def slow_start():
+        await asyncio.sleep(30)
+    msg.channel.typing.return_value.__aenter__ = AsyncMock(side_effect=slow_start)
+
+    await asyncio.wait_for(processor.process_message(msg), timeout=5)
+
+    msg.channel.typing.assert_called_once()
+    assert msg.reply.call_args[0][0] == "here's my take fr"
+
+
+async def test_the_typing_indicator_is_on_while_the_model_works_and_off_before_the_answer_goes_out(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    typing = MagicMock()
+    typing.__aenter__ = AsyncMock(return_value=None)
+    typing.__aexit__ = AsyncMock(return_value=None)
+    seen = {}
+
+    async def reply(*args, **kwargs):
+        await asyncio.sleep(0)  # let the indicator start
+        seen["on during the model call"] = typing.__aenter__.await_count == 1 and typing.__aexit__.await_count == 0
+        return Reply("here's my take fr")
+    ai_handler.generate_reply = AsyncMock(side_effect=reply)
+    msg = _make_message(bot.user, content="what do you think?", is_reply_to_bot=True)
+    msg.channel.typing = MagicMock(return_value=typing)
+
+    async def send(*args, **kwargs):
+        seen["off before the send"] = typing.__aexit__.await_count == 1
+    msg.reply = AsyncMock(side_effect=send)
+
+    await processor.process_message(msg)
+
+    assert seen == {"on during the model call": True, "off before the send": True}
+
+
+async def test_a_refused_typing_indicator_does_not_cost_the_answer(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("here's my take fr"))
+    msg = _make_message(bot.user, content="what do you think?", is_reply_to_bot=True)
+    refused = discord.Forbidden(MagicMock(status=403, reason="Forbidden"), "Missing Permissions")
+    msg.channel.typing.return_value.__aenter__ = AsyncMock(side_effect=refused)
+
+    await processor.process_message(msg)
+
+    assert msg.reply.call_args[0][0] == "here's my take fr"
 
 
 # ── channel history captured ──────────────────────────────────────────────────
