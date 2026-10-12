@@ -10,6 +10,19 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.10.0 (2026-10-12)
+
+### Added
+
+- `/stats` shows everything the bot has used since its spending record began: model calls, tokens in and out, and the AI cost, in all, today, over the last 7 days and this month. It also shows the busiest day, the split by job and by model, how many people and facts it remembers, and how many PDFs it has described. It works typed as well. No name and no user id is in it.
+- The bot copies its database to `state/backups` at startup and once a day, and keeps the newest 7 copies. A damaged file or a bad change can be undone from the copy of the day before. `/stats` shows the day of the last copy.
+
+### Changed
+
+- `/setup` ends with a short version of those totals and points to `/stats`.
+- `/setup` no longer shows the path of the database file or of the deploy script.
+- The privacy page says that the copies keep something you delete for up to 7 more days.
+
 ## 3.9.0 (2026-10-12)
 
 ### Added

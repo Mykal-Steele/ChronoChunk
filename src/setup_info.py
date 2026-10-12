@@ -11,6 +11,7 @@ import aiohttp
 import discord
 
 from config.config import Config
+from src.stats import usage_rows
 from src.version import __version__
 
 logger = logging.getLogger(__name__)
@@ -81,7 +82,7 @@ def _per(seconds: int) -> str:
 
 
 def setup_summary(chat_model: str) -> str:
-    """The bot's setup as a code block: host, runtime, models, budget and limits."""
+    """The bot's setup as a code block: host, runtime, models, budget, limits and what it has used so far."""
     background = Config.AI_BACKGROUND_DEPLOYMENT or chat_model
     limits = Config.RATE_LIMITS
     runtime = f"Python {platform.python_version()}, discord.py {discord.__version__}"
@@ -106,9 +107,8 @@ def setup_summary(chat_model: str) -> str:
         ("limits", ", ".join(f"{name} {count} {_per(window)}" for name, (count, window) in limits.items()
                              if name in ("chat", "file", "pdf", "web", "tldr"))),
         ("", ""),
-        ("data", "one SQLite file, state/chronochunk.db"),
-        ("deploys", "from the main branch, by deployment/update.sh"),
+        *usage_rows(),
     ]
     lines = [f"{label:<11} {value}".rstrip() for label, value in rows]
     return ("**how im set up**\n```\n" + "\n".join(lines) + "\n```\n"
-            f"code and the full setup guide: <{REPO_URL}#where-it-runs>")
+            f"`/stats` has the full count. code and the full setup guide: <{REPO_URL}#where-it-runs>")
