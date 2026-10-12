@@ -2,8 +2,11 @@
 import pytest
 from aiohttp import web
 
+from types import SimpleNamespace
+
 from config.config import Config
 from src import setup_info
+from src.usage_guard import get_usage_guard
 from src.version import __version__
 
 
@@ -93,3 +96,31 @@ async def test_no_answer_from_the_metadata_address_is_not_an_error(monkeypatch):
     monkeypatch.setattr(setup_info, "AZURE_METADATA_URL", "http://127.0.0.1:9/metadata")
     await setup_info.find_host()
     assert setup_info._host is None
+
+
+def test_a_new_bot_says_it_has_used_nothing():
+    assert "used so far nothing yet" in setup_info.setup_summary("gpt-6-luna")
+
+
+def test_the_summary_adds_up_everything_used_so_far(database):
+    database.execute(
+        "INSERT INTO usage_daily(day, user_id, feature, model, requests, input_tokens, output_tokens, cost) "
+        "VALUES ('2025-01-20', '1', 'chat', 'gpt-5-mini', 1200, 4000000, 60000, 1.5)")
+    database.execute("INSERT INTO users(user_id, username, created_at, last_interaction) VALUES ('1', 'Kruskal', 'x', 'x')")
+    database.execute("INSERT INTO users(user_id, username, created_at, last_interaction) VALUES ('2', 'Prim', 'x', 'x')")
+    # One call today: 1,000 tokens in and 500 out at gpt-6-luna prices is $0.00035
+    usage = SimpleNamespace(prompt_tokens=1000, completion_tokens=500, prompt_tokens_details=None)
+    get_usage_guard().record(usage, "gpt-6-luna")
+
+    text = setup_info.setup_summary("gpt-6-luna")
+
+    assert "used so far since Jan 20, 2025" in text
+    assert "ai calls    1,201" in text
+    assert "tokens      4.0M in, 60.5K out" in text
+    assert "ai cost     $1.50 in all, $0.00 of $15 this month" in text
+    assert "people met  2" in text
+
+
+def test_no_file_path_is_shown():
+    text = setup_info.setup_summary("gpt-6-luna")
+    assert "chronochunk.db" not in text and "update.sh" not in text and "deployment/" not in text

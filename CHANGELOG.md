@@ -10,6 +10,13 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.9.1 (2026-10-12)
+
+### Changed
+
+- `/setup` ends with what the bot has used since its spending record began: model calls, tokens in and out, the AI cost in all and this month, and how many people have talked to it.
+- `/setup` no longer shows the path of the database file or of the deploy script.
+
 ## 3.9.0 (2026-10-12)
 
 ### Added
