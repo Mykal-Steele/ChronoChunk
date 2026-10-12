@@ -45,6 +45,11 @@ class MessageHandler:
         if len(self.last_channel_messages[channel_id]) > Config.CHANNEL_HISTORY_SIZE:
             self.last_channel_messages[channel_id] = self.last_channel_messages[channel_id][-Config.CHANNEL_HISTORY_SIZE:]
     
+    def recent_bot_replies(self, channel_id: str, count: int) -> List[str]:
+        """The bot's own last count messages in a channel, oldest first."""
+        mine = [msg["content"] for msg in self.last_channel_messages.get(channel_id, []) if msg["is_bot"]]
+        return mine[-count:]
+
     def replace_channel_history(self, channel_id: str, messages: List[Dict[str, Any]]) -> None:
         """
         Swap the stored history for a fresh snapshot of the channel. messages must be

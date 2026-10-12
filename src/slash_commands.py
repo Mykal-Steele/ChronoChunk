@@ -12,6 +12,7 @@ from src.channel_settings import get_channel_settings
 from src.message_context import gather_context, resolve_message_link
 from src.message_handler import MessageHandler
 from src.message_processor import MessageProcessor, NO_PINGS, give_first_use_role
+from src.server_emoji import NO_EMOJI, QUIET_REPLIES, render, usable_emoji, used_custom_emoji
 from src.stats import stats_summary
 from src.timing import Stopwatch
 from src.user_data_manager import UserDataManager
@@ -188,9 +189,21 @@ class SlashCommandManager:
         async def code(interaction: discord.Interaction):
             await interaction.response.send_message("check out my code here: https://github.com/Mykal-Steele/ChronoChunk")
     
-    async def _send_followup(self, interaction: discord.Interaction, text: str, files=None) -> None:
-        """Send an answer to a slash command, splitting long text. files are BuiltFile objects."""
-        chunks = MessageProcessor._split_text(text) or [""]
+    def _usable_emoji(self, interaction: discord.Interaction):
+        """The server emoji an answer to this slash command may use."""
+        if interaction.channel is None:
+            return NO_EMOJI
+        return usable_emoji(interaction.channel, self.bot.guilds, via_interaction=True)
+
+    async def _send_followup(self, interaction: discord.Interaction, text: str, files=None,
+                             custom_emoji: bool = True) -> str:
+        """
+        Send an answer to a slash command, splitting long text. files are BuiltFile
+        objects. Emoji names in the text become server emoji the bot can use here, and
+        any other is taken out. Returns the text as the chat history should keep it.
+        """
+        shown = render(text, self._usable_emoji(interaction), custom_allowed=custom_emoji)
+        chunks = MessageProcessor._split_text(shown.text) or [""]
         uploads = [discord.File(io.BytesIO(f.data), filename=f.filename) for f in (files or [])]
         if uploads:
             await interaction.followup.send(chunks[0], allowed_mentions=NO_PINGS, files=uploads)
@@ -198,6 +211,7 @@ class SlashCommandManager:
             await interaction.followup.send(chunks[0], allowed_mentions=NO_PINGS)
         for chunk in chunks[1:]:
             await interaction.followup.send(chunk, allowed_mentions=NO_PINGS)
+        return shown.plain
 
     async def _register_chat_command(self):
         """Register the chat command"""
@@ -259,13 +273,19 @@ class SlashCommandManager:
                     attached = await gather_context([file] if file else [], bot_user_id=self.bot.user.id,
                                                     linked=linked, recent=recent, pdf_gate=pdf_gate)
 
+                # Server emoji are offered only when the bot has not just used one in this channel
+                custom_emoji = not any(used_custom_emoji(text) for text in
+                                       self.message_handler.recent_bot_replies(channel_id, QUIET_REPLIES))
+                emoji = self._usable_emoji(interaction) if custom_emoji else NO_EMOJI
                 with watch.step("model and tools"):
                     reply = await self.ai_handler.generate_reply(
                         enriched_message, conversation_history, username, user_id,
                         attached_context=attached.text, images=attached.images,
-                        allow_files=True, file_gate=file_gate, web_gate=web_gate
+                        allow_files=True, file_gate=file_gate, web_gate=web_gate,
+                        emoji_prompt=emoji.prompt()
                     )
-                ai_response = reply.text
+                # The emoji are worked out here too, so the history keeps what is really sent
+                ai_response = render(reply.text, self._usable_emoji(interaction), custom_allowed=custom_emoji).plain
 
                 # Update channel history with original (clean) user message
                 self.message_handler.update_channel_history(
@@ -296,7 +316,7 @@ class SlashCommandManager:
                 # The answer goes out first. Saving the conversation also extracts facts,
                 # which is another model call they should not have to wait for.
                 with watch.step("send"):
-                    await self._send_followup(interaction, ai_response, reply.files)
+                    await self._send_followup(interaction, ai_response, reply.files, custom_emoji=custom_emoji)
                 logger.info(f"Answered {username} in {watch.summary()}")
 
                 await give_first_use_role(interaction.guild, interaction.user.id)
@@ -324,7 +344,7 @@ class SlashCommandManager:
                     interaction.channel, interaction.user.display_name, str(interaction.user.id), count or 50,
                     prompt=(prompt or "").strip()
                 )
-                await self._send_followup(interaction, reply.text, reply.files)
+                await self._send_followup(interaction, reply.text, reply.files, custom_emoji=False)
             except Exception as e:
                 logger.error(f"Error handling tldr command: {e}")
                 await interaction.followup.send("couldnt sum that up, try again?")
