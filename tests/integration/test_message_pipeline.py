@@ -366,3 +366,76 @@ async def test_joining_in_stops_after_what_one_call_allows(pipeline):
         await processor.process_message(_plain(_make_message(bot.user, content=f"message {number}")))
 
     assert ai_handler.generate_reply.await_count == 2
+
+
+async def test_joining_in_can_be_switched_off_for_a_channel(pipeline):
+    from src.channel_settings import get_channel_settings
+    processor, _, _, _, ai_handler, bot = pipeline
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("yo"))
+    await processor.process_message(_plain(_make_message(bot.user, content="/yo")))
+    get_channel_settings().set_joins_in(99999, False)
+
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("lol"))
+    await processor.process_message(_plain(_make_message(bot.user, content="bro that exam was brutal")))
+
+    ai_handler.generate_reply.assert_not_called()
+
+
+async def test_two_quick_messages_are_answered_one_after_the_other(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    events = []
+    release = asyncio.Event()
+
+    async def slow_model(query, history, *args, **kwargs):
+        events.append(f"start {query}")
+        if query == "/one":
+            await release.wait()
+        events.append(f"end {query}")
+        return Reply(f"answer to {query}")
+    ai_handler.generate_reply = slow_model
+
+    first = asyncio.create_task(processor.process_message(_plain(_make_message(bot.user, content="/one"))))
+    await asyncio.sleep(0.05)
+    second = asyncio.create_task(processor.process_message(_plain(_make_message(bot.user, content="/two"))))
+    await asyncio.sleep(0.05)
+    assert events == ["start /one"]  # the second waits for the first answer
+    release.set()
+    await asyncio.gather(first, second)
+
+    assert events == ["start /one", "end /one", "start /two", "end /two"]
+
+
+async def test_the_model_is_told_what_is_being_answered_once(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    msg = _plain(_make_message(bot.user, content="/a very particular question"))
+    await processor.process_message(msg)
+
+    call = ai_handler.generate_reply.await_args
+    assert call.args[0] == "/a very particular question"
+    assert "a very particular question" not in call.args[1]
+
+
+async def test_the_next_answer_does_not_wait_for_the_first_one_to_be_saved(pipeline):
+    processor, _, _, udm, ai_handler, bot = pipeline
+    events = []
+    saving = asyncio.Event()
+
+    async def slow_save(user_id, said, answered, username=None):
+        events.append(f"saving {said}")
+        if said == "/one":
+            await saving.wait()
+    udm.add_conversation = slow_save
+
+    async def model(query, history, *args, **kwargs):
+        events.append(f"answer {query}")
+        return Reply(f"answer to {query}")
+    ai_handler.generate_reply = model
+
+    first = asyncio.create_task(processor.process_message(_plain(_make_message(bot.user, content="/one"))))
+    await asyncio.sleep(0.05)
+    second = asyncio.create_task(processor.process_message(_plain(_make_message(bot.user, content="/two"))))
+    await asyncio.sleep(0.05)
+
+    assert events == ["answer /one", "saving /one", "answer /two", "saving /two"]
+    saving.set()
+    await asyncio.gather(first, second)

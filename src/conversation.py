@@ -8,12 +8,15 @@ of a conversation would. Everything here is held in memory and is gone on a rest
 """
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Dict
+from datetime import datetime, timezone
+from typing import Callable, Dict, Optional
 
 from config.config import Config
 
 # Two or more people calling the bot within this many seconds is a crowd
 CROWD_SECONDS = 60
+# Calls no further apart than this are one conversation with the bot. A call after a longer quiet starts a new one.
+SESSION_GAP_SECONDS = 300
 # After one call the bot weighs at most this many uncalled messages, and answers at most this many of them
 MAX_WEIGHED_PER_CALL = 3
 MAX_UNCALLED_REPLIES_PER_CALL = 2
@@ -42,6 +45,8 @@ class _Channel:
     # user id -> when they last called the bot
     callers: Dict[str, float] = field(default_factory=dict)
     last_call: float = float("-inf")
+    # When the conversation with the bot that is going on now began
+    session_start: Optional[datetime] = None
     weighed: int = 0
     answered: int = 0
     # True while the bot is deciding about one uncalled message, so a burst of messages costs one model call
@@ -58,14 +63,26 @@ class Conversation:
     def _channel(self, channel_id) -> _Channel:
         return self._channels.setdefault(str(channel_id), _Channel())
 
-    def called(self, channel_id, user_id) -> None:
-        """Someone called the bot here: a / message, a ping, a reply to it or the /chat command."""
+    def called(self, channel_id, user_id, at: Optional[datetime] = None) -> None:
+        """
+        Someone called the bot here: a / message, a ping, a reply to it or the /chat
+        command. at is when their message was sent.
+        """
         channel = self._channel(channel_id)
         now = self._clock()
+        if now - channel.last_call > SESSION_GAP_SECONDS or channel.session_start is None:
+            channel.session_start = at if isinstance(at, datetime) else datetime.now(timezone.utc)
         channel.callers = {user: at for user, at in channel.callers.items() if now - at <= CROWD_SECONDS}
         channel.callers[str(user_id)] = now
         channel.last_call = now
         channel.weighed = channel.answered = 0
+
+    def session_start(self, channel_id) -> Optional[datetime]:
+        """When the conversation with the bot in this channel began, or None when none is going on."""
+        channel = self._channel(channel_id)
+        if self._clock() - channel.last_call > SESSION_GAP_SECONDS:
+            return None
+        return channel.session_start
 
     def is_crowd(self, channel_id) -> bool:
         """True when more than one person has called the bot here in the last minute."""

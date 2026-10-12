@@ -5,7 +5,7 @@ import re
 import time
 import discord
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Optional, Set
+from typing import Callable, AsyncIterator, Optional, Set
 from src.ai_response_handler import AIResponseHandler, Reply
 from config.config import Config
 from src import usage_context
@@ -28,7 +28,7 @@ from typing import List
 logger = logging.getLogger(__name__)
 
 # How many channel messages to load as context when the bot answers
-HISTORY_FETCH_LIMIT = 15
+HISTORY_FETCH_LIMIT = 50
 
 # The bot quotes and sums up other people's messages, so what it sends must never ping anyone
 NO_PINGS = discord.AllowedMentions.none()
@@ -119,6 +119,7 @@ class MessageProcessor:
         self._last_reaction: dict = {}
         # Who is talking to the bot in each channel right now
         self.conversation = Conversation()
+        self._channel_locks: dict = {}
     
     async def process_message(self, message: discord.Message) -> None:
         """Process an incoming Discord message - Properly capture ALL channel messages"""
@@ -144,7 +145,8 @@ class MessageProcessor:
                 content=history_text(message),
                 is_bot=False,
                 is_command=content.startswith('/'),
-                timestamp=getattr(message, "created_at", None)
+                timestamp=getattr(message, "created_at", None),
+                message_id=getattr(message, "id", None)
             )
 
             # Now handle command processing
@@ -222,8 +224,24 @@ class MessageProcessor:
             return []
 
         recent.reverse()  # Discord returns newest first
-        self.message_handler.replace_channel_history(str(channel.id), [
-            {
+        authors = {msg.id: msg.author for msg in recent}
+
+        def answered(msg) -> tuple:
+            """The name and id of whoever this message replied to, or was a slash command answer for."""
+            reference = getattr(msg, "reference", None)
+            target = getattr(reference, "resolved", None)
+            author = getattr(target, "author", None) or authors.get(getattr(reference, "message_id", None))
+            if author is None:
+                author = getattr(getattr(msg, "interaction_metadata", None), "user", None)
+            if author is None or not isinstance(getattr(author, "display_name", None), str):
+                return "", ""
+            name = "YOU" if author.id == self.bot.user.id else author.display_name
+            return name, str(author.id)
+
+        entries = []
+        for msg in recent:
+            reply_to, reply_to_id = answered(msg)
+            entries.append({
                 "user_id": str(msg.author.id),
                 "username": msg.author.display_name,
                 "content": history_text(msg),
@@ -231,9 +249,11 @@ class MessageProcessor:
                 "is_bot": msg.author.id == self.bot.user.id,
                 "is_command": isinstance(msg.content, str) and msg.content.startswith('/'),
                 "timestamp": msg.created_at,
-            }
-            for msg in recent
-        ])
+                "message_id": msg.id,
+                "reply_to": reply_to,
+                "reply_to_id": reply_to_id,
+            })
+        self.message_handler.replace_channel_history(str(channel.id), entries)
         return recent
 
     async def _respond(self, message: discord.Message, user_id: str, username: str,
@@ -249,14 +269,35 @@ class MessageProcessor:
                 await self._safe_send(message.channel, f"slow down, u hit the message limit. try again in about {minutes} min")
                 return
 
-        self.conversation.called(channel_id, user_id)
-        with watch.step("history"):
-            recent = await self.sync_channel_history(message.channel)
-            conversation_history = self.message_handler.build_conversation_context(
-                channel_id=channel_id, user_data=user_data, is_correction=False
-            )
-        await self._handle_ai_response(message, user_id, username, channel_id, query,
-                                       conversation_history, referenced, recent, watch)
+        self.conversation.called(channel_id, user_id, getattr(message, "created_at", None))
+        # One answer at a time in a channel, in the order the messages came. The second one
+        # then reads the first answer, the way a person would have said it before going on.
+        lock = self.channel_lock(channel_id)
+        await lock.acquire()
+        held = [True]
+
+        def answer_is_out() -> None:
+            """Let the next answer in this channel start. What is left of this one is bookkeeping."""
+            if held[0]:
+                held[0] = False
+                lock.release()
+
+        try:
+            with watch.step("history"):
+                recent = await self.sync_channel_history(message.channel)
+                conversation_history = self.message_handler.build_conversation_context(
+                    channel_id=channel_id, user_data=user_data, query=query,
+                    session_start=self.conversation.session_start(channel_id), current_id=message.id
+                )
+            await self._handle_ai_response(message, user_id, username, channel_id, query,
+                                           conversation_history, referenced, recent, watch,
+                                           answer_is_out=answer_is_out)
+        finally:
+            answer_is_out()
+
+    def channel_lock(self, channel_id: str) -> asyncio.Lock:
+        """The lock that keeps the bot's answers in one channel in order."""
+        return self._channel_locks.setdefault(channel_id, asyncio.Lock())
 
     async def _handle_command_message(self, message: discord.Message, user_id: str, 
                               username: str, channel_id: str, user_data: dict,
@@ -315,7 +356,12 @@ is_correction: bool) -> None:
                               conversation_history: str,
                               referenced: Optional[discord.Message] = None,
                               recent: Optional[list] = None,
-                              watch: Optional[Stopwatch] = None) -> None:
+                              watch: Optional[Stopwatch] = None,
+                              answer_is_out: Optional[Callable[[], None]] = None) -> None:
+        """
+        Build the answer to one message and send it. answer_is_out is called once the
+        answer is sent and in the history, before the slower work that nobody waits for.
+        """
         original_query = query  # preserve clean version for history/user data storage
         watch = watch or Stopwatch()
         try:
@@ -360,13 +406,20 @@ is_correction: bool) -> None:
                 await self._react(message, shown.reaction, channel_id)
             # Everything they waited for is done. What follows runs after the answer is out.
             logger.info(f"Answered {username} in {watch.summary()}")
-            await self._maybe_assign_chrono_role(message)
 
+            # A stand-in for an answer the model could not give must not come back as context
+            if not reply.ok:
+                self.message_handler.not_answers.append(ai_response)
             # The user's message is already in the history, so only the answer is added
             self.message_handler.update_channel_history(
                 channel_id=channel_id, user_id=str(self.bot.user.id),
-                username="ChronoChunk", content=ai_response, is_bot=True
+                username="ChronoChunk", content=ai_response, is_bot=True,
+                reply_to=username, reply_to_id=user_id
             )
+            # The next message in this channel can be answered while this one is saved
+            if answer_is_out:
+                answer_is_out()
+            await self._maybe_assign_chrono_role(message)
 
             # add_conversation also extracts facts from the message
             if self.user_data_manager:
@@ -422,6 +475,8 @@ is_correction: bool) -> None:
         """
         if not content.strip() or not self.conversation.may_join_in(channel_id):
             return
+        if not get_channel_settings().joins_in(channel_id):
+            return
         # Someone answering another person, or pinging one, is talking to them
         if referenced is not None or getattr(message, "mentions", None) or getattr(message, "role_mentions", None):
             return
@@ -430,21 +485,26 @@ is_correction: bool) -> None:
         try:
             usage_context.set_user("")
             usage_context.label("join_in")
-            await self.sync_channel_history(message.channel)
-            history = self.message_handler.build_conversation_context(channel_id=channel_id, user_data={})
-            custom_emoji = self.custom_emoji_due(channel_id)
-            emoji = usable_emoji(message.channel, self.bot.guilds)
-            reply = await self.ai_handler.generate_reply(
-                content, history, username, None,
-                attached_context=UNCALLED_NOTE.format(name=username), emoji_prompt=emoji.prompt())
-            # A stand-in for a failed answer is for someone who asked. Nobody did.
-            if not reply.ok or stays_out(reply.text):
-                return
-            shown = await self._send_reply(message, reply.text, custom_emoji=custom_emoji)
-            answered = True
-            self.message_handler.update_channel_history(
-                channel_id=channel_id, user_id=str(self.bot.user.id),
-                username="ChronoChunk", content=shown.plain, is_bot=True)
+            # After any answer that is still being written, so this one has read it
+            async with self.channel_lock(channel_id):
+                await self.sync_channel_history(message.channel)
+                history = self.message_handler.build_conversation_context(
+                    channel_id=channel_id, user_data={}, query=content,
+                    session_start=self.conversation.session_start(channel_id), current_id=message.id)
+                custom_emoji = self.custom_emoji_due(channel_id)
+                emoji = usable_emoji(message.channel, self.bot.guilds)
+                reply = await self.ai_handler.generate_reply(
+                    content, history, username, None,
+                    attached_context=UNCALLED_NOTE.format(name=username), emoji_prompt=emoji.prompt())
+                # A stand-in for a failed answer is for someone who asked. Nobody did.
+                if not reply.ok or stays_out(reply.text):
+                    return
+                shown = await self._send_reply(message, reply.text, custom_emoji=custom_emoji)
+                answered = True
+                self.message_handler.update_channel_history(
+                    channel_id=channel_id, user_id=str(self.bot.user.id),
+                    username="ChronoChunk", content=shown.plain, is_bot=True,
+                    reply_to=username, reply_to_id=str(message.author.id))
             logger.info(f"Joined in on a message from {username} in channel {channel_id}")
         except Exception as e:
             logger.warning(f"Could not weigh an uncalled message: {e!r}")

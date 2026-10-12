@@ -216,7 +216,7 @@ async def test_answers_never_ping_anyone(pipeline):
 
 # ── channel history ───────────────────────────────────────────────────────────
 
-async def test_history_is_oldest_first_with_the_current_message_last(pipeline):
+async def test_history_is_oldest_first_and_leaves_out_the_message_being_answered(pipeline):
     processor, _, _, _, ai_handler, bot = pipeline
     kruskal = fake_author("Kruskal")
     chrono = fake_author("ChronoChunk", bot.user.id, bot=True)
@@ -232,7 +232,8 @@ async def test_history_is_oldest_first_with_the_current_message_last(pipeline):
 
     _, history, _, _ = _ai_call(ai_handler)
     lines = [line for line in history.splitlines() if "Kruskal:" in line or "ChronoChunk" in line]
-    assert [line.split(": ", 1)[1] for line in lines] == ["first", "second", "third", "fourth"]
+    # The message being answered is handed to the model on its own, so it is not in the history as well
+    assert [line.split(": ", 1)[1] for line in lines] == ["first", "second", "third"]
     assert "YOU (ChronoChunk): second" in history
 
 
@@ -276,7 +277,7 @@ async def test_old_messages_are_not_marked_as_the_live_conversation(pipeline):
 
     _, history, _, _ = _ai_call(ai_handler)
     assert "[3 days ago, LOW priority] Kruskal: ancient drama" in history
-    assert ">>> Kruskal: yo" in history
+    assert ">>>" not in history
 
 
 async def test_image_only_messages_show_up_in_history(pipeline):

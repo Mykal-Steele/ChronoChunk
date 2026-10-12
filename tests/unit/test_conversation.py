@@ -1,8 +1,12 @@
 """Unit tests for who is talking to the bot in a channel, and when it may join in uncalled."""
+from datetime import datetime, timezone
+
 import pytest
 
 from config.config import Config
-from src.conversation import MAX_UNCALLED_REPLIES_PER_CALL, MAX_WEIGHED_PER_CALL, Conversation, stays_out
+from src.conversation import (
+    MAX_UNCALLED_REPLIES_PER_CALL, MAX_WEIGHED_PER_CALL, SESSION_GAP_SECONDS, Conversation, stays_out,
+)
 
 
 class Clock:
@@ -108,3 +112,21 @@ def test_the_models_way_of_staying_out_is_recognized(text):
 @pytest.mark.parametrize("text", ["lmao what", "skipping class again?", "nah thats wild", "u should skip it"])
 def test_a_real_answer_is_not_mistaken_for_staying_out(text):
     assert not stays_out(text)
+
+
+def test_a_conversation_begins_with_the_first_call_and_runs_while_calls_keep_coming(conversation, clock):
+    first = datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc)
+    assert conversation.session_start("c") is None
+    conversation.called("c", "alex", first)
+    clock.now += 100
+    conversation.called("c", "sam", datetime(2026, 10, 12, 12, 1, 40, tzinfo=timezone.utc))
+    assert conversation.session_start("c") == first
+
+
+def test_a_call_after_a_long_quiet_begins_a_new_conversation(conversation, clock):
+    conversation.called("c", "alex", datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc))
+    clock.now += SESSION_GAP_SECONDS + 1
+    assert conversation.session_start("c") is None
+    later = datetime(2026, 10, 12, 12, 30, tzinfo=timezone.utc)
+    conversation.called("c", "alex", later)
+    assert conversation.session_start("c") == later
