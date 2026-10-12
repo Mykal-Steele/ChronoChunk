@@ -1,8 +1,10 @@
+import asyncio
 import io
 import logging
 import re
 import discord
-from typing import Optional, Set
+from contextlib import asynccontextmanager
+from typing import AsyncIterator, Optional, Set
 from src.ai_response_handler import AIResponseHandler, Reply
 from src import usage_context
 from src.command_handler import CommandHandler
@@ -27,6 +29,32 @@ NO_PINGS = discord.AllowedMentions.none()
 
 # Stands in for the text when someone only pings the bot or types a bare /chat
 NO_TEXT = "(no text, they just want u to look at what they replied to or attached)"
+
+
+@asynccontextmanager
+async def typing_in_background(channel) -> AsyncIterator[None]:
+    """
+    Show the typing indicator for as long as the block runs, without waiting for Discord
+    to confirm it. Starting it is a request of its own, about 0.3s on the server and now
+    and then over 2s, and the answer does not depend on it.
+    """
+    async def keep_typing() -> None:
+        try:
+            async with channel.typing():
+                await asyncio.Event().wait()  # until the block ends and cancels this
+        except discord.HTTPException as e:
+            # No indicator is not worth losing the answer over
+            logger.warning(f"Could not show the typing indicator: {e}")
+
+    task = asyncio.create_task(keep_typing())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 # Given to a member the first time the bot answers them
@@ -233,7 +261,7 @@ is_correction: bool) -> None:
                 return
 
             # Pass to command handler. /tldr reads the channel and calls the AI, which takes a while.
-            async with message.channel.typing():
+            async with typing_in_background(message.channel):
                 cmd_response = await self.command_handler.handle_command(command, args, message, user_id)
 
             # If the command was recognized and handled, send the response
@@ -267,7 +295,7 @@ is_correction: bool) -> None:
         original_query = query  # preserve clean version for history/user data storage
         watch = watch or Stopwatch()
         try:
-            async with message.channel.typing():
+            async with typing_in_background(message.channel):
                 # Files made, PDFs read in full and web lookups each count against a daily limit per user
                 file_gate = pdf_gate = web_gate = None
                 limiter = self.rate_limiter
