@@ -16,6 +16,7 @@ JOBS = {
     "facts": "memory",
     "document": "documents",
     "pdf_notes": "pdf pages",
+    "emoji_notes": "emoji",
     "music": "music search",
     "": "earlier",
 }

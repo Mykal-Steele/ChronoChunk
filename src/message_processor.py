@@ -2,6 +2,7 @@ import asyncio
 import io
 import logging
 import re
+import time
 import discord
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Optional, Set
@@ -16,7 +17,7 @@ from src.timing import Stopwatch
 from src.user_data_manager import UserDataManager
 from src.channel_settings import get_channel_settings
 from src.message_context import build_attached_context, history_text, resolve_message_link
-from src.server_emoji import NO_EMOJI, QUIET_REPLIES, render, usable_emoji, used_custom_emoji
+from src.server_emoji import QUIET_REPLIES, REACTION_GAP_SECONDS, Rendered, render, usable_emoji, used_custom_emoji
 import traceback
 from typing import List
 
@@ -109,6 +110,8 @@ class MessageProcessor:
         self.command_handler = command_handler  # Add this line to store the command handler
         self.rate_limiter = rate_limiter
         self.text_commands = text_commands
+        # channel id -> when the bot last put a reaction on a message there
+        self._last_reaction: dict = {}
     
     async def process_message(self, message: discord.Message) -> None:
         """Process an incoming Discord message - Properly capture ALL channel messages"""
@@ -324,20 +327,25 @@ is_correction: bool) -> None:
                         recent = None
                     attached = await build_attached_context(message, referenced, self.bot.user.id,
                                                             linked=linked, recent=recent, pdf_gate=pdf_gate)
-                # Server emoji are offered only when the bot has not just used one in this channel
+                # The model always knows the server's emoji. Whether this reply may show one is settled
+                # when it is sent: not while one of the bot's last few replies here had one.
                 custom_emoji = self.custom_emoji_due(channel_id)
-                emoji = usable_emoji(message.channel, self.bot.guilds) if custom_emoji else NO_EMOJI
+                may_react = self.reaction_due(channel_id)
+                emoji = usable_emoji(message.channel, self.bot.guilds)
                 with watch.step("model and tools"):
                     reply = await self.ai_handler.generate_reply(
                         enriched_query, conversation_history, username, user_id,
                         attached_context=attached.text, images=attached.images,
                         allow_files=True, file_gate=file_gate, web_gate=web_gate,
-                        emoji_prompt=emoji.prompt()
+                        emoji_prompt=emoji.prompt(reactions=may_react)
                     )
 
             with watch.step("send"):
+                shown = await self._send_reply(message, reply.text, reply.files, custom_emoji=custom_emoji)
                 # What was sent, with any emoji written :name:, is what the history keeps
-                ai_response = await self._send_reply(message, reply.text, reply.files, custom_emoji=custom_emoji)
+                ai_response = shown.plain
+            if may_react:
+                await self._react(message, shown.reaction, channel_id)
             # Everything they waited for is done. What follows runs after the answer is out.
             logger.info(f"Answered {username} in {watch.summary()}")
             await self._maybe_assign_chrono_role(message)
@@ -393,17 +401,37 @@ is_correction: bool) -> None:
         return not any(used_custom_emoji(text)
                        for text in self.message_handler.recent_bot_replies(channel_id, QUIET_REPLIES))
 
-    async def _send_reply(self, message: discord.Message, text: str, files=None, custom_emoji: bool = True) -> str:
+    def reaction_due(self, channel_id: str) -> bool:
+        """False for a while after the bot put a reaction on a message in the channel."""
+        last = self._last_reaction.get(channel_id)
+        return last is None or time.monotonic() - last >= REACTION_GAP_SECONDS
+
+    async def _react(self, message: discord.Message, reaction: str, channel_id: str) -> None:
+        """Put the emoji the model asked for on the message it answered. The reply is out already, so this may fail quietly."""
+        if not reaction:
+            return
+        try:
+            me = message.guild.me if message.guild else None
+            if me is not None and message.channel.permissions_for(me).add_reactions is not True:
+                return
+            await message.add_reaction(discord.PartialEmoji.from_str(reaction))
+            self._last_reaction[channel_id] = time.monotonic()
+        except Exception as e:
+            logger.warning(f"Could not react to a message: {e!r}")
+
+    async def _send_reply(self, message: discord.Message, text: str, files=None,
+                          custom_emoji: bool = True) -> Rendered:
         """
         Send the answer as a Discord reply to the message that asked, splitting long
         text. files are BuiltFile objects, uploaded with the first chunk. Emoji names
         in the text become server emoji the bot can use here, and any other is taken
-        out. Returns the text as the chat history should keep it.
+        out. Returns what was sent, which also has the text as the chat history should
+        keep it and the reaction the model asked for.
         """
         shown = render(text, usable_emoji(message.channel, self.bot.guilds), custom_allowed=custom_emoji)
         chunks = self._split_text(shown.text)
         if not chunks and not files:
-            return shown.plain
+            return shown
         first = chunks[0] if chunks else None
 
         def extras() -> dict:
@@ -419,7 +447,7 @@ is_correction: bool) -> None:
             await message.channel.send(first, allowed_mentions=NO_PINGS, **extras())
         for chunk in chunks[1:]:
             await message.channel.send(chunk, allowed_mentions=NO_PINGS)
-        return shown.plain
+        return shown
 
     async def _discord_error_response(self, channel, error: discord.HTTPException) -> None:
         """Natural in-character response for specific Discord API errors."""

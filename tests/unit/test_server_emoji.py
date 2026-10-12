@@ -127,6 +127,42 @@ def test_the_history_keeps_the_short_form_of_what_was_sent():
     assert shown.plain == "lol :kekw:"
 
 
+# A list of emoji names, and a reaction
+
+def test_a_reply_that_lists_the_emoji_goes_out_as_plain_names():
+    emoji = EmojiSet({"kekw": KEKW, "pog": POG, "sadge": "<:sadge:323456789012345678>"}, ["kekw", "pog", "sadge"])
+    shown = render("i got :kekw: :pog: :sadge: and thats it", emoji)
+    assert shown.text == "i got kekw pog sadge and thats it"
+    assert not used_custom_emoji(shown.plain)
+
+
+def test_a_list_is_still_plain_names_while_custom_emoji_are_switched_off():
+    emoji = EmojiSet({"kekw": KEKW, "pog": POG, "sadge": "<:sadge:323456789012345678>"}, ["kekw", "pog", "sadge"])
+    assert render(":kekw:, :pog:, :sadge:", emoji, custom_allowed=False).text == "kekw, pog, sadge"
+
+
+@pytest.mark.parametrize("asked, expected", [
+    ("[react :kekw:]", KEKW), ("[react kekw]", KEKW), (f"[react {KEKW}]", KEKW), ("[react :KEKW:]", KEKW),
+    ("[react 💀]", "💀"), ("[react :skull:]", "💀"), ("[React: 🔥]", "🔥"),
+    ("[react :notreal:]", ""), ("[react <:fake:999999999999999999>]", ""), ("[react lol whatever]", ""), ("[react]", ""),
+])
+def test_a_reaction_is_only_ever_an_emoji_the_bot_can_use(asked, expected):
+    shown = render(f"thats wild {asked}", EMOJI)
+    assert shown.text == "thats wild"
+    assert shown.reaction == expected
+
+
+def test_a_reaction_name_that_starts_with_a_is_read_whole():
+    emoji = EmojiSet({"angry": "<:angry:423456789012345678>"}, ["angry"])
+    assert render("nah [react :angry:]", emoji).reaction == "<:angry:423456789012345678>"
+
+
+def test_a_reaction_does_not_use_up_the_replys_emoji():
+    shown = render("lol :kekw: [react :pog:]", EMOJI)
+    assert shown.text == f"lol {KEKW}"
+    assert shown.reaction == POG
+
+
 # Not too many
 
 def test_one_reply_shows_one_custom_emoji_at_most():
@@ -248,8 +284,25 @@ def test_an_emoji_whose_text_discord_would_not_render_is_left_out():
 # What the model is told
 
 def test_the_prompt_lists_the_names_and_is_empty_without_any():
-    assert ":kekw: :pog:" in EMOJI.prompt()
+    assert ":kekw:\n:pog:" in EMOJI.prompt()
     assert NO_EMOJI.prompt() == ""
+
+
+def test_the_prompt_says_what_an_emoji_shows_when_that_is_known():
+    emoji = EmojiSet({"kekw": KEKW, "pog": POG}, ["kekw", "pog"], {"kekw": "laughing frog, something is funny"})
+    assert ":kekw: (laughing frog, something is funny)\n:pog:" in emoji.prompt()
+
+
+def test_the_prompt_mentions_reactions_only_when_one_is_allowed():
+    assert "[react" not in EMOJI.prompt()
+    assert "[react" in EMOJI.prompt(reactions=True)
+    assert "[react" in NO_EMOJI.prompt(reactions=True)
+
+
+def test_a_usable_emoji_carries_its_note(monkeypatch):
+    monkeypatch.setattr("src.emoji_notes.note_for", lambda emoji_id: "laughing frog" if emoji_id == "123456789012345678" else "")
+    guild = fake_guild(1, [fake_emoji("kekw", 123456789012345678), fake_emoji("pog", 223456789012345678, animated=True)])
+    assert usable_emoji(fake_channel(guild), [guild]).notes == {"kekw": "laughing frog"}
 
 
 def test_the_prompt_stops_at_a_fixed_number_of_names():
@@ -278,10 +331,56 @@ async def test_a_typed_reply_is_sent_with_real_emoji_and_remembered_in_the_short
     message.channel = fake_channel(guild)
     message.reply = AsyncMock()
 
-    kept = await processor._send_reply(message, "lol :kekw: :notreal: <:fake:999999999999999999>")
+    sent = await processor._send_reply(message, "lol :kekw: :notreal: <:fake:999999999999999999> [react :kekw:]")
 
     assert message.reply.await_args.args[0] == f"lol {KEKW}"
-    assert kept == "lol :kekw:"
+    assert sent.plain == "lol :kekw:"
+    assert sent.reaction == KEKW
+
+
+def reacting_processor():
+    guild = fake_guild(1, [fake_emoji("kekw", 123456789012345678)])
+    bot = MagicMock()
+    bot.guilds = [guild]
+    processor = MessageProcessor(bot=bot, message_handler=MessageHandler(), ai_response_handler=MagicMock(),
+                                 user_data_manager=MagicMock())
+    message = MagicMock()
+    message.guild = guild
+    message.channel = fake_channel(guild)
+    message.channel.permissions_for.side_effect = None
+    message.channel.permissions_for.return_value = MagicMock(add_reactions=True)
+    message.add_reaction = AsyncMock()
+    return processor, message
+
+
+async def test_a_reaction_goes_on_the_message_and_then_the_channel_waits():
+    processor, message = reacting_processor()
+    assert processor.reaction_due("c")
+
+    await processor._react(message, KEKW, "c")
+
+    assert str(message.add_reaction.await_args.args[0]) == KEKW
+    assert not processor.reaction_due("c")
+    assert processor.reaction_due("another channel")
+
+
+async def test_no_reaction_without_the_permission_to_add_one():
+    processor, message = reacting_processor()
+    message.channel.permissions_for.return_value = MagicMock(add_reactions=False)
+
+    await processor._react(message, "💀", "c")
+
+    message.add_reaction.assert_not_awaited()
+    assert processor.reaction_due("c")
+
+
+async def test_a_reaction_discord_refuses_is_not_an_error():
+    processor, message = reacting_processor()
+    message.add_reaction.side_effect = RuntimeError("unknown emoji")
+
+    await processor._react(message, "💀", "c")
+
+    assert processor.reaction_due("c")
 
 
 async def test_a_slash_command_answer_checks_everyones_permission_for_other_servers_emoji():
@@ -318,6 +417,7 @@ BITS = [
     "lol", "bruh", "ok", " ", " ", "\n", ",", ".", "!", "?", ":", "::", "<", ">", "<:", "<a:", "10:30", "💀", "🔥",
     ":kekw:", ":pog:", ":KEKW:", ":fake:", ":x:", ":skull:", KEKW, POG, "<:kekw:1>", "<:fake:999999999999999999>",
     "<a:kekw:123456789012345678>", "<:pog:223456789012345678>", "<:kekw:12345678901234567", "<:kekw", "kekw:",
+    "[react 💀]", "[react :kekw:]", "[react :fake:]", "[react",
 ]
 ANY_MARKUP = re.compile(r"<a?:[A-Za-z0-9_]{2,32}(?::\d*)?>?")
 ALLOWED = {KEKW, POG}
@@ -335,3 +435,4 @@ def test_random_replies_never_carry_a_broken_emoji(seed):
         assert sum(shown.count(markup) for markup in ALLOWED) <= 1, (text, shown)
         assert not re.search(r"(?<!:):(?:kekw|pog|fake):(?![\w:])", shown, re.I), (text, shown)
         assert "\x00" not in shown
+        assert not re.search(r"\[\s*react[^\]\n]*\]", shown, re.I), (text, shown)

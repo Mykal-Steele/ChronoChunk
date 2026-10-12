@@ -273,10 +273,11 @@ class SlashCommandManager:
                     attached = await gather_context([file] if file else [], bot_user_id=self.bot.user.id,
                                                     linked=linked, recent=recent, pdf_gate=pdf_gate)
 
-                # Server emoji are offered only when the bot has not just used one in this channel
+                # The model always knows the server's emoji. This reply may show one only when
+                # none of the bot's last few replies here had one.
                 custom_emoji = not any(used_custom_emoji(text) for text in
                                        self.message_handler.recent_bot_replies(channel_id, QUIET_REPLIES))
-                emoji = self._usable_emoji(interaction) if custom_emoji else NO_EMOJI
+                emoji = self._usable_emoji(interaction)
                 with watch.step("model and tools"):
                     reply = await self.ai_handler.generate_reply(
                         enriched_message, conversation_history, username, user_id,

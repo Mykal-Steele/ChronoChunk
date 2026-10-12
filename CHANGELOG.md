@@ -10,6 +10,22 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.13.0 (2026-10-12)
+
+### Added
+
+- The bot knows what each server emoji shows. It looks at every emoji's picture once, writes a few words about it ("sad frog, disappointment or sympathy") and keeps them in its database. The chat model sees the name with that note and picks by it. A new emoji gets its note when the server adds it.
+- The bot can put an emoji reaction on the message it is answering. It still writes its reply. The model asks for a reaction only for a message that is funny or where one emoji fits, and the bot reacts at most once every 10 minutes in a channel. Only an emoji it may use there is ever put on a message.
+- Asked which emoji it has, the bot lists their names as plain words. A reply that names three or more different server emoji is treated as such a list, so it is never cut down to one emoji and never fills the chat with them.
+
+### Changed
+
+- The model is told about the server's emoji on every reply, up to 30 of them with this server's first. Whether a reply may show one is still decided when it is sent: one at most, and none while one of the bot's last three replies in the channel had one.
+
+### Removed
+
+- The old send function in the message handler. Nothing called it, and its emoji matching guessed at names.
+
 ## 3.12.0 (2026-10-12)
 
 ### Added

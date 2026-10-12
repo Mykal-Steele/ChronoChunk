@@ -37,9 +37,10 @@ class AsyncIterator:
 @pytest.fixture(autouse=True)
 def database(tmp_path):
     """Every test gets its own empty database, and the stores that sit on top of it start fresh."""
-    from src import channel_settings, database as database_module, usage_guard
+    from src import channel_settings, database as database_module, emoji_notes, usage_guard
     db = database_module.Database(":memory:")
     database_module.set_database(db)
+    emoji_notes.clear_cache()
     usage_guard._shared_guard = None
     channel_settings._shared_settings = None
     yield db
