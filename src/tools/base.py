@@ -10,7 +10,7 @@ def user_content(text: str, images: List[str]):
     """A user turn for the model: plain text, or text plus image parts when there are images (data URLs)."""
     if not images:
         return text
-    content = [{"type": "text", "text": text}]
+    content: List[dict] = [{"type": "text", "text": text}]
     content.extend({"type": "image_url", "image_url": {"url": url}} for url in images)
     return content
 

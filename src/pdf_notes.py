@@ -140,7 +140,7 @@ def _pages_to_describe(data: bytes, mode: str) -> List[int]:
         chosen = []
         for number in range(total):
             page = pdf[number]
-            kinds = [item.type for item in page.get_objects(max_depth=3)]
+            kinds = [item.type for item in page.get_objects(max_depth=3)]  # pyright: ignore[reportAttributeAccessIssue]
             has_picture = raw.FPDF_PAGEOBJ_IMAGE in kinds or raw.FPDF_PAGEOBJ_SHADING in kinds
             drawn = kinds.count(raw.FPDF_PAGEOBJ_PATH)
             text = page.get_textpage().get_text_range() or ""
@@ -190,11 +190,14 @@ async def _build(data: bytes, filename: str, pages: List[int]) -> Tuple[Optional
 
     limit = asyncio.Semaphore(REQUESTS_AT_ONCE)
     costs: List[float] = []
+    # The caller only gets here once the bot has set the describer
+    describe = _describe
+    assert describe is not None
 
     async def describe_group(group: List[int]) -> str:
         async with limit:
             pictures = await _in_render_thread(_render, data, group)
-            text, cost = await _describe(PROMPT.format(pages=", ".join(str(n + 1) for n in group)), pictures)
+            text, cost = await describe(PROMPT.format(pages=", ".join(str(n + 1) for n in group)), pictures)
             costs.append(cost)
             return text.strip()
 
@@ -205,7 +208,7 @@ async def _build(data: bytes, filename: str, pages: List[int]) -> Tuple[Optional
         task.cancel()
 
     parts = []
-    for task, group in zip(tasks, groups):
+    for task, group in zip(tasks, groups, strict=True):
         if task in pending:
             logger.warning(f"Page notes for {filename}: pages {group[0] + 1} to {group[-1] + 1} ran out of time")
             continue

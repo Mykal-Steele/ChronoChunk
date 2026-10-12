@@ -9,17 +9,32 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # The job only reads the code, and the steps below run third-party tools over the checkout
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       # The test stage is the bot's image plus pytest: pandoc, the fonts and every pinned package
       - name: Build the test image
         run: docker build --target test -t chronochunk:test .
 
-      # The image has no source in it, so the checkout is mounted, and the tests run as the
+      # The image has no source in it, so the checkout is mounted, and everything runs as the
       # user who owns the checkout
+      - name: Lint
+        run: >
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/app -w /app chronochunk:test
+          ruff check . --no-cache
+
+      - name: Check the types
+        run: >
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/app -w /app chronochunk:test
+          pyright
+
       - name: Run the tests
         run: >
           docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/app -w /app chronochunk:test

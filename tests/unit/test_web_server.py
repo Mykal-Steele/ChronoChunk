@@ -1,5 +1,4 @@
 """Unit tests for WebServer HTTP endpoints."""
-import json
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from src.web_server import WebServer

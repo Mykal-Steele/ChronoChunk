@@ -4,11 +4,15 @@ import discord
 from discord import app_commands
 from typing import Optional
 from src import usage_context
+from src.ai_response_handler import AIResponseHandler
 from src.exceptions import RateLimitError
+from src.game_manager import GameManager
 from src.help_menu import build_help_embed
 from src.channel_settings import get_channel_settings
 from src.message_context import gather_context, resolve_message_link
+from src.message_handler import MessageHandler
 from src.message_processor import MessageProcessor, NO_PINGS, give_first_use_role
+from src.user_data_manager import UserDataManager
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -16,8 +20,8 @@ logger = logging.getLogger(__name__)
 class SlashCommandManager:
     """Handles registration and execution of slash commands"""
     
-    def __init__(self, bot, game_manager=None, user_data_manager=None, 
-                 ai_handler=None, message_handler=None, music_manager=None):
+    def __init__(self, bot, *, game_manager: GameManager, user_data_manager: UserDataManager,
+                 ai_handler: AIResponseHandler, message_handler: MessageHandler, music_manager=None):
         """The rate limiter is the bot's shared one, read from bot.rate_limiter when a command runs."""
         self.bot = bot
         self.game_manager = game_manager
@@ -154,7 +158,7 @@ class SlashCommandManager:
         """Register the forget command"""
         @self.bot.tree.command(name="forget", description="Forget specific information about you")
         @app_commands.describe(fact="The fact to forget (leave empty to forget everything)")
-        async def forget(interaction: discord.Interaction, fact: str = None):
+        async def forget(interaction: discord.Interaction, fact: Optional[str] = None):
             user_id = str(interaction.user.id)
             username = interaction.user.display_name
             
@@ -182,10 +186,12 @@ class SlashCommandManager:
     
     async def _send_followup(self, interaction: discord.Interaction, text: str, files=None) -> None:
         """Send an answer to a slash command, splitting long text. files are BuiltFile objects."""
-        chunks = MessageProcessor._split_text(text) or [None]
+        chunks = MessageProcessor._split_text(text) or [""]
         uploads = [discord.File(io.BytesIO(f.data), filename=f.filename) for f in (files or [])]
-        extras = {"files": uploads} if uploads else {}
-        await interaction.followup.send(chunks[0], allowed_mentions=NO_PINGS, **extras)
+        if uploads:
+            await interaction.followup.send(chunks[0], allowed_mentions=NO_PINGS, files=uploads)
+        else:
+            await interaction.followup.send(chunks[0], allowed_mentions=NO_PINGS)
         for chunk in chunks[1:]:
             await interaction.followup.send(chunk, allowed_mentions=NO_PINGS)
 
@@ -353,12 +359,14 @@ class SlashCommandManager:
         @app_commands.describe(query="YouTube/Spotify URL or search term")
         async def music(interaction: discord.Interaction, query: str):
             usage_context.set_user(interaction.user.id)
-            if not interaction.user.voice:
+            # Only a server member has a voice state. In a DM there is none.
+            voice = getattr(interaction.user, "voice", None)
+            if not voice or not interaction.guild_id:
                 await interaction.response.send_message("yo, u gotta be in a voice channel to play music")
                 return
             
             # Join the user's voice channel
-            voice_channel = interaction.user.voice.channel
+            voice_channel = voice.channel
             
             try:
                 # Defer response for longer processing
@@ -384,7 +392,7 @@ class SlashCommandManager:
         """Register the skip command"""
         @self.bot.tree.command(name="skip", description="Skip to the next song in queue")
         async def skip(interaction: discord.Interaction):
-            if not interaction.guild:
+            if not interaction.guild_id:
                 await interaction.response.send_message("this only works in servers not dms")
                 return
                 
@@ -395,7 +403,7 @@ class SlashCommandManager:
         """Register the pause command"""
         @self.bot.tree.command(name="pause", description="Pause the current song")
         async def pause(interaction: discord.Interaction):
-            if not interaction.guild:
+            if not interaction.guild_id:
                 await interaction.response.send_message("this only works in servers not dms")
                 return
                 
@@ -406,7 +414,7 @@ class SlashCommandManager:
         """Register the resume command"""
         @self.bot.tree.command(name="resume", description="Resume playback")
         async def resume(interaction: discord.Interaction):
-            if not interaction.guild:
+            if not interaction.guild_id:
                 await interaction.response.send_message("this only works in servers not dms")
                 return
                 
@@ -417,7 +425,7 @@ class SlashCommandManager:
         """Register the stop command"""
         @self.bot.tree.command(name="stop", description="Stop playback and clear the queue")
         async def stop(interaction: discord.Interaction):
-            if not interaction.guild:
+            if not interaction.guild_id:
                 await interaction.response.send_message("this only works in servers not dms")
                 return
             
@@ -435,7 +443,7 @@ class SlashCommandManager:
         """Register the queue command"""
         @self.bot.tree.command(name="queue", description="Show the current queue")
         async def queue(interaction: discord.Interaction):
-            if not interaction.guild:
+            if not interaction.guild_id:
                 await interaction.response.send_message("this only works in servers not dms")
                 return
                 
@@ -469,7 +477,7 @@ class SlashCommandManager:
         @self.bot.tree.command(name="volume", description="Set the volume (0-100)")
         @app_commands.describe(level="Volume level (0-100)")
         async def volume(interaction: discord.Interaction, level: int):
-            if not interaction.guild:
+            if not interaction.guild_id:
                 await interaction.response.send_message("this only works in servers not dms")
                 return
                 
@@ -492,7 +500,7 @@ class SlashCommandManager:
         @self.bot.tree.command(name="relate", description="Play a song related to the current one based on YouTube recommendations")
         async def relate(interaction: discord.Interaction):
             usage_context.set_user(interaction.user.id)
-            if not interaction.user.voice:
+            if not getattr(interaction.user, "voice", None) or not interaction.guild_id:
                 await interaction.response.send_message("yo, u gotta be in a voice channel to play related music")
                 return
             

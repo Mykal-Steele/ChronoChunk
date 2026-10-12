@@ -51,9 +51,10 @@ def import_legacy_data(database: Database, user_data_dir: Optional[str] = None, 
         users += store.import_user(data)
 
     ledger = _read_json(os.path.join(state_dir, "ai_usage.json"))
-    has_ledger = isinstance(ledger, dict) and bool(ledger.get("cycle_start"))
-    if has_ledger:
+    has_ledger = False
+    if isinstance(ledger, dict) and ledger.get("cycle_start"):
         _import_ledger(database, ledger)
+        has_ledger = True
 
     channels = 0
     settings = _read_json(os.path.join(state_dir, "channel_settings.json"))

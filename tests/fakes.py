@@ -130,7 +130,7 @@ def make_pdf(pages: List[str]) -> bytes:
         f"<< /Type /Pages /Kids [{kids}] /Count {len(pages)} >>".encode(),
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ]
-    for page_id, text in zip(page_ids, pages):
+    for page_id, text in zip(page_ids, pages, strict=True):
         stream = f"BT /F1 18 Tf 72 720 Td ({text}) Tj ET".encode() if text else b""
         objects.append(
             f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "

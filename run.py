@@ -42,7 +42,7 @@ def signal_handler(sig, frame):
         except ImportError:
             logger.error("Could not import shutdown_bot function")
     else:
-        logger.warning(f"Received second signal, forcing exit")
+        logger.warning("Received second signal, forcing exit")
         sys.exit(0)
 
 # Register signal handlers - platform specific  
@@ -60,7 +60,7 @@ if platform.system() != "Windows":  # Check for non-Windows platforms
 if __name__ == "__main__":
     try:
         # Log startup info
-        logger.info(f"=== ChronoChunk Discord Bot Starting ===")
+        logger.info("=== ChronoChunk Discord Bot Starting ===")
         logger.info(f"Platform: {platform.system()} {platform.release()}")
         logger.info(f"Python version: {sys.version}")
         logger.info(f"Current directory: {os.getcwd()}")

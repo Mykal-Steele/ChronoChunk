@@ -4,8 +4,7 @@ Real components: MessageHandler, GameManager, UserDataManager (tmp dir)
 Mocked: AIResponseHandler (no real API), MusicManager (no FFmpeg),
         discord.TextChannel.send, discord.TextChannel.history
 """
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 
 
 from src.ai_response_handler import Reply

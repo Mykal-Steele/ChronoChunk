@@ -3,13 +3,17 @@ import logging
 import re
 import discord
 from typing import Optional, Set
-from src.ai_response_handler import Reply
+from src.ai_response_handler import AIResponseHandler, Reply
 from src import usage_context
+from src.command_handler import CommandHandler
 from src.exceptions import RateLimitError
+from src.message_handler import MessageHandler
+from src.rate_limiter import RateLimiter
+from src.user_data_manager import UserDataManager
 from src.channel_settings import get_channel_settings
 from src.message_context import build_attached_context, history_text, resolve_message_link
 import traceback
-from typing import List, Optional
+from typing import List
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -56,8 +60,9 @@ async def give_first_use_role(guild: Optional[discord.Guild], user_id: int) -> N
 class MessageProcessor:
     """Processes incoming Discord messages and handles routing them correctly"""
     
-    def __init__(self, bot, message_handler, ai_response_handler=None, user_data_manager=None, 
-                 game_manager=None, command_handler=None, rate_limiter=None,
+    def __init__(self, bot, message_handler: MessageHandler, ai_response_handler: AIResponseHandler,
+                 user_data_manager: UserDataManager, game_manager=None,
+                 command_handler: Optional[CommandHandler] = None, rate_limiter: Optional[RateLimiter] = None,
                  text_commands: Optional[Set[str]] = None):
         """
         Initialize message processor with required components.
@@ -266,10 +271,11 @@ is_correction: bool) -> None:
                     recent = None
                 # Files made, PDFs read in full and web lookups each count against a daily limit per user
                 file_gate = pdf_gate = web_gate = None
-                if self.rate_limiter:
-                    file_gate = lambda: self.rate_limiter.check_rate_limit(user_id, "file")
-                    pdf_gate = lambda: self.rate_limiter.check_rate_limit(user_id, "pdf")
-                    web_gate = lambda: self.rate_limiter.check_rate_limit(user_id, "web")
+                limiter = self.rate_limiter
+                if limiter:
+                    file_gate = lambda: limiter.check_rate_limit(user_id, "file")
+                    pdf_gate = lambda: limiter.check_rate_limit(user_id, "pdf")
+                    web_gate = lambda: limiter.check_rate_limit(user_id, "web")
                 attached = await build_attached_context(message, referenced, self.bot.user.id,
                                                         linked=linked, recent=recent, pdf_gate=pdf_gate)
                 reply = await self.ai_handler.generate_reply(

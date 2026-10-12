@@ -177,7 +177,14 @@ docker build --target test -t chronochunk:dev .
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/app -w /app chronochunk:dev python -m pytest tests/unit tests/integration -q -p no:cacheprovider
 ```
 
-- GitHub Actions runs the same tests on every pull request and on every push to `main` (`.github/workflows/tests.yml`).
+- The same image has the linter and the type checker. Their settings are in `pyproject.toml`:
+
+```bash
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/app -w /app chronochunk:dev ruff check .
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/app -w /app chronochunk:dev pyright
+```
+
+- GitHub Actions runs the linter, the type checker and the tests on every pull request and on every push to `main` (`.github/workflows/tests.yml`).
 - Changes are made on a branch, such as `feature/web-search` or `fix/spotify-links`, and reach `main` through a pull request once the tests pass. The server runs `main`.
 - Packages are pinned. `requirements.in` lists what the bot imports and `requirements.txt` is built from it. To change a version, edit `requirements.in` and run the command at the top of that file. `requirements-dev.in` works the same way for the test packages.
 - Data is in one SQLite file, `state/chronochunk.db`. To look inside: `sqlite3 state/chronochunk.db ".tables"`. The schema is the `MIGRATIONS` list in `src/database.py`. To change it, add a new entry at the end.
