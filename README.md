@@ -153,6 +153,7 @@ Slash commands:
 - `/setup` - Where the bot runs and the settings it runs with, for developers
 - `/stats` - Everything the bot has used so far: AI calls, tokens and cost, by day, by job and by model
 - `/recent-posts on|off` - Turn reading of just-posted images and files on or off in a channel (needs Manage Channels)
+- `/join-in on|off` - Turn the bot's joining in on messages nobody sent to it on or off in a channel (needs Manage Channels)
 - `/help` - Show every command and the limits below
 - `/code` - Link to this repository
 - The music commands are listed under [Music commands](#music-commands).

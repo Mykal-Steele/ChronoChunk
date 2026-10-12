@@ -63,6 +63,7 @@ class SlashCommandManager:
             await self._register_setup_command()
             await self._register_stats_command()
             await self._register_recent_posts_command()
+            await self._register_join_in_command()
             await self._register_help_command()  # Make sure this line is here
             
             # Register music commands
@@ -229,6 +230,8 @@ class SlashCommandManager:
             channel_id = str(interaction.channel_id)
             rate_limiter = getattr(self.bot, "rate_limiter", None)
             watch = Stopwatch(getattr(interaction, "created_at", None))
+            # Held while this answer is written, so answers in one channel come out in order
+            held_lock = None
             
             try:
                 if rate_limiter:
@@ -245,8 +248,10 @@ class SlashCommandManager:
                 await interaction.response.defer(thinking=True)
                 # /chat is a call like any other, so the bot may join in afterwards
                 conversation = getattr(getattr(self.bot, "message_processor", None), "conversation", None)
+                session_start = None
                 if isinstance(conversation, Conversation):
-                    conversation.called(channel_id, user_id)
+                    conversation.called(channel_id, user_id, getattr(interaction, "created_at", None))
+                    session_start = conversation.session_start(channel_id)
                 
                 # Get user data for context
                 user_data = self.user_data_manager.load_user_data(user_id, username)
@@ -254,10 +259,15 @@ class SlashCommandManager:
                 # Build context from what is really in the channel right now
                 processor = getattr(self.bot, "message_processor", None)
                 recent = []
+                if isinstance(processor, MessageProcessor):
+                    lock = processor.channel_lock(channel_id)
+                    await lock.acquire()
+                    held_lock = lock
                 with watch.step("history"):
                     if processor and interaction.channel:
                         recent = await processor.sync_channel_history(interaction.channel)
-                    conversation_history = self.message_handler.build_conversation_context(channel_id, user_data, False)
+                    conversation_history = self.message_handler.build_conversation_context(
+                        channel_id, user_data, query=message, session_start=session_start)
 
                 # Resolve any Discord message links — keep original for clean history storage
                 original_message = message
@@ -306,20 +316,16 @@ class SlashCommandManager:
                 )
                 
                 # Update channel history with bot response
+                if not reply.ok:
+                    self.message_handler.not_answers.append(ai_response)
                 self.message_handler.update_channel_history(
                     channel_id=channel_id,
                     user_id=str(self.bot.user.id),
                     username="ChronoChunk",
                     content=ai_response,
-                    is_bot=True
-                )
-                
-                # Update conversation memory
-                self.message_handler.update_conversation_memory(
-                    channel_id=channel_id,
-                    username=username,
-                    user_message=original_message,
-                    bot_response=ai_response
+                    is_bot=True,
+                    reply_to=username,
+                    reply_to_id=user_id
                 )
 
                 # The answer goes out first. Saving the conversation also extracts facts,
@@ -328,6 +334,10 @@ class SlashCommandManager:
                     await self._send_followup(interaction, ai_response, reply.files, custom_emoji=custom_emoji,
                                               listing=listing)
                 logger.info(f"Answered {username} in {watch.summary()}")
+                # The answer is out, so the next one in this channel may start
+                if held_lock is not None:
+                    held_lock.release()
+                    held_lock = None
 
                 await give_first_use_role(interaction.guild, interaction.user.id)
                 try:
@@ -338,6 +348,9 @@ class SlashCommandManager:
             except Exception as e:
                 logger.error(f"Error handling chat command: {e}")
                 await interaction.followup.send("something went wrong on my end, try again?")
+            finally:
+                if held_lock is not None:
+                    held_lock.release()
 
     async def _register_tldr_command(self):
         """Register the tldr command"""
@@ -378,6 +391,26 @@ class SlashCommandManager:
             else:
                 answer = ("aight, in this channel i wont look at pics and files unless someone replies to them, "
                           "attaches them or runs `/tldr`")
+            await interaction.response.send_message(answer)
+
+    async def _register_join_in_command(self):
+        """Register the switch for answering messages nobody addressed to the bot in a channel"""
+        @self.bot.tree.command(name="join-in",
+                               description="Turn my joining in on messages nobody sent to me on or off in this channel")
+        @app_commands.describe(enabled="on: right after someone talks to me i may answer other messages too. off: only when called")
+        @app_commands.default_permissions(manage_channels=True)
+        async def join_in(interaction: discord.Interaction, enabled: bool):
+            # Discord hides the command from people without the permission. This covers the rest.
+            permissions = getattr(interaction, "permissions", None)
+            if interaction.guild and not getattr(permissions, "manage_channels", False):
+                await interaction.response.send_message(
+                    "only someone who can manage this channel can change that", ephemeral=True)
+                return
+            get_channel_settings().set_joins_in(interaction.channel_id, enabled)
+            if enabled:
+                answer = "aight, in this channel i might jump in for a bit after someone talks to me"
+            else:
+                answer = "aight, in this channel i only talk when someone calls me"
             await interaction.response.send_message(answer)
 
     async def _register_usage_command(self):

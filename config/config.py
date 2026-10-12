@@ -21,7 +21,7 @@ class Config:
     # Memory and history settings
     MEMORY_SIZE = 30  # Remember last 30 messages in conversation context
     MAX_CONVERSATION_HISTORY = 20  # Keep 20 most recent conversations in user data
-    CHANNEL_HISTORY_SIZE = 40  # Number of recent messages to keep in channel history
+    CHANNEL_HISTORY_SIZE = 50  # Number of recent messages to keep in channel history
     
     # Game settings
     MAX_GAME_ATTEMPTS = 10  # Maximum number of attempts in the guessing game

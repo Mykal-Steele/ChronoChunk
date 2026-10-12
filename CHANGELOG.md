@@ -10,6 +10,31 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.15.0 (2026-10-12)
+
+### Changed
+
+- The bot reads as much of a channel as the moment needs. A one-off question gets the last 6 messages. Once people are talking with the bot, it reads everything said since that conversation began, up to 30 messages. Calls less than 5 minutes apart are one conversation.
+- Its own exchange with the person asking stays in view. Up to 6 older lines between the bot and that person are kept when other people's chatter has pushed them out, so it no longer forgets what it just told someone in a busy channel.
+- The bot answers one message at a time in a channel, in the order they came. A second message sent while it is still answering is answered after, with the first answer already read.
+- The history shows who a message was answering ("Sam (replying to Mina): ..."), and marks a gap where messages were left out.
+- The bot uses a person's saved chats. Their last 3 exchanges with it, from other days or channels, are given to the model as background. Until now they were saved and never read.
+- The message being answered is given to the model once. It used to be in the history as well.
+- An old message is cut to 300 characters in the history. The newest 4 are read whole.
+
+### Added
+
+- `/join-in on|off` turns joining in on or off for one channel (needs Manage Channels).
+
+### Fixed
+
+- The list of phrases the bot should not repeat no longer holds numbers, and it matches whole words only. After answering "67" once, the bot dodged the next sum that came to 67. Saying "generation" also counted as having said "ratio". The note to the model now says it is about wording only, never a fact or a number.
+- A message the bot sends in place of an answer it could not give (no budget, an error) is kept out of later context by what was sent, not only by matching known wordings.
+
+### Removed
+
+- A second conversation memory that was written and never read, and a topic function nothing called.
+
 ## 3.14.0 (2026-10-12)
 
 ### Added

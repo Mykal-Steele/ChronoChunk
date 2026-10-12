@@ -97,6 +97,10 @@ MIGRATIONS = [
         created_at REAL NOT NULL
     );
     """,
+    """
+    -- Whether the bot may answer a message nobody addressed to it in this channel
+    ALTER TABLE channel_settings ADD COLUMN join_in INTEGER NOT NULL DEFAULT 1;
+    """,
 ]
 
 
