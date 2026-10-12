@@ -14,5 +14,7 @@ pypdfium2==5.14.0
 python-dotenv==1.2.4
 # yt-dlp uses requests for its downloads when it is installed
 requests==2.34.2
+# Vector search inside SQLite, for the course material
+sqlite-vec==0.1.9
 weasyprint==70.0
 yt-dlp==2026.8.19
