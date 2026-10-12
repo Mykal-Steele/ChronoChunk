@@ -372,8 +372,8 @@ is_correction: bool) -> None:
             chunk, text = text[:split_at], text[split_at:].lstrip()
             # A split inside a code block closes it here and reopens it in the next chunk
             # A cut through the middle of a custom emoji would post it as broken text
-            torn = re.search(r'<a?:\w*:?\d*$', chunk)
-            if torn and torn.start() > 0 and re.match(r'[\w:]*>', text):
+            torn = re.search(r'<[\w:]{0,60}$', chunk)
+            if torn and torn.start() > 0 and re.match(r'<a?:\w{2,32}:\d{15,22}>', chunk[torn.start():] + text[:60]):
                 chunk, text = chunk[:torn.start()], chunk[torn.start():] + text
             if chunk.count('```') % 2 == 1:
                 chunk += '\n```'

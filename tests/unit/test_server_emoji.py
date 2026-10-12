@@ -72,6 +72,8 @@ def test_a_name_stuck_to_a_word_still_becomes_the_emoji():
     ("bruh :notreal:, ok", "bruh, ok"),
     ("wait :notreal: what", "wait what"),
     ("line one :bad:\n:bad: line two\nline :bad: three", "line one\nline two\nline three"),
+    ("lol2:notreal:", "lol2"),
+    ("my_name:notreal: ok", "my_name ok"),
 ])
 def test_an_unknown_name_is_taken_out_without_leaving_a_gap(text, expected):
     assert render(text, EMOJI).text == expected
@@ -96,7 +98,7 @@ def test_a_cut_off_emoji_is_taken_out(cut):
 
 
 @pytest.mark.parametrize("text", [
-    "at 10:30:45 ok", "note:todo:fix", "std::vector::iterator", "<:3 cute", "ratio 16:9", "a: b: c",
+    "at 10:30:45 ok", "note:todo:fix", "std::vector::iterator", "<:3 cute", "ratio 16:9", "a: b: c", "starts 10:30: ok",
 ])
 def test_ordinary_text_with_colons_is_left_alone(text):
     assert render(text, EMOJI).text == text
@@ -133,6 +135,16 @@ def test_one_reply_shows_one_custom_emoji_at_most():
 
 def test_one_reply_shows_two_emoji_at_most_with_standard_ones_counted():
     assert render("ok :kekw: 💀 🔥 😂", EMOJI).text == f"ok {KEKW} 💀"
+
+
+def test_standard_emoji_written_without_a_space_are_counted_one_by_one():
+    assert render("dead 💀🔥😂", EMOJI).text == "dead 💀🔥"
+
+
+def test_the_limit_never_cuts_a_joined_emoji_in_two():
+    family = "\U0001F468\u200D\U0001F469\u200D\U0001F467"
+    thumb = "\U0001F44D\U0001F3FD"
+    assert render(f"{family}{thumb}💀", EMOJI).text == f"{family}{thumb}"
 
 
 def test_a_row_of_the_same_emoji_becomes_one():
@@ -290,8 +302,10 @@ async def test_a_slash_command_answer_checks_everyones_permission_for_other_serv
 
 # Long replies
 
-def test_a_split_never_cuts_an_emoji_in_half():
-    text = "x" * 1890 + KEKW + "y" * 50
+@pytest.mark.parametrize("lead", range(1870, 1901))
+def test_a_split_never_cuts_an_emoji_in_half(lead):
+    """The cut falls at 1900 characters. Every place it can land in or beside the emoji is tried."""
+    text = "x" * lead + KEKW + "y" * 50
     chunks = MessageProcessor._split_text(text)
     assert "".join(chunks) == text
     assert sum(chunk.count(KEKW) for chunk in chunks) == 1
@@ -319,5 +333,5 @@ def test_random_replies_never_carry_a_broken_emoji(seed):
         found = [m.group(0) for m in ANY_MARKUP.finditer(shown)]
         assert all(markup in usable for markup in found), (text, shown)
         assert sum(shown.count(markup) for markup in ALLOWED) <= 1, (text, shown)
-        assert not re.search(r"(?<![\w:]):(?:kekw|pog|fake):(?![\w:])", shown, re.I), (text, shown)
+        assert not re.search(r"(?<!:):(?:kekw|pog|fake):(?![\w:])", shown, re.I), (text, shown)
         assert "\x00" not in shown

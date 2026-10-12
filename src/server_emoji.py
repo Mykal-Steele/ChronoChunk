@@ -32,15 +32,16 @@ _BROKEN_MARKUP = re.compile(rf"<a?:{_NAME}(?::\d*)?>?")
 _SHORTCODE = re.compile(rf":({_NAME}):")
 # One or more names standing on their own, like ":kekw:" or ":kekw::pog:"
 _ALONE = re.compile(rf"(?<![\w:])(?::{_NAME}:)+(?![\w:])")
-# A name stuck to the end of a word, like "bruh:kekw:". "note:todo:fix" and "10:30:45" do not match.
-_ATTACHED = re.compile(rf"(?<=[A-Za-z]):({_NAME}):(?![\w:])")
+# A name stuck to the end of a word, like "bruh:kekw:" or "lol2:kekw:". "note:todo:fix" and "10:30:45" do not match.
+_ATTACHED = re.compile(rf"(?<=[A-Za-z0-9_]):({_NAME}):(?![\w:])")
 # Text that is left exactly as written: code blocks, inline code and links
 _PROTECTED = re.compile(r"(```.*?```|`[^`\n]+`|https?://\S+)", re.DOTALL)
-# The same ranges the reply formatter counts as emoji
-_STANDARD_RUN = re.compile(
-    "[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF"
-    "\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U00002702-\U000027B0]+"
-)
+# One standard emoji, in the ranges the reply formatter counts. A skin tone, a variation mark
+# and the parts of a joined emoji (a family, a flag with a colour) stay with it, so the limit
+# never cuts one emoji in two.
+_STANDARD_CHAR = ("[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF"
+                  "\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U00002702-\U000027B0]")
+_STANDARD = re.compile(rf"{_STANDARD_CHAR}(?:[\U0001F3FB-\U0001F3FF\uFE0F]|\u200D{_STANDARD_CHAR})*")
 
 # Added to the system prompt when the reply may use custom emoji. {names} is filled in per server.
 PROMPT = """
@@ -163,13 +164,14 @@ def render(text: str, emoji: EmojiSet = NO_EMOJI, custom_allowed: bool = True,
         slots.append((shown, plain, custom))
         return f"\x00{len(slots) - 1}\x00"
 
-    def named(name: str) -> str:
+    def named(name: str, raw: str = "") -> str:
+        """The slot for a name the model wrote. raw is what stays when the name is only a number, as in a time."""
         key = name.lower()
         if key in emoji.by_name:
             return slot(emoji.by_name[key], f":{name}:", True)
         if key in STANDARD:
             return slot(STANDARD[key], STANDARD[key])
-        return slot()
+        return raw if raw and name.isdigit() else slot()
 
     def markup(found: re.Match) -> str:
         # An id is only trusted when it is the one the usable list gives for that name
@@ -182,8 +184,8 @@ def render(text: str, emoji: EmojiSet = NO_EMOJI, custom_allowed: bool = True,
         piece = _MARKUP.sub(markup, pieces[index])
         piece = _BROKEN_MARKUP.sub(lambda found: slot(), piece)
         piece = _ALONE.sub(lambda run: _SHORTCODE.sub(lambda found: named(found.group(1)), run.group(0)), piece)
-        piece = _ATTACHED.sub(lambda found: named(found.group(1)), piece)
-        pieces[index] = _STANDARD_RUN.sub(lambda found: slot(found.group(0), found.group(0)), piece)
+        piece = _ATTACHED.sub(lambda found: named(found.group(1), found.group(0)), piece)
+        pieces[index] = _STANDARD.sub(lambda found: slot(found.group(0), found.group(0)), piece)
 
     keep = [False] * len(slots)
     kept = kept_custom = 0
@@ -201,13 +203,19 @@ def render(text: str, emoji: EmojiSet = NO_EMOJI, custom_allowed: bool = True,
         def run(found: re.Match) -> str:
             """Fill a stretch of slots and the spaces around them, without leaving a gap where one was emptied."""
             whole = found.group(0)
-            numbers = [int(n) for n in re.findall(r"\x00(\d+)\x00", whole)]
-            shown = [slots[number][which] for number in numbers if keep[number]]
             spaced = " " if re.search(r"[ \t]", whole) else ""
+            # Kept emoji stay apart only where the reply had them apart
+            shown, gap = "", ""
+            for part in re.split(r"\x00(\d+)\x00", whole)[1:]:
+                if not part.isdigit():
+                    gap = gap or (" " if part else "")
+                elif keep[int(part)]:
+                    shown += (gap if shown else "") + slots[int(part)][which]
+                    gap = ""
             if shown:
                 lead = " " if whole[0] in " \t" else ""
                 tail = " " if whole[-1] in " \t" else ""
-                return lead + spaced.join(shown) + tail
+                return lead + shown + tail
             at_line_start = found.start() == 0 or piece[found.start() - 1] == "\n"
             rest = piece[found.end():found.end() + 1]
             if at_line_start or rest in ("", "\n", ".", ",", "!", "?"):
@@ -226,6 +234,7 @@ def render(text: str, emoji: EmojiSet = NO_EMOJI, custom_allowed: bool = True,
             cleaned = _BROKEN_MARKUP.sub(lambda found: found.group(0) if found.group(0) in usable else "", piece)
             if which == 0:
                 cleaned = _ALONE.sub("", cleaned)
+                cleaned = _ATTACHED.sub(lambda found: found.group(0) if found.group(1).isdigit() else "", cleaned)
             if cleaned == piece:
                 return piece
             piece = cleaned
