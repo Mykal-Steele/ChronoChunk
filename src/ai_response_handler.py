@@ -298,7 +298,7 @@ class AIResponseHandler:
                     ],
                 })
                 for call in sorted(calls, key=lambda c: getattr(by_name.get(c.function.name), "priority", 1)):
-                    result = await self._run_tool(by_name, call, request)
+                    result = await self._timed_tool(by_name, call, request)
                     if result.call_again in by_name:
                         redo = result.call_again
                     messages.append({"role": "tool", "tool_call_id": call.id, "content": result.text})
@@ -352,7 +352,8 @@ class AIResponseHandler:
             f"Reply for {request.username}: read {len(request.images)} images and {files_read} files "
             f"({len(request.attached)} chars of context), {request.calls} model calls, "
             f"about ${request.cost:.4f}, sent {len(reply.files)} files, {request.lookups} web lookups, "
-            f"took {time.monotonic() - request.started:.1f}s ({request.model_seconds:.1f}s waiting for the model)"
+            f"took {time.monotonic() - request.started:.1f}s ({request.model_seconds:.1f}s waiting for the model, "
+            f"{request.tool_seconds:.1f}s in tools)"
         )
 
     async def generate_response(self, query: str, conversation_history: str,
@@ -362,6 +363,15 @@ class AIResponseHandler:
         reply = await self.generate_reply(query, conversation_history, username, user_id,
                                           attached_context=attached_context, images=images)
         return reply.text
+
+    async def _timed_tool(self, by_name: dict, call, turn: Turn) -> ToolResult:
+        """Run one tool call and add the time it took to the turn, less the model calls it made."""
+        called_at = time.monotonic()
+        model_before = turn.model_seconds
+        try:
+            return await self._run_tool(by_name, call, turn)
+        finally:
+            turn.tool_seconds += (time.monotonic() - called_at) - (turn.model_seconds - model_before)
 
     async def _run_tool(self, by_name: dict, call, turn: Turn) -> ToolResult:
         """Carry out one tool call from the model and return what the model reads next."""

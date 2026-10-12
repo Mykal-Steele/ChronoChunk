@@ -4,6 +4,7 @@ Real components: MessageHandler, GameManager, UserDataManager (tmp dir)
 Mocked: AIResponseHandler (no real API), MusicManager (no FFmpeg),
         discord.TextChannel.send, discord.TextChannel.history
 """
+import re
 from unittest.mock import MagicMock, AsyncMock
 
 
@@ -98,6 +99,17 @@ async def test_reply_to_bot_sends_response(pipeline):
     await processor.process_message(msg)
     msg.reply.assert_called_once()
     assert msg.reply.call_args[0][0] == "here's my take fr"
+
+
+async def test_an_answer_logs_how_long_each_step_took(pipeline, caplog):
+    processor, _, _, _, ai_handler, bot = pipeline
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("here's my take fr"))
+    msg = _make_message(bot.user, content="what do you think?", is_reply_to_bot=True)
+    with caplog.at_level("INFO", logger="src.message_processor"):
+        await processor.process_message(msg)
+    line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("Answered TestUser in "))
+    assert re.search(r"in \d+\.\d\ds: history \d+\.\d\ds, context \d+\.\d\ds, "
+                     r"model and tools \d+\.\d\ds, send \d+\.\d\ds, other \d+\.\d\ds$", line)
 
 
 # ── channel history captured ──────────────────────────────────────────────────

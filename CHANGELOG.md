@@ -10,6 +10,13 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.8.0 (2026-10-12)
+
+### Added
+
+- The log has one `Answered` line per answer that says how long each step took: reading the channel history, reading what the message points at, the model and its tools, and sending the answer. It also says how long the message took to reach the bot. A slow reply can be traced to the step that was slow.
+- The `Reply for` line says how much of the time went to tools, not counting the model calls a tool makes.
+
 ## 3.7.1 (2026-10-12)
 
 ### Fixed

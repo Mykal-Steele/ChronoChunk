@@ -12,6 +12,7 @@ from src.channel_settings import get_channel_settings
 from src.message_context import gather_context, resolve_message_link
 from src.message_handler import MessageHandler
 from src.message_processor import MessageProcessor, NO_PINGS, give_first_use_role
+from src.timing import Stopwatch
 from src.user_data_manager import UserDataManager
 
 # Setup logging
@@ -208,6 +209,7 @@ class SlashCommandManager:
             username = interaction.user.display_name
             channel_id = str(interaction.channel_id)
             rate_limiter = getattr(self.bot, "rate_limiter", None)
+            watch = Stopwatch(getattr(interaction, "created_at", None))
             
             try:
                 if rate_limiter:
@@ -229,13 +231,15 @@ class SlashCommandManager:
                 # Build context from what is really in the channel right now
                 processor = getattr(self.bot, "message_processor", None)
                 recent = []
-                if processor and interaction.channel:
-                    recent = await processor.sync_channel_history(interaction.channel)
-                conversation_history = self.message_handler.build_conversation_context(channel_id, user_data, False)
+                with watch.step("history"):
+                    if processor and interaction.channel:
+                        recent = await processor.sync_channel_history(interaction.channel)
+                    conversation_history = self.message_handler.build_conversation_context(channel_id, user_data, False)
 
                 # Resolve any Discord message links — keep original for clean history storage
                 original_message = message
-                enriched_message, linked = await resolve_message_link(self.bot, message)
+                with watch.step("context"):
+                    enriched_message, linked = await resolve_message_link(self.bot, message)
 
                 # Read the attached image or file and a linked message. With neither,
                 # what was posted in the channel just before is read, unless that
@@ -248,14 +252,16 @@ class SlashCommandManager:
                     file_gate = lambda: rate_limiter.check_rate_limit(user_id, "file")
                     pdf_gate = lambda: rate_limiter.check_rate_limit(user_id, "pdf")
                     web_gate = lambda: rate_limiter.check_rate_limit(user_id, "web")
-                attached = await gather_context([file] if file else [], bot_user_id=self.bot.user.id,
-                                                linked=linked, recent=recent, pdf_gate=pdf_gate)
+                with watch.step("context"):
+                    attached = await gather_context([file] if file else [], bot_user_id=self.bot.user.id,
+                                                    linked=linked, recent=recent, pdf_gate=pdf_gate)
 
-                reply = await self.ai_handler.generate_reply(
-                    enriched_message, conversation_history, username, user_id,
-                    attached_context=attached.text, images=attached.images,
-                    allow_files=True, file_gate=file_gate, web_gate=web_gate
-                )
+                with watch.step("model and tools"):
+                    reply = await self.ai_handler.generate_reply(
+                        enriched_message, conversation_history, username, user_id,
+                        attached_context=attached.text, images=attached.images,
+                        allow_files=True, file_gate=file_gate, web_gate=web_gate
+                    )
                 ai_response = reply.text
 
                 # Update channel history with original (clean) user message
@@ -286,7 +292,9 @@ class SlashCommandManager:
 
                 # The answer goes out first. Saving the conversation also extracts facts,
                 # which is another model call they should not have to wait for.
-                await self._send_followup(interaction, ai_response, reply.files)
+                with watch.step("send"):
+                    await self._send_followup(interaction, ai_response, reply.files)
+                logger.info(f"Answered {username} in {watch.summary()}")
 
                 await give_first_use_role(interaction.guild, interaction.user.id)
                 try:
