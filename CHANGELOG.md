@@ -33,10 +33,13 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - The sync reads every class's Assignments tab in Teams and opens each assignment of the semester for its instructions.
 - `/courses` counts the assignments of each course and says how to ask with the flags.
 - `run.md` lists every run that spends money on models, with its estimated and actual cost.
+- A check for answers, in `sync/checks`: a set of real questions goes through the bot's reply path, a judge model reads every reply against the material the bot was shown, and a release ships only when the gate passes. This release passed it on 104 messages: a lookup on all 73 flagged ones, the right passage for all 56 that have an answer, 54 of those answers judged right, nothing made up, and no course talk in 26 messages that were not about class.
+- The sync opens an assignment once and again only after a teacher changed it.
 
 ### Privacy
 
 - An assignment is stored as material of its course. Nothing about who did it is kept: no submissions, no grades, no completion state, no class members. The bot is told it does not know who has done what.
+- A sync stops before writing anything if an id from the parts of an assignment that are about people shows up in what it is about to keep.
 
 ## 3.18.1 (2026-10-13)
 

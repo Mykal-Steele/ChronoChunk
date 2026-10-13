@@ -16,12 +16,6 @@ Rules:
 | Answer check with a judge, about 60 questions, per run | The gate for every change to retrieval or the prompt | about $0.06 a run, about 6 runs |
 | Full sync for the server, after the remaining sync work | The course file the live bot will read | about $0.01 |
 
-## Running
-
-| Date | Run | Why | Calls | Estimate |
-|---|---|---|---|---|
-| 2026-10-14 | Fifth check with the judge, same 104 messages, on `gpt-6-luna-checks` | A session now holds three lookups instead of one and a half, and the judge reads everything the model was shown | about 110 chat calls, 73 judge calls, 75 embedding calls | about $0.10 |
-
 ## Done
 
 | Date | Run | Why | Calls | Estimate | Actual | Result |
@@ -43,5 +37,6 @@ Rules:
 | 2026-10-14 | Second check with the judge, same 104 messages | After the fixes from the baseline | 116 replies, 73 judged | about $0.09 | $0.074 | Right passage 59 of 59, plain chat clean 20 of 20, session small talk clean 6 of 6, median reply 3.8 seconds (5.3 before), second searches down from 36 to 24. Gate held: 2 small made-up statements (a general Java claim added from the model's own knowledge, and a sloppy retelling of "the closest thing"), one source line left as numbers because it was written mid-sentence, 3 questions that were graded as answerable though the material cannot answer them, and 1 judge verdict I do not agree with |
 | 2026-10-14 | Third check with the judge, same 104 messages | After the mid-sentence source line and two prompt rules | 116 replies, 73 judged | about $0.08 | $0.078 | Bot behaviour steady: lookup 73 of 73, plain chat clean 20 of 20, session small talk clean 6 of 6, median 3.9 seconds. Gate held on 4 "made up" verdicts. Checked by hand: 3 are in the material (Lab 7 is 5 points, the slide says f(n) = g(n) + h(n), LNG320 is the English class) and 1 is the bot adding vacuum-cleaner examples of its own. The judge was the weak part of this run |
 | 2026-10-14 | Fourth check with the judge, same 104 messages | A more careful judge | 116 replies, 73 judged | about $0.12 | $0.086 | Every line of the gate passed except "nothing made up" (3). Looking each claim up in what the bot had been shown found a real bug: a session kept 16,000 characters, a lookup is 10,000 to 12,000, so a second lookup pushed the first one out. The bot was then told those passages were "already shown" while it could no longer read them on the next turn, and the judge was grading against the cut-down material |
+| 2026-10-14 | Fifth check with the judge, same 104 messages | Sessions that hold three lookups, and a judge that reads all the model was shown | 116 replies, 73 judged | about $0.10 | $0.089 | Gate passed. 102 of 104. Lookup 73 of 73, right place 56 of 56, answers judged right 54 of 56, made up 0, says so when it is not there 17 of 17, plain chat clean 20 of 20, session small talk clean 6 of 6, flag pointed to 5 of 5. Median reply 4.0 seconds. The 2 misses: one reference fact in the question set that misled the judge, and one reply that added general Java knowledge the course's slide disagrees with |
 
-Total so far: about $0.45.
+Total so far: about $0.54.
