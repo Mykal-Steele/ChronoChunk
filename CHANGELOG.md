@@ -10,13 +10,11 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
-## 4.0.0 (2026-10-13)
-
-This version changes how course questions are asked, which is why the first number moved.
+## 3.19.0 (2026-10-13)
 
 ### Changed
 
-- Course material is asked for with a flag at the end of the message. `-course` means the message is about a course, named in your own words ("the ai class", typos forgiven), and a code such as `-csc340` names it directly. Without a flag the bot looks nothing up and knows nothing about the courses in that reply. Before, the model decided on its own, so it sometimes skipped the search for a course question and sometimes said "i dont see it in the course material" in a chat that had nothing to do with class.
+- Course material is asked for with a flag at the end of the message. `-course`, or `-c` for short, means the message is about a course, named in your own words ("the ai class", typos forgiven), and a code such as `-csc340` names it directly. Without a flag the bot looks nothing up and knows nothing about the courses in that reply. Before, the model decided on its own, so it sometimes skipped the search for a course question and sometimes said "i dont see it in the course material" in a chat that had nothing to do with class.
 - A flagged message is looked up before the model is asked, so the lookup always happens and most course answers take one model call instead of two. The search uses the message without the course's name and without words like "lecture" or "teacher".
 - Asking for one kind of material (`kind`) puts that kind first and still returns the rest. As a hard filter it hid the answer when someone said "lecture" and the fact was on a slide.
 - Results that are only near the topic are marked as loosely related, and the bot is told to say it could not find exactly that and give the closest thing.

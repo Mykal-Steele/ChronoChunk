@@ -1,7 +1,7 @@
 """
 The course flag. Course material is only brought into a reply when the message asks
-for it: "-course" means the message is about a course and says which one in its own
-words, and "-csc340" names the course by its code. A message with neither is plain
+for it: "-course", or "-c" for short, means the message is about a course and says
+which one in its own words, and "-csc340" names the course by its code. A message with neither is plain
 chat, and nothing about courses reaches the model.
 """
 import re
@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import List
 
-_COURSE_FLAG = re.compile(r"(?<![\w-])-course(?![\w-])", re.IGNORECASE)
+_COURSE_FLAG = re.compile(r"(?<![\w-])-(?:course|c)(?![\w-])", re.IGNORECASE)
 _CODE_FLAG = re.compile(r"(?<![\w-])-([a-z]{3}\d{3})(?![\w-])", re.IGNORECASE)
 _CODE = re.compile(r"[A-Z]{3}\d{3}")
 

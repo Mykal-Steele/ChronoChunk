@@ -111,3 +111,12 @@ def test_search_words_keep_what_is_not_the_course_in_scope():
 def test_search_words_fall_back_to_the_message_when_nothing_is_left():
     assert search_words("the ai class lecture", COURSES, ["CSC340"]) == "the"
     assert search_words("ai class", COURSES, ["CSC340"]) == "ai class"
+
+
+def test_c_is_the_short_form_of_the_course_flag():
+    scope = course_scope("what to study for my ai class -c", COURSES)
+    assert scope.flagged and scope.codes == ["CSC340"] and scope.text == "what to study for my ai class"
+    assert course_scope("-C whats due this week", COURSES).text == "whats due this week"
+    # Only as a word of its own
+    for message in ("vitamin-c is good", "the -cool flag", "a-c-b", "grade c- lol"):
+        assert not course_scope(message, COURSES).flagged

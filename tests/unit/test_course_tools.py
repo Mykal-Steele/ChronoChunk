@@ -308,7 +308,7 @@ async def test_without_a_course_file_the_model_hears_nothing_about_courses(handl
     assert "search_course" not in [tool["function"]["name"] for tool in call["tools"]]
     assert "COURSE MATERIAL" not in call["messages"][0]["content"]
     # With nothing to look up, there is no flag to tell them about either
-    assert "-course" not in call["messages"][0]["content"]
+    assert "-csc340" not in call["messages"][0]["content"]
 
 
 # ── the flag ──────────────────────────────────────────────────────────────────
@@ -322,7 +322,7 @@ async def test_without_a_flag_nothing_about_courses_reaches_the_model(handler, m
     system = call["messages"][0]["content"]
     assert "COURSE MATERIAL" not in system and "CSC340 Artificial Intelligence" not in system
     # It is told how they can ask, so a class question is not answered from general knowledge
-    assert "-course" in system and "-csc340" in system
+    assert "-c " in system and "-csc340" in system
     mock_openai_client.embeddings.create.assert_not_awaited()
 
 

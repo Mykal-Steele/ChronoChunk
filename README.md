@@ -226,8 +226,8 @@ The bot can open links and search the web.
 
 The bot can answer questions about your university courses from the slides, lecture recordings and assignments of the semester.
 
-- Course material only comes into a reply when you ask for it with a flag at the end of the message. `-course` says the message is about a course, and you name the class in your own words: `/what did the lecture say about heuristic search in the ai class -course`. A course code names it directly: `/what is a heuristic -csc340`. Small typos in a course name are fine.
-- With `-course` and no class named, every course is searched: `/whats due this week -course`.
+- Course material only comes into a reply when you ask for it with a flag at the end of the message. `-course`, or `-c` for short, says the message is about a course, and you name the class in your own words: `/what did the lecture say about heuristic search in the ai class -c`. A course code names it directly: `/what is a heuristic -csc340`. Small typos in a course name are fine.
+- With `-c` and no class named, every course is searched: `/whats due this week -c`.
 - Without a flag the bot does not look anything up and does not talk about course material. Asked a class question without one, it tells you to add the flag instead of guessing.
 - The bot looks the material up before it answers, answers from what it found, and ends with the deck and page, the lecture and time, or the assignment, plus the link.
 - When the material has no answer, the bot says it could not find one. When it only found something near the topic, it says so and gives the closest thing. It does not answer course facts from memory.
@@ -334,7 +334,7 @@ ChronoChunk/
 │   ├── document_builder.py    # Turns Markdown into PDF, DOCX and diagram images
 │   ├── web_tools.py           # Fetches pages and calls the search service
 │   ├── course_store.py        # The course material file and its search
-│   ├── course_scope.py        # The -course and -csc340 flags: is a message about a course, and which
+│   ├── course_scope.py        # The -c, -course and -csc340 flags: is a message about a course, and which
 │   ├── course_retrieval.py    # One lookup: passages, the dated assignment list, and how good the match is
 │   ├── slash_commands.py      # Slash commands
 │   ├── command_handler.py     # Typed /tldr, /usage, /courses and /help

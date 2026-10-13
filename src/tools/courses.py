@@ -59,7 +59,7 @@ COURSE MATERIAL:
 # Added to the system prompt of a message with no course flag, so the material stays out of plain chat
 NO_FLAG_PROMPT = """
 CLASS QUESTIONS:
-- u cant see their university course files in this message. if they ask what one of their classes, lectures, slides, teachers or assignments said, or when class work is due, dont guess and dont answer it from general knowledge as if it was their class. tell them to add -course to the message, or the course code like -csc340, so u can look it up. for anything else, never bring up courses or course material.
+- u cant see their university course files in this message. if they ask what one of their classes, lectures, slides, teachers or assignments said, or when class work is due, dont guess and dont answer it from general knowledge as if it was their class. tell them to add -c to the message, or the course code like -csc340, so u can look it up. for anything else, never bring up courses or course material.
 """
 
 _library: Optional[CourseLibrary] = None
@@ -131,7 +131,7 @@ def courses_summary() -> str:
         if latest:
             lines.append(f"{'':<{width}}  newest: {latest}")
     return ("**course material i can search**\n```\n" + "\n".join(lines) + "\n```\n"
-            f"last synced {_synced_on(store)}. to ask about a class, end ur msg with -course (i work out which class) "
+            f"last synced {_synced_on(store)}. to ask about a class, end ur msg with -c or -course (i work out which class) "
             f"or its code like -{courses[0]['code'].lower()}. without one of those i dont look anything up")
 
 
@@ -147,7 +147,7 @@ def unknown_course_reply(scope: Scope) -> str:
     store = course_store()
     held = ", ".join(course["code"] for course in store.courses()) if store else ""
     return (f"i dont have {', '.join(scope.unknown)} in my course material. the ones i have: {held}. "
-            f"put one of those after the dash, or use -course and say the class in ur own words")
+            f"put one of those after the dash, or use -c and say the class in ur own words")
 
 
 def _block(note: str) -> str:
