@@ -83,7 +83,7 @@ async def write_document(fmt: str, title: str, brief: str, turn: Turn, max_pages
     if turn.attached:
         parts.append(turn.attached)
     if turn.findings:
-        parts.append("LOOKED UP ON THE WEB FOR THIS REQUEST:\n" + "\n\n".join(turn.findings))
+        parts.append("LOOKED UP FOR THIS REQUEST:\n" + "\n\n".join(turn.findings))
     parts.append(f'WHAT {turn.username} ASKED FOR: "{turn.query}"')
     parts.append(f"BRIEF FOR THIS DOCUMENT\nworking title (reword it into a plain sentence-case title): {title}\n{brief}")
     if max_pages:

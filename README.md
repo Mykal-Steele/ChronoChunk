@@ -10,6 +10,7 @@ A Discord bot with a personality. It chats, remembers things about the people it
 - Reads images, PDFs, text and code files, and sums up a channel with `/tldr`
 - Writes PDFs, Word files and diagrams
 - Opens web links and searches the web
+- Answers questions about your university courses from the slides and lecture recordings
 - Plays music in a voice channel
 - A number guessing game
 - A spending cap on the AI, and limits per user
@@ -87,13 +88,14 @@ Secrets go in `.env` on the server:
 | `AZURE_OPENAI_ENDPOINT` | The resource's address, ending in `/openai/v1` |
 | `TAVILY_API_KEY` | Key for web search. Optional. |
 
-These three are set in `docker-compose.yml`, which wins over `.env`:
+These four are set in `docker-compose.yml`, which wins over `.env`:
 
 | Name | Value on the server |
 | --- | --- |
 | `AZURE_OPENAI_DEPLOYMENT` | `gpt-6-luna` |
 | `AI_CHAT_REASONING_EFFORT` | `none` |
 | `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` | `gpt-5-nano` |
+| `EMBEDDING_DEPLOYMENT` | `text-embedding-3-small` |
 
 Everything else uses the default from `config/config.py` unless `.env` sets it:
 
@@ -109,9 +111,10 @@ Everything else uses the default from `config/config.py` unless `.env` sets it:
 | `PDF_NOTES_KEEP_DAYS` | 7 | Days a PDF's page descriptions are kept |
 | `LOG_RETENTION_DAYS` | 30 | Days a log file is kept |
 | `JOIN_IN_SECONDS` | 30 | Seconds after a call in which the bot may answer a message nobody addressed to it. 0 turns it off. |
+| `COURSES_FILE` | `state/courses.db` | The course material the bot searches. See [Course material](#course-material). |
 | `TEST_BOT_ID`, `TEST_CHANNEL_ID` | empty | For testing the live bot: the one other bot it answers, and the one channel it answers it in. Both must be set. |
 
-The message, file, PDF, web and recap limits are in `RATE_LIMITS` in the same file.
+The message, file, PDF, web, course search and recap limits are in `RATE_LIMITS` in the same file.
 
 ### Deploying a change
 
@@ -148,7 +151,8 @@ Slash commands:
 - `/info` or `/mydata` - See what the bot has stored about you. Only you see the answer.
 - `/forget` - Delete everything the bot has stored about you. `/forget <text>` deletes one fact.
 - `/game <max>`, `/guess <number>`, `/end` - The number guessing game
-- `/usage` - What you have left today: messages, PDFs, files, web lookups and your AI limit. Only you see the answer.
+- `/usage` - What you have left today: messages, PDFs, files, web lookups, course searches and your AI limit. Only you see the answer.
+- `/courses` - The course material the bot can search: each course, how much it holds, and the day of the last sync
 - `/model` - Which AI model the bot is running on
 - `/setup` - Where the bot runs and the settings it runs with, for developers
 - `/stats` - Everything the bot has used so far: AI calls, tokens and cost, by day, by job and by model
@@ -160,7 +164,7 @@ Slash commands:
 
 For 30 seconds after someone calls the bot in a channel, it may also answer a message there that nobody addressed to it, when it fits the conversation. When several people talk to it at once, its answer pings the person it is for.
 
-You can also type to the bot without picking a slash command. A message that starts with `/`, a ping, or a reply to one of its messages is chat. `/tldr`, `/usage`, `/model`, `/setup`, `/stats` and `/help` work typed as well.
+You can also type to the bot without picking a slash command. A message that starts with `/`, a ping, or a reply to one of its messages is chat. `/tldr`, `/usage`, `/model`, `/setup`, `/stats`, `/courses` and `/help` work typed as well.
 
 ## Reading messages and files
 
@@ -218,6 +222,19 @@ The bot can open links and search the web.
 - Links to the server itself, private networks and the cloud metadata address are refused.
 - The bot cannot log in to sites. Pages behind a login or a paywall mostly come back empty.
 
+## Course material
+
+The bot can answer questions about your university courses from the slides and lecture recordings of the semester.
+
+- Ask in your own words, in any channel: `/what did the AI lecture say about heuristic search`. The bot searches the material, answers from what it finds, and ends with the deck and page or the lecture and time, plus the link.
+- When the material has no answer, the bot says it could not find one. It does not answer course facts from memory.
+- Ask for a file in the same message and the document is written from what it found: `/make a one page pdf on what CSC340 covered about agents`.
+- `/courses` lists the courses it holds and the day they were last synced.
+- The material comes from the course sync in [`sync/`](sync/README.md). It runs on a PC, writes one file, `courses.db`, and uploads it to `data/state` on the server. The bot opens the new file on the next question, with no restart. With no file there, the bot has no course search.
+- The search runs in English. The bot writes the search words in English for a question in another language, and material in Thai is translated when it is synced.
+- A question is embedded with the `text-embedding-3-small` deployment, which is the model the sync embeds the material with. A file embedded with another model is not searched, and the log says so.
+- One reply makes at most 3 searches. Each returns up to 6 passages, at most 2 from one deck or recording. The numbers are at the top of `src/tools/courses.py` and `src/course_store.py`.
+
 ## Privacy
 
 The bot keeps a small record of each person it talks to: their last 20 messages to it, its answers, and facts it picked up. `/info` shows yours and `/forget` deletes it. [PRIVACY.md](PRIVACY.md) lists everything that is stored and which outside services receive your messages.
@@ -240,7 +257,7 @@ The bot stops calling the model when it reaches its spending cap, and starts aga
 
 Set these in `.env`. Costs are estimated from token counts and each model's price, and kept in the database, one row per day and model. `/usage` shows the current totals. Each reply also writes one log line with the images and files it read, the number of model calls and the estimated cost.
 
-Per user, the bot answers 50 messages per 30 minutes, makes 15 files per day (2 per reply), reads 10 new PDFs in full per day and makes 20 web lookups per day. `/usage` shows each person what they have left.
+Per user, the bot answers 50 messages per 30 minutes, makes 15 files per day (2 per reply), reads 10 new PDFs in full per day, makes 20 web lookups per day and searches the course material 40 times per day. `/usage` shows each person what they have left.
 
 ## Music commands
 
@@ -306,11 +323,13 @@ ChronoChunk/
 │   ├── tools/                 # What the model can do: one file per group of tools
 │   │   ├── base.py            # The interface every tool implements
 │   │   ├── documents.py       # create_document and create_diagram
-│   │   └── web.py             # open_url and web_search
+│   │   ├── web.py             # open_url and web_search
+│   │   └── courses.py         # search_course and /courses
 │   ├── document_builder.py    # Turns Markdown into PDF, DOCX and diagram images
 │   ├── web_tools.py           # Fetches pages and calls the search service
+│   ├── course_store.py        # The course material file and its search
 │   ├── slash_commands.py      # Slash commands
-│   ├── command_handler.py     # Typed /tldr, /usage and /help
+│   ├── command_handler.py     # Typed /tldr, /usage, /courses and /help
 │   ├── database.py            # The SQLite database and its schema
 │   ├── user_store.py          # What is stored about each user
 │   ├── user_data_manager.py   # Picks facts about users out of what they say
@@ -320,6 +339,7 @@ ChronoChunk/
 │   ├── music_manager.py       # Music
 │   ├── game_manager.py        # Guessing game
 │   └── web_server.py          # Health check page
+├── sync/                      # Collects the course material on a PC
 ├── tests/
 ├── deployment/                # Docker Compose and VM setup
 ├── requirements.in            # Packages the bot imports

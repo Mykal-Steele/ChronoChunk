@@ -32,6 +32,7 @@ def test_a_fresh_person_has_everything_left(handler):
     assert _row(text, "pdfs read").split()[2:] == ["10", "of", "10", "per", "day"]
     assert _row(text, "files made").split()[2:] == ["15", "of", "15", "per", "day"]
     assert _row(text, "web lookups").split()[2:] == ["20", "of", "20", "per", "day"]
+    assert _row(text, "course asks").split()[2:] == ["40", "of", "40", "per", "day"]
     assert _row(text, "recaps").split()[1:] == ["6", "of", "6", "per", "hour"]
     assert "░░░░░░░░░░   0%" in _row(text, "today") and "resets in" in _row(text, "today")
     assert _row(text, "bot").endswith("this month, resets " + _row(text, "bot").split("resets ")[1])

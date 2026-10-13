@@ -12,6 +12,7 @@ import discord
 
 from config.config import Config
 from src.stats import usage_rows
+from src.tools.courses import course_store
 from src.version import __version__
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,14 @@ def _per(seconds: int) -> str:
     return f"per {seconds // 60} min"
 
 
+def _courses() -> str:
+    """How much course material is loaded, in a few words."""
+    store = course_store()
+    if not store:
+        return "off, no course file the bot can search"
+    return f"{len(store.courses())} courses, {sum(store.chunk_counts().values()):,} passages, embedded with {Config.EMBEDDING_DEPLOYMENT}"
+
+
 def setup_summary(chat_model: str) -> str:
     """The bot's setup as a code block: host, runtime, models, budget, limits and what it has used so far."""
     background = Config.AI_BACKGROUND_DEPLOYMENT or chat_model
@@ -100,6 +109,7 @@ def setup_summary(chat_model: str) -> str:
         ("background", f"{background}, for picking facts out of messages"),
         ("pdf pages", f"{Config.PDF_PAGE_NOTES}, kept {Config.PDF_NOTES_KEEP_DAYS} days"),
         ("web search", "on" if Config.TAVILY_API_KEY else "off, no search key"),
+        ("courses", _courses()),
         ("test bot", "answered in one test channel" if Config.TEST_BOT_ID and Config.TEST_CHANNEL_ID else "off"),
         ("joins in", f"may answer uncalled messages for {Config.JOIN_IN_SECONDS}s after a call"
                      if Config.JOIN_IN_SECONDS > 0 else "off"),
@@ -108,7 +118,7 @@ def setup_summary(chat_model: str) -> str:
                        f"new month on day {Config.AI_BUDGET_RESET_DAY}"),
         ("per person", f"${Config.AI_USER_DAILY_BUDGET_USD:.2f} a day, ${Config.AI_USER_WEEKLY_BUDGET_USD:.2f} over 7 days"),
         ("limits", ", ".join(f"{name} {count} {_per(window)}" for name, (count, window) in limits.items()
-                             if name in ("chat", "file", "pdf", "web", "tldr"))),
+                             if name in ("chat", "file", "pdf", "web", "course", "tldr"))),
         ("", ""),
         *usage_rows(),
     ]

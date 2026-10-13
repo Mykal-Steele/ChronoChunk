@@ -61,6 +61,7 @@ class Config:
         "gpt-5-nano": (0.05, 0.005, 0.40),
         "gpt-6-luna": (0.10, 0.01, 0.50, 0.125),
         "gpt-5.6-luna": (0.20, 0.02, 1.20, 0.25),
+        "text-embedding-3-small": (0.02, 0.02, 0.0),
     }
 
     # How PDFs that someone attaches, replies to or links are read. "auto" describes every page
@@ -86,6 +87,13 @@ class Config:
 
     # Tavily key for web search. Without it the bot can still open links, it just cannot search.
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
+
+    # The course material the bot can search. The sync on a PC builds this file and uploads it.
+    # With no file there, the bot has no course search and says nothing about courses.
+    COURSES_FILE = os.getenv("COURSES_FILE", os.path.join(STATE_DIR, "courses.db"))
+    # The deployment that embeds a course question. It has to carry the name of the model the sync
+    # embedded the material with, and the sync reads the same setting.
+    EMBEDDING_DEPLOYMENT = os.getenv("EMBEDDING_DEPLOYMENT", "text-embedding-3-small").strip()
     
     # Rate limit settings by action type
     RATE_LIMITS = {
@@ -99,6 +107,7 @@ class Config:
         "tldr": (6, 3600),     # 6 channel summaries per hour
         "pdf": (10, 86400),    # 10 PDFs described page by page per day. One already described is free.
         "web": (20, 86400),    # 20 web searches or opened links per day
+        "course": (40, 86400), # 40 searches of the course material per day
     }
     
     # Dynamic settings like directories are initialized in a method rather than duplicated

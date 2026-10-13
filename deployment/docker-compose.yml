@@ -17,6 +17,9 @@ services:
       # The cheap model for jobs that run behind the reply. Remove this line if the Azure
       # resource has no gpt-5-nano deployment.
       AZURE_OPENAI_BACKGROUND_DEPLOYMENT: gpt-5-nano
+      # Embeds a question about the course material. The sync embeds the material with the same
+      # model. Without a courses.db in ./data/state the bot never calls it.
+      EMBEDDING_DEPLOYMENT: text-embedding-3-small
     # Runs as the unprivileged user from the Dockerfile, with nothing it could use to become root
     cap_drop:
       - ALL

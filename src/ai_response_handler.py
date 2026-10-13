@@ -10,6 +10,7 @@ from typing import Callable, List, Optional, Tuple
 from config.ai_config import PERSONALITY_PROMPT
 from config.config import Config
 from collections import deque
+from src.course_store import DIMENSIONS
 from src.document_builder import BuiltFile, strip_filler
 from src.usage_guard import BudgetExceededError, UsageGuard, get_usage_guard, guard_client
 from src.tools import Tool, ToolResult, Turn, default_tools
@@ -193,6 +194,18 @@ class AIResponseHandler:
             request.cost += UsageGuard.cost_of(getattr(resp, "usage", None), kwargs["model"])
         return resp.choices[0].message
 
+    async def _embed(self, text: str, request: Turn) -> List[float]:
+        """The embedding of one text, for a search of the course material. The call and its cost are added to request."""
+        called_at = time.monotonic()
+        try:
+            resp = await self.ai_client.embeddings.create(model=Config.EMBEDDING_DEPLOYMENT, input=[text],
+                                                          dimensions=DIMENSIONS)
+        finally:
+            request.model_seconds += time.monotonic() - called_at
+        request.calls += 1
+        request.cost += UsageGuard.cost_of(getattr(resp, "usage", None), Config.EMBEDDING_DEPLOYMENT)
+        return resp.data[0].embedding
+
     async def describe_images(self, prompt: str, images: List[str]) -> Tuple[str, float]:
         """
         One model call over a set of images with no persona and no tools. Used to write
@@ -211,7 +224,8 @@ class AIResponseHandler:
                              allow_files: bool = False,
                              file_gate: Optional[Callable[[], None]] = None,
                              web_gate: Optional[Callable[[], None]] = None,
-                             emoji_prompt: str = "") -> Reply:
+                             emoji_prompt: str = "",
+                             course_gate: Optional[Callable[[], None]] = None) -> Reply:
         """
         Generate the bot's reply using Azure OpenAI chat completions.
 
@@ -220,8 +234,9 @@ class AIResponseHandler:
         With allow_files the model may also build documents and diagrams, which come
         back in Reply.files. file_gate is called before each file is made and raises
         RateLimitError when this user has made too many. web_gate does the same for
-        web searches and opened links. emoji_prompt names the server emoji this reply
-        may use (EmojiSet.prompt()), empty for none.
+        web searches and opened links, and course_gate for searches of the course
+        material. emoji_prompt names the server emoji this reply may use
+        (EmojiSet.prompt()), empty for none.
         """
         images = images or []
 
@@ -252,8 +267,9 @@ class AIResponseHandler:
             offered = [tool for tool in self.tools if tool.available()] if allow_files else []
             by_name = {tool.name: tool for tool in offered}
             request = Turn(clean_query, username, conversation_history or "", attached_context, images,
-                           file_gate=file_gate, web_gate=web_gate)
+                           file_gate=file_gate, web_gate=web_gate, course_gate=course_gate)
             request.ask_model = lambda model_messages, limit: self._chat(model_messages, limit, request=request)
+            request.embed = lambda text: self._embed(text, request)
             files = request.files
             messages = [
                 {"role": "system",
@@ -325,8 +341,8 @@ class AIResponseHandler:
                     reply = Reply("here u go", files)
                 else:
                     reply = Reply(self._format_ai_response(raw), files)
-                # An answer from the web goes stale, so it is looked up again next time
-                if not files and not request.lookups:
+                # An answer from the web or the course material goes stale, so it is looked up again next time
+                if not files and not request.lookups and not request.course_searches:
                     self.response_cache[cache_key] = reply.text
                     if len(self.response_cache) > self.cache_size:
                         for k in list(self.response_cache.keys())[:-self.cache_size]:
@@ -360,6 +376,7 @@ class AIResponseHandler:
             f"Reply for {request.username}: read {len(request.images)} images and {files_read} files "
             f"({len(request.attached)} chars of context), {request.calls} model calls, "
             f"about ${request.cost:.4f}, sent {len(reply.files)} files, {request.lookups} web lookups, "
+            f"{request.course_searches} course searches, "
             f"took {time.monotonic() - request.started:.1f}s ({request.model_seconds:.1f}s waiting for the model, "
             f"{request.tool_seconds:.1f}s in tools)"
         )

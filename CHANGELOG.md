@@ -10,6 +10,21 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.16.0 (2026-10-13)
+
+### Added
+
+- The bot answers questions about university courses from the slides and lecture recordings the course sync collected. It searches the material, answers from what it finds, and ends with the deck and page or the lecture and time, plus the link. When the material has no answer it says so.
+- A document asked for in the same message is written from what the search found.
+- `/courses` lists the courses the bot holds, how much of each, and the day of the last sync.
+- A limit of 40 course searches per person per day, shown in `/usage` and `/help`. One reply makes at most 3.
+- Two settings: `COURSES_FILE` for where the course file is, and `EMBEDDING_DEPLOYMENT` for the model that embeds a question.
+
+### Changed
+
+- Embedding calls go through the spending cap and are counted in `/stats`, like chat calls.
+- With no course file on the server, nothing changes: the bot has no course search and does not mention courses.
+
 ## 3.15.0 (2026-10-12)
 
 ### Changed

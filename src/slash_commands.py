@@ -15,6 +15,7 @@ from src.message_handler import MessageHandler
 from src.message_processor import MessageProcessor, NO_PINGS, give_first_use_role
 from src.server_emoji import NO_EMOJI, QUIET_REPLIES, asked_about_emoji, render, usable_emoji, used_custom_emoji
 from src.stats import stats_summary
+from src.tools.courses import courses_summary
 from src.timing import Stopwatch
 from src.user_data_manager import UserDataManager
 
@@ -62,6 +63,7 @@ class SlashCommandManager:
             await self._register_model_command()
             await self._register_setup_command()
             await self._register_stats_command()
+            await self._register_courses_command()
             await self._register_recent_posts_command()
             await self._register_join_in_command()
             await self._register_help_command()  # Make sure this line is here
@@ -279,12 +281,13 @@ class SlashCommandManager:
                 # was switched off for this channel.
                 if not get_channel_settings().reads_recent_posts(channel_id):
                     recent = []
-                # Files made, PDFs read in full and web lookups each count against a daily limit per user
-                file_gate = pdf_gate = web_gate = None
+                # Files made, PDFs read in full, web lookups and course searches each count against a daily limit per user
+                file_gate = pdf_gate = web_gate = course_gate = None
                 if rate_limiter:
                     file_gate = lambda: rate_limiter.check_rate_limit(user_id, "file")
                     pdf_gate = lambda: rate_limiter.check_rate_limit(user_id, "pdf")
                     web_gate = lambda: rate_limiter.check_rate_limit(user_id, "web")
+                    course_gate = lambda: rate_limiter.check_rate_limit(user_id, "course")
                 with watch.step("context"):
                     attached = await gather_context([file] if file else [], bot_user_id=self.bot.user.id,
                                                     linked=linked, recent=recent, pdf_gate=pdf_gate)
@@ -298,7 +301,7 @@ class SlashCommandManager:
                     reply = await self.ai_handler.generate_reply(
                         enriched_message, conversation_history, username, user_id,
                         attached_context=attached.text, images=attached.images,
-                        allow_files=True, file_gate=file_gate, web_gate=web_gate,
+                        allow_files=True, file_gate=file_gate, web_gate=web_gate, course_gate=course_gate,
                         emoji_prompt=emoji.prompt()
                     )
                 # The emoji are worked out here too, so the history keeps what is really sent
@@ -438,6 +441,12 @@ class SlashCommandManager:
         @self.bot.tree.command(name="stats", description="See everything the bot has used so far")
         async def stats(interaction: discord.Interaction):
             await interaction.response.send_message(stats_summary())
+
+    async def _register_courses_command(self):
+        """Register the courses command"""
+        @self.bot.tree.command(name="courses", description="See the course material the bot can search")
+        async def courses(interaction: discord.Interaction):
+            await interaction.response.send_message(courses_summary())
 
     async def _register_music_command(self):
         """Register the music command"""
