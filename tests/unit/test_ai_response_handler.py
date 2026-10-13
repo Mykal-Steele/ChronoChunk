@@ -239,7 +239,7 @@ def test_format_leaves_code_blocks_exactly_as_written(handler):
     code = "```js\nitems\n    .filter(x => x , y)\n    .map(f)\n```"
     result = handler._format_ai_response(f"here , look\n{code}\nok !!!!")
     assert code in result
-    assert result.startswith("here, look")
+    assert result.startswith("Here, look")
 
 
 def _message(content=None, tool_calls=None):
@@ -848,3 +848,69 @@ async def test_the_reply_carries_a_heads_up_once_near_the_daily_limit(handler, m
     assert "80% of ur ai for today" in first.text and first.text.splitlines()[-1].startswith("-# ")
     assert "80%" not in second.text
 
+
+
+# ── how a reply is typed ──────────────────────────────────────────────────────
+
+def test_every_sentence_starts_with_a_capital_and_nothing_else_changes():
+    from src.ai_response_handler import capitalize_sentences
+    assert capitalize_sentences("nah. i think john is right?? yeah") == "Nah. I think john is right?? Yeah"
+    assert capitalize_sentences("first idea\nsecond idea") == "First idea\nSecond idea"
+    assert capitalize_sentences("**bold** start. *wow* ok\n- one\n-# source: x") == "**Bold** start. *Wow* ok\n- One\n-# Source: x"
+
+
+def test_capitals_leave_trailing_thoughts_short_forms_and_brand_names_alone():
+    from src.ai_response_handler import capitalize_sentences
+    assert capitalize_sentences("idk... maybe. lol") == "Idk... maybe. Lol"
+    assert capitalize_sentences("some of them, e.g. this one, on p. 4 vs. that") == "Some of them, e.g. this one, on p. 4 vs. that"
+    assert capitalize_sentences("ok. iPhone is mid") == "Ok. iPhone is mid"
+
+
+def test_capitals_never_touch_code_links_or_addresses():
+    from src.ai_response_handler import capitalize_sentences
+    text = "`getInstance()` makes it. `foo` too. [the deck. page 4](<https://a.example/x.pdf>). https://a.example/b. done"
+    assert capitalize_sentences(text) == text[:-4] + "Done"
+
+
+def test_a_star_after_a_single_letter_does_not_open_italics():
+    from src.ai_response_handler import capitalize_sentences
+    assert capitalize_sentences("For A*, the score is **f(n)**. see *this* too") == "For A\\*, the score is **f(n)**. See *this* too"
+
+
+def test_an_answer_the_model_wrote_twice_is_sent_once(handler):
+    answer = "in csc319, singleton is a creational pattern that ensures a class has one instance and a shared access point. "
+    doubled = answer + "it uses a private constructor. burugburu\n" + answer + "it uses a private constructor and a static method."
+    assert handler._format_ai_response(doubled) == (answer + "it uses a private constructor and a static method.").replace(
+        "in csc319", "In csc319").replace(". it uses", ". It uses")
+    once = answer + "it uses a private constructor."
+    assert handler._format_ai_response(once).lower() == once.lower()
+
+
+def test_a_reply_of_one_line_and_one_sentence_keeps_its_small_first_letter(handler):
+    assert handler._format_ai_response("yo wassup") == "yo wassup"
+    assert handler._format_ai_response("nah thats cooked 💀") == "nah thats cooked 💀"
+    assert handler._format_ai_response("idk... maybe") == "idk... maybe"
+    assert handler._format_ai_response("its on p. 4 of the deck") == "its on p. 4 of the deck"
+
+
+def test_a_reply_of_several_sentences_or_lines_gets_its_capitals(handler):
+    assert handler._format_ai_response("nah. thats cooked") == "Nah. Thats cooked"
+    assert handler._format_ai_response("first idea\nsecond idea") == "First idea\nSecond idea"
+
+
+def test_a_link_the_model_changed_is_put_back():
+    from src.ai_response_handler import repair_links
+    real = "https://uni.example/sites/1-2569_CSC340ARTIFICIALINTELLIGENCECSC209PreCSC210Pre/Shared%20Documents/rec.mp4"
+    other = "https://uni.example/sites/1-2569_CSC340ARTIFICIALINTELLIGENCECSC209PreCSC210Pre/Class%20Materials/6th--Search.pdf"
+    sources = [f"=== COURSE MATERIAL ===\nlink: {real}\ntext\nlink: {other}\n=== END ==="]
+    changed = real.replace("CSC210Pre", "")
+    reply = f"-# Source: [Search slides, page 44](<{other}>), [AI lecture](<{changed}>)."
+    assert repair_links(reply, sources) == f"-# Source: [Search slides, page 44](<{other}>), [AI lecture](<{real}>)."
+
+
+def test_links_from_somewhere_else_are_left_alone():
+    from src.ai_response_handler import repair_links
+    sources = ["link: https://uni.example/sites/a/deck.pdf"]
+    reply = "see <https://docs.python.org/3/library/re.html> and https://uni.example/sites/a/deck.pdf."
+    assert repair_links(reply, sources) == reply
+    assert repair_links(reply, []) == reply
