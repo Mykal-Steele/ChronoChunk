@@ -10,6 +10,13 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.17.1 (2026-10-13)
+
+### Changed
+
+- Day to day talk is typed in small letters again, with no capital at the start of a sentence. Only a long explanation, about 250 characters of text or more, gets a capital at each sentence. A capital the model adds to a short reply is taken off, and "I", short forms such as TCP and names such as FastAPI are kept.
+- The example replies in `config/voice_examples.md` follow the same rule.
+
 ## 3.17.0 (2026-10-13)
 
 ### Changed

@@ -97,8 +97,12 @@ _VERBATIM = re.compile(r'`[^`\n]+`|\[[^\]\n]*\]\(<?[^)\s]+>?\)|<?https?://[^\s>]
 # markdown that opens the new one (bold, a quote, small text, a list item), and its first word
 _SENTENCE_START = re.compile(
     r'(^|\n|[.!?]["\')\]*_~]*[ \t]+)((?:(?:[*_~]+|> |-# |[-*] |\d+\. )[ \t]*)*)([a-z])(\w*)')
-# Where one sentence ends and a next one begins inside a line
-_SENTENCE_END = re.compile(r'[.!?](?=["\')\]*_~]*[ \t]+["\'(\[*_~]*[A-Za-z])')
+# The same place, where the first word is written like a word that opens a sentence: "Yo", "It's"
+_CAPITAL_START = re.compile(
+    r'(^|\n|[.!?]["\')\]*_~]*[ \t]+)((?:(?:[*_~]+|> |[-*] |\d+\. )[ \t]*)*)([A-Z])([a-z]*)(?![\w(*\\])')
+# A reply with this much text or more is an explanation, and gets a capital at each sentence so
+# the reader sees where a new idea starts. Anything shorter is talk, typed in small letters.
+CAPITALS_MIN_CHARS = 250
 # A period after one of these does not end a sentence
 _ABBREVIATIONS = ("e.g.", "i.e.", "vs.", "etc.", "approx.", "p.", "pp.", "fig.", "no.")
 # A single letter with a star, such as the A* search. Left alone, the star opens italics.
@@ -116,8 +120,9 @@ REPEAT_MIN_LIKENESS = 0.5
 def capitalize_sentences(text: str, capitals: bool = True) -> str:
     """
     Give every sentence a capital first letter and change nothing else, so "i" and names
-    stay as the bot typed them. Code, links and addresses are not touched. Without
-    capitals only the stray stars are fixed.
+    stay as the bot typed them. Without capitals it goes the other way: a capital the
+    model put at the start of a sentence is taken off, and "I", short forms such as TCP
+    and names written like FastAPI stay. Code, links and addresses are never touched.
     """
     kept: List[str] = []
 
@@ -136,10 +141,18 @@ def capitalize_sentences(text: str, capitals: bool = True) -> str:
             return found.group(0)
         return before + opening + letter.upper() + rest
 
+    def small(found) -> str:
+        before, opening, letter, rest = found.groups()
+        if letter == "I" and not rest:
+            return found.group(0)
+        return before + opening + letter.lower() + rest
+
     text_ = _VERBATIM.sub(keep, text)
     text_ = _LETTER_STAR.sub(r'\1\\*', text_)
     if capitals:
         text_ = _SENTENCE_START.sub(capital, text_)
+    else:
+        text_ = _CAPITAL_START.sub(small, text_)
     return re.sub(r'\x00(\d+)\x00', lambda found: kept[int(found.group(1))], text_)
 
 
@@ -172,16 +185,11 @@ def repair_links(text: str, sources: List[str]) -> str:
     return _ADDRESS.sub(exact, text)
 
 
-def _is_one_sentence(text: str) -> bool:
-    """True for one line that holds one sentence. "idk... maybe" and "its on p. 4" are one sentence each."""
-    if "\n" in text:
-        return False
-    text = _VERBATIM.sub("x", text)
-    for found in _SENTENCE_END.finditer(text):
-        said = text[:found.end()]
-        if not (said.endswith("..") or said.lower().endswith(_ABBREVIATIONS)):
-            return False
-    return True
+def _text_length(text: str) -> int:
+    """How much a reply says: its length without code blocks, source lines and links."""
+    text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
+    text = re.sub(r'^-# .*$', '', text, flags=re.MULTILINE)
+    return len(_VERBATIM.sub('', text).strip())
 
 
 def _without_repeat(text: str) -> str:
@@ -255,8 +263,8 @@ class AIResponseHandler:
 
         # Code blocks go out exactly as written, only the text around them is cleaned up
         parts = re.split(r'(```.*?```)', ai_response, flags=re.DOTALL)
-        # A reply of one line and one sentence is chat, and stays as it was typed
-        capitals = not _is_one_sentence(ai_response.strip())
+        # Day to day talk is typed in small letters. Only a long explanation gets its capitals.
+        capitals = _text_length(ai_response) >= CAPITALS_MIN_CHARS
         return "".join(
             part if part.startswith('```') else self._format_text(part, capitals) for part in parts
         ).strip()
