@@ -12,7 +12,6 @@ Rules:
 
 | Run | Why | Estimate |
 |---|---|---|
-| E1: search with the raw message against search with words the model wrote, about 60 questions | Decides whether the lookup can run before the first model call | under $0.01 |
 | Picture probe, then 4 picture descriptions | Assignment instructions that are only a picture | about $0.01 |
 | Answer check with a judge, about 60 questions, per run | The gate for every change to retrieval or the prompt | about $0.06 a run, about 6 runs |
 | Full sync, twice | The course file with assignments, for the check and for the server | about $0.01 |
@@ -28,5 +27,7 @@ Rules:
 | 2026-10-13 | V12, 51 questions, 4 at a time, on the live deployment | Gate for the assignment tool | about 60 | none made | about $0.02 | Not usable. 23 questions hit the token rate limit. This is the run that could have starved the live bot |
 | 2026-10-13 | Assignment questions, 12, one at a time, on the live deployment | Check which tool the model calls and what it answers | about 24 | none made | $0.009 | All 12 behaved right |
 | 2026-10-13 | V12, 51 questions, one at a time, on the live deployment | Gate for the assignment tool | about 100 | none made | about $0.03 | 37 of 41 found the right passage, 10 of 10 with no answer said so |
+| 2026-10-13 | E1: the 51 V12 questions searched with the raw message, embeddings only, one at a time | Decides whether the lookup can run before the first model call | 51 embedding calls | under $0.001 | $0.00002 | English 31 of 33 found (the model's own wording got 30). But only 2 of 10 questions with no answer came back empty, because the course name and words like "lecture" match everything a little |
+| 2026-10-13 | E1b: the same with the course name and filler words taken out first | Fix for the above | 51 embedding calls | under $0.001 | $0.00002 | English 31 of 33, no-answer 10 of 10. Decision: the lookup runs before the first model call, with the cleaned message as the search |
 
 Total so far on 2026-10-13: about $0.06.
