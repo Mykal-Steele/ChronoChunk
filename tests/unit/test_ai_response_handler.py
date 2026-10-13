@@ -924,6 +924,61 @@ def test_an_answer_the_model_wrote_twice_is_sent_once(handler):
     assert handler._format_ai_response(once) == once
 
 
+# What gpt-6-luna really returned for "/list all the ms teams u have", each a first copy and the copy kept
+_TEAMS = "CSC102, CSC219, CSC302, CSC319, CSC340, CSC345, CSC491, CSC535, and LNG320"
+_TEAM_LIST = ("- CSC102 Introduction To Programming\n- CSC219 Modern Java\n- CSC319 Object-Oriented Design\n"
+              "- CSC340 Artificial Intelligence\n- CSC345 Data Science\n- LNG320 Content-based Language Learning\n\n")
+_DOUBLED = {
+    "said again in other words": (
+        f"i have these teams’ course files and recordings: {_TEAMS}. i dont have the teams channels though.\n",
+        f"i have the course files and recordings for {_TEAMS}. i dont have their channels though."),
+    "a list": (
+        f"i have these teams:\n\n{_TEAM_LIST}i have their files and lecture recordings, not their channels or posts.\n",
+        f"i have these teams:\n\n{_TEAM_LIST}i have their files and lecture recordings, not their channels."),
+    "a list without its first line": (
+        f"the teams i have course files and recordings for are:\n{_TEAM_LIST}i have their files and recordings, "
+        "not the teams’ channels or posts.\n",
+        f"{_TEAM_LIST}i have their files and recordings, not their channels or posts."),
+    "stray text between the copies": (
+        f"i have these course teams: {_TEAMS}. i have their files and lecture recordings, not the channels. \n"
+        "આર્ચassistantლება \n-vesm\n-# Source: [CSC102 course material](<>)\n",
+        f"i have {_TEAMS}. i have the course files and lecture recordings, but not the teams’ channels."),
+    "made-up small print after the first copy": (
+        f"i have files and lecture recordings from these teams: {_TEAMS}. i don’t have their channels or posts. \n"
+        "-# newest material is synced through 13 Oct 2026 at 14:06 Bangkok time. \n-# source: course team data\n",
+        f"i have files and lecture recordings from {_TEAMS}. i don’t have the teams’ channels or posts."),
+}
+
+
+@pytest.mark.parametrize("case", _DOUBLED)
+def test_a_second_copy_on_a_new_line_is_the_one_sent(handler, case):
+    first, second = _DOUBLED[case]
+    assert handler._format_ai_response(first + second) == handler._format_ai_response(second)
+
+
+@pytest.mark.parametrize("reply", [
+    "csc340 has its lecture on tuesday at 9 in the morning and the slides go up the same day\n"
+    "csc345 has its lecture on tuesday at 1 in the afternoon and the slides go up the day after",
+    "the teams i have are:\n- CSC102 Introduction To Programming\n- CSC219 Modern Java\n- CSC319 Object-Oriented Design\n"
+    "- CSC340 Artificial Intelligence\n\ni have their files and lecture recordings, not their channels",
+    "tcp sets up a connection first, numbers every segment and sends a lost one again, so the data arrives whole and in order.\n"
+    "udp just sends datagrams with no connection and no resend, which is why games and calls use it.\n"
+    "so tcp for whole and in order, udp for fast",
+    "yeah i got u\nyeah i got u bro",
+])
+def test_a_reply_with_lines_that_look_alike_is_not_cut(handler, reply):
+    assert handler._format_ai_response(reply).lower() == reply.lower()
+
+
+def test_none_of_the_example_replies_is_cut(handler):
+    from config.ai_config import load_voice_examples
+    from src.ai_response_handler import _without_repeat
+    replies = [example.reply for example in load_voice_examples()]
+    assert len(replies) > 10
+    for reply in replies:
+        assert _without_repeat(reply) == reply
+
+
 def test_a_reply_that_uses_its_opening_words_again_is_not_cut(handler):
     opening = "the singleton pattern in csc319 is about one instance of a class"
     reply = (f"{opening}, and the slides spend three pages on it with a diagram of the class and its members.\n"

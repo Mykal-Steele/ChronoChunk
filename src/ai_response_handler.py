@@ -115,6 +115,17 @@ LINK_REPAIR_CUTOFF = 0.85
 REPEAT_MIN_CHARS = 200
 REPEAT_OPENING_CHARS = 50
 REPEAT_MIN_LIKENESS = 0.5
+# The second copy can also come reworded, on a new line. The lines after a line break are a copy
+# of the lines before it when they share this much of their words with them, and the lines
+# before share this much of theirs. The first copy may carry stray text, so less is asked of it.
+REPEAT_LATER_SHARE = 0.75
+REPEAT_EARLIER_SHARE = 0.5
+# Each side needs this many words, so two short lines of banter that look alike both stay
+REPEAT_MIN_WORDS = 6
+# Words every reply has, which say nothing about whether two stretches say the same
+_COMMON_WORDS = frozenset(
+    "a an and are as at be but by can do dont for from has have i in is it its me my no not of on or so that the "
+    "their them these they this those to u ur was we what with you your".split())
 
 
 def capitalize_sentences(text: str, capitals: bool = True) -> str:
@@ -194,9 +205,14 @@ def _text_length(text: str) -> int:
 
 def _without_repeat(text: str) -> str:
     """
-    The reply without a second copy of itself. The model now and then writes its answer,
-    then starts over and writes it again in the same message. The later copy is the one kept.
+    The reply without a second copy of itself. With tools on offer the model often writes its
+    answer, then starts over and writes it again in the same message, word for word or reworded.
+    The later copy is the one kept.
     """
+    again = _second_copy(text)
+    if again != -1:
+        logger.warning(f"The model wrote its answer twice, {again} chars of the first copy dropped")
+        return text[again:]
     if len(text) < REPEAT_MIN_CHARS:
         return text
     again = text.find(text[:REPEAT_OPENING_CHARS], REPEAT_OPENING_CHARS)
@@ -208,6 +224,34 @@ def _without_repeat(text: str) -> str:
         return text
     logger.warning(f"The model wrote its answer twice, {again} chars of the first copy dropped")
     return text[again:]
+
+
+def _telling_words(text: str) -> set:
+    """The words of a stretch of reply that say what it is about. A number counts whatever its length."""
+    return {word for word in re.findall(r"[^\W_]+", text.lower())
+            if word not in _COMMON_WORDS and (len(word) > 1 or word.isdigit())}
+
+
+def _second_copy(text: str) -> int:
+    """Where a reworded second copy of the reply starts, at the start of a line. -1 when there is none."""
+    code = [(block.start(), block.end()) for block in re.finditer(r'```.*?```', text, flags=re.DOTALL)]
+    found, best = -1, 0.0
+    for line_break in re.finditer(r'\n', text):
+        start = line_break.end()
+        if any(opened < start < closed for opened, closed in code):
+            continue
+        earlier, later = _telling_words(text[:start]), _telling_words(text[start:])
+        if min(len(earlier), len(later)) < REPEAT_MIN_WORDS:
+            continue
+        # Two lines built alike about two things, CSC340 and CSC345, differ in their numbers. A copy brings no new one.
+        if any(word not in earlier for word in later if any(letter.isdigit() for letter in word)):
+            continue
+        shared = len(earlier & later)
+        later_share, earlier_share = shared / len(later), shared / len(earlier)
+        # Stray text between the copies gives two places the same score, and the later one leaves it out
+        if later_share >= REPEAT_LATER_SHARE and earlier_share >= REPEAT_EARLIER_SHARE and later_share + earlier_share >= best:
+            found, best = start, later_share + earlier_share
+    return found
 
 
 @dataclass
