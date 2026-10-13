@@ -4,7 +4,7 @@ This page says what ChronoChunk keeps about you, where it goes, and how to delet
 
 ## What the bot stores
 
-When you talk to the bot (a `/` or `!` message, a slash command, a ping or a reply to it), it saves a few rows about you in a database on its own server:
+When you talk to the bot (a `/` message, a slash command, a ping or a reply to it), it saves a few rows about you in a database on its own server:
 
 - Your Discord user ID and display name.
 - Your last 20 messages to the bot and its answers.

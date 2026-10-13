@@ -71,7 +71,8 @@ def test_the_gate_holds_a_release_until_every_line_is_met():
     def result(group, ok=True, looked_up=True, right_place=True, verdict="correct", reply="x"):
         return {"group": group, "ok": ok, "looked_up": looked_up, "right_place": right_place, "verdict": verdict, "reply": reply}
     good = ([result("fact") for _ in range(18)] + [result("fact", ok=False, right_place=False, verdict="wrong_place")]
-            + [result("absent", verdict="not_found"), result("chat", verdict=None), result("unflagged", verdict=None)])
+            + [result("absent", verdict="not_found"), result("chat", verdict=None), result("unflagged", verdict=None),
+               result("session_chat", verdict=None)])
     report = gate(good)
     assert report["passed"] and report["lines"]["right place"] == "18 of 19 (95%)"
 
@@ -83,8 +84,13 @@ def test_the_gate_holds_a_release_until_every_line_is_met():
         report = gate(good + [bad])
         assert not report["passed"] and line in report["failed"], line
     # Under 90% in the right place fails too
-    low = gate([result("fact") for _ in range(8)] + [result("fact", ok=False, right_place=False) for _ in range(2)])
+    low = gate(good + [result("fact", ok=False, right_place=False) for _ in range(4)])
     assert not low["passed"] and "right place" in low["failed"]
+    # A run that asked nothing of a kind proves nothing about it: a question set that did not load must not pass
+    assert not gate([])["passed"]
+    for group in ("fact", "absent", "chat", "unflagged", "session_chat"):
+        thin = gate([one for one in good if one["group"] != group])
+        assert not thin["passed"] and "every kind of message was asked" in thin["failed"], group
 
 
 def test_the_right_place_is_also_what_the_judge_says_answers_it():

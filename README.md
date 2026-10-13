@@ -165,7 +165,7 @@ Slash commands:
 
 For 30 seconds after someone calls the bot in a channel, it may also answer a message there that nobody addressed to it, when it fits the conversation. When several people talk to it at once, its answer pings the person it is for.
 
-You can also type to the bot without picking a slash command. A message that starts with `/` or `!`, a ping, or a reply to one of its messages is chat. `!` is there for servers where a slash sets off another bot's commands, and an outcry such as `!!!` does not count. After a call the bot may also answer the next message nobody sent to it, within 30 seconds, on a coin flip, and without any course lookup. `/tldr`, `/usage`, `/model`, `/setup`, `/stats`, `/courses` and `/help` work typed as well.
+You can also type to the bot without picking a slash command. A message that starts with `/`, a ping, or a reply to one of its messages is chat. After a call the bot may also answer the next message nobody sent to it, within 30 seconds, on a coin flip, and without any course lookup. `/tldr`, `/usage`, `/model`, `/setup`, `/stats`, `/courses` and `/help` work typed as well.
 
 ## Reading messages and files
 

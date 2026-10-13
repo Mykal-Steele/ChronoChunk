@@ -294,6 +294,10 @@ class AIResponseHandler:
     def __init__(self, endpoint: str, api_key: str, deployment: str):
         self.response_cache = {}
         self.cache_size = 50
+        # A kept reply is served again for this many seconds. Every prompt carries the time of day,
+        # so an answer cannot be kept for long.
+        self.cache_seconds = 300
+        self._cached_at: dict = {}
         # Who is in a course session, and what was looked up for them
         self.course_sessions = CourseSessions()
 
@@ -449,7 +453,14 @@ class AIResponseHandler:
         if attached_context or images:
             attached_digest = hashlib.sha1((attached_context + "".join(images)).encode("utf-8")).hexdigest()
             cache_key += f"|{attached_digest}"
-        if cache_key in self.response_cache:
+        # Inside course mode the same words can mean a lookup that plain chat did not get, so nothing
+        # kept from before is served there
+        called = query[1:].strip() if query.startswith('/') and len(query) > 1 else query
+        flags = read_scope(called) if allow_files else None
+        course_mode = bool(flags and (flags.flagged or self.course_sessions.get(session_key) is not None))
+        kept_at = self._cached_at.get(cache_key)
+        fresh = kept_at is not None and time.monotonic() - kept_at < self.cache_seconds
+        if cache_key in self.response_cache and fresh and not course_mode:
             return Reply(self.response_cache[cache_key])
 
         try:
@@ -476,6 +487,9 @@ class AIResponseHandler:
                     return Reply(unknown_course_reply(scope))
                 clean_query = scope.text
                 user_parts[-1] = f'[{username}]: "{clean_query}"'
+                if scope.unknown:
+                    user_parts.insert(-1, f"(they also asked for {', '.join(scope.unknown)}, which is not a course u hold. "
+                                          "say so in the answer)")
                 if session_key:
                     self.course_sessions.open(session_key, scope.codes)
             session = self.course_sessions.get(session_key) if scope else None
@@ -507,7 +521,8 @@ class AIResponseHandler:
             files = request.files
             # The material is searched in English. A message in another language is no use as the
             # search itself, so the model has to write the search instead, and is made to.
-            must_search = flagged and bool(re.search(r"[^\W\d_a-zA-Z]", clean_query))
+            # Another script, that is. An accent in an English message ("naïve") is still English.
+            must_search = flagged and any(letter.isalpha() and ord(letter) > 0x024F for letter in clean_query)
             if scope and flagged and not must_search:
                 # Looked up here, before the model is asked, so the first answer does not hang on the model's choice
                 looked_up = await lookup_for(request, scope)
@@ -598,9 +613,11 @@ class AIResponseHandler:
                 # An answer from the web or the course material goes stale, so it is looked up again next time
                 if not files and not request.lookups and not request.course_searches and not in_course:
                     self.response_cache[cache_key] = reply.text
+                    self._cached_at[cache_key] = time.monotonic()
                     if len(self.response_cache) > self.cache_size:
                         for k in list(self.response_cache.keys())[:-self.cache_size]:
                             self.response_cache.pop(k, None)
+                            self._cached_at.pop(k, None)
 
             self._log_reply(request, reply)
             if user_id and get_usage_guard().take_daily_warning(user_id):
@@ -618,7 +635,8 @@ class AIResponseHandler:
             # A spent quota answers 429 too, and waiting a minute does not fix that one
             if "insufficient_quota" in lowered or ("quota" in lowered and "rate limit" not in lowered):
                 return Reply("my azure quota ran out, so i cant answer till my dev sorts it. nothing wrong with ur msg", ok=False)
-            if "429" in error_msg or "rate" in lowered:
+            # Not just the letters "rate", which are in "generate" and "separate" too
+            if re.search(r"\b429\b|rate.?limit|too many requests", lowered):
                 fallback = self.fallback_responses[0]
                 self.fallback_responses.rotate(1)
                 return Reply(fallback, ok=False)

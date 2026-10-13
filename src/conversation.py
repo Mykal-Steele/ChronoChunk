@@ -7,7 +7,6 @@ bot, it may answer a message nobody addressed to it, the way a person who is par
 of a conversation would. Everything here is held in memory and is gone on a restart.
 """
 import random
-import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -37,21 +36,13 @@ UNCALLED_NOTE = (
 )
 
 
-_BANG_CALL = re.compile(r"!\s?(?=[^\W_])")
-
-
 def is_call(content: str) -> bool:
     """
-    Whether a message calls the bot by how it starts: with a slash, or with an
-    exclamation mark for servers where a slash sets off another bot's commands. An
-    outcry such as "!!!" is not a call.
+    Whether a message calls the bot by how it starts. Only a slash does. "$" and "!"
+    were tried as a second mark and taken out: prices start with one, and other bots'
+    commands with the other.
     """
-    return content.startswith("/") or bool(_BANG_CALL.match(content))
-
-
-def as_slash(content: str) -> str:
-    """An exclamation-mark call written as the slash call it stands for. Anything else comes back as it is."""
-    return _BANG_CALL.sub("/", content, count=1) if _BANG_CALL.match(content) else content
+    return content.startswith("/")
 
 
 def stays_out(text: str) -> bool:
@@ -88,7 +79,7 @@ class Conversation:
 
     def called(self, channel_id, user_id, at: Optional[datetime] = None) -> None:
         """
-        Someone called the bot here: a / or ! message, a ping, a reply to it or the /chat
+        Someone called the bot here: a / message, a ping, a reply to it or the /chat
         command. at is when their message was sent.
         """
         channel = self._channel(channel_id)

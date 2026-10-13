@@ -117,9 +117,19 @@ def test_search_words_keep_what_is_not_the_course_in_scope():
     assert search_words("csc345 งานพรีเซนต์กลุ่มต้องยาวกี่นาที", COURSES, ["CSC345"]) == "งานพรีเซนต์กลุ่มต้องยาวกี่นาที"
 
 
-def test_search_words_fall_back_to_the_message_when_nothing_is_left():
-    assert search_words("the ai class lecture", COURSES, ["CSC340"]) == "the"
-    assert search_words("ai class", COURSES, ["CSC340"]) == "ai class"
+def test_search_words_are_never_empty():
+    # The course's name is all there is: it is searched for, without the word about asking
+    assert search_words("ai class", COURSES, ["CSC340"]) == "ai"
+    assert search_words("lecture", COURSES, ["CSC340"]) == "lecture"
+
+
+def test_a_topic_that_is_also_what_the_course_is_called_stays_in_the_search():
+    # "ai" is a nickname of CSC340 and it is the whole question. Without it the search was for "what is".
+    assert search_words("what is ai", COURSES, ["CSC340"]) == "what is ai"
+    assert search_words("explain ds", COURSES, ["CSC345"]) == "ds"
+    assert search_words("the ai class lecture", COURSES, ["CSC340"]) == "the ai"
+    # With a real topic beside it, the course's name still goes
+    assert search_words("what is a heuristic in ai", COURSES, ["CSC340"]) == "what is a heuristic in"
 
 
 def test_c_is_the_short_form_of_the_course_flag():

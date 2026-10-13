@@ -5,7 +5,7 @@ import pytest
 
 from config.config import Config
 from src.conversation import (
-    MAX_UNCALLED_REPLIES_PER_CALL, MAX_WEIGHED_PER_CALL, SESSION_GAP_SECONDS, Conversation, as_slash, is_call, stays_out,
+    MAX_UNCALLED_REPLIES_PER_CALL, MAX_WEIGHED_PER_CALL, SESSION_GAP_SECONDS, Conversation, is_call, stays_out,
 )
 
 
@@ -183,19 +183,12 @@ def test_the_chance_is_a_setting(clock, monkeypatch):
         assert conversation.may_join_in("c") is joins
 
 
-@pytest.mark.parametrize("content", ["/yo", "/", "!yo", "! whats up", "!tldr 50", "!5 things to know"])
-def test_a_slash_or_an_exclamation_mark_calls_the_bot(content):
+@pytest.mark.parametrize("content", ["/yo", "/", "/tldr 50"])
+def test_a_slash_calls_the_bot(content):
     assert is_call(content)
 
 
-@pytest.mark.parametrize("content", ["yo", "", "!", "!!", "!!! wow", "!?", "! ", "wow!", " !yo", "$yo", "$5 for lunch"])
-def test_an_outcry_and_plain_talk_do_not_call_the_bot(content):
+@pytest.mark.parametrize("content", ["yo", "", "!yo", "!play song", "!!! wow", "$yo", "$5 for lunch", " /yo"])
+def test_other_marks_and_plain_talk_do_not_call_the_bot(content):
+    # "!" and "$" were tried and taken out: other bots' commands start with them
     assert not is_call(content)
-
-
-def test_an_exclamation_call_reads_like_a_slash_call():
-    assert as_slash("!yo whats up") == "/yo whats up"
-    assert as_slash("! yo") == "/yo"
-    assert as_slash("/yo") == "/yo"
-    assert as_slash("!!! wow") == "!!! wow"
-    assert as_slash("plain") == "plain"

@@ -107,6 +107,8 @@ def gate(results: List[Dict]) -> Dict:
     unflagged = [r for r in results if r["group"] == "unflagged"]
     placed = sum(1 for r in answerable if r["right_place"])
     met = {
+        # all() of nothing is true, so a question set that did not load would pass every line below
+        "every kind of message was asked": all((answerable, unanswerable, chat, session_chat, unflagged)),
         "lookup on every flagged message": all(r["looked_up"] for r in flagged),
         "right place": not answerable or placed / len(answerable) >= 0.9,
         "nothing made up": not any(r["verdict"] == "made_up" for r in flagged),

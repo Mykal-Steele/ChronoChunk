@@ -10,7 +10,7 @@ from src.ai_response_handler import AIResponseHandler, Reply
 from config.config import Config
 from src import usage_context
 from src.command_handler import CommandHandler
-from src.conversation import UNCALLED_NOTE, Conversation, as_slash, is_call, stays_out
+from src.conversation import UNCALLED_NOTE, Conversation, is_call, stays_out
 from src.exceptions import RateLimitError
 from src.message_handler import MessageHandler
 from src.rate_limiter import RateLimiter
@@ -302,10 +302,9 @@ class MessageProcessor:
     async def _handle_command_message(self, message: discord.Message, user_id: str, 
                               username: str, channel_id: str, user_data: dict,
 is_correction: bool) -> None:
-        """Handle messages that begin with a slash or an exclamation mark (potential commands)"""
+        """Handle messages that begin with a slash (potential commands)"""
         try:
-            # "!yo" is "/yo" from here on
-            content = as_slash(message.content)
+            content = message.content
             # Split into command and args
             parts = content.split()
             command = parts[0][1:] if len(parts[0]) > 1 else ""  # Remove the slash

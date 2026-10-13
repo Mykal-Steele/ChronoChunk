@@ -76,7 +76,7 @@ def build_help_embed() -> discord.Embed:
         "paste a link to a discord message and i read that message and its files",
         "`/tldr <count>` - catch up on the last messages in the channel (default 50, max 200). i look at the images and files in them too",
         "`/tldr <count> <what u want>` - ask about those messages or have me make something from them, like `/tldr 60 what did we decide` or `/tldr 60 make a pdf of the design`",
-        "pinging me or starting with `!` works the same as starting with `/`",
+        "pinging me works the same as starting with `/`",
         "right after someone talks to me i might jump in on other messages for 30s. `/join-in off` stops that here"
     ]
     embed.add_field(name="📎 reading stuff", value="\n".join(reading_cmds), inline=False)

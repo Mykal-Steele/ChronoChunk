@@ -77,7 +77,7 @@ class Found:
     hits: List[Hit]
     # How many assignments the dated list holds
     rows: int
-    # strong, unsure or nothing
+    # strong, unsure or nothing. For the log and the check. The model is not told: it reads the passages itself.
     label: str
     # What each number in the text stands for: number -> (name, link). "A" is the assignment list.
     sources: Dict[str, Tuple[str, str]] = field(default_factory=dict)
@@ -254,9 +254,8 @@ def render_sources(text: str, sources: Dict[str, Tuple[str, str]]) -> str:
     return f"{body.rstrip()}\n-# Source: {shown}{rest}"
 
 
-def format_hits(query: str, hits: List[Hit], names: dict, label: Optional[str] = None,
-                rows: Sequence[str] = (), today: Optional[date] = None, searched: bool = True, start: int = 1,
-                repeats: Sequence[str] = ()) -> str:
+def format_hits(query: str, hits: List[Hit], names: dict, rows: Sequence[str] = (), today: Optional[date] = None,
+                searched: bool = True, start: int = 1, repeats: Sequence[str] = ()) -> str:
     """
     A lookup in a === block for the model: each passage under a numbered line that says
     where it is from, then the dated list. searched is False when the list alone
@@ -367,6 +366,5 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
     if dated:
         none = f": none posted{' for ' + ', '.join(codes) if codes else ''}" if not items else " list"
         sources["A"] = (f"teams assignments{none}", "")
-    return Found(format_hits(words, hits, names, label, rows, today, searched, first_number, repeats), hits, count, label,
-                 sources)
+    return Found(format_hits(words, hits, names, rows, today, searched, first_number, repeats), hits, count, label, sources)
 

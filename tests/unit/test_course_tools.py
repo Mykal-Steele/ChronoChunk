@@ -593,3 +593,29 @@ async def test_the_first_message_is_told_its_lookup_is_done(handler, mock_openai
     # So it answers from it instead of searching for the same thing again, which the check saw it do
     assert note in first[1]["messages"][-1]["content"]
     assert note not in second[1]["messages"][-1]["content"]
+
+
+# ── found by the review of the pull request ───────────────────────────────────
+
+async def test_a_reply_kept_from_before_a_session_is_not_served_inside_it(handler, mock_openai_client, material, clock):
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(content="add -c so i can look it up"), _message(content="a"), _message(content="pca squashes the dimensions")]
+    assert (await handler.generate_reply("/what is pca", "", "Kruskal", "1", allow_files=True, session_key="chan:1")).text == \
+        "add -c so i can look it up"
+    await handler.generate_reply("/tell me about agents -csc340", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    # The same words as the first message, now inside course mode: it has to be answered again
+    reply = await handler.generate_reply("/what is pca", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    assert reply.text == "pca squashes the dimensions"
+
+
+async def test_a_code_the_bot_does_not_hold_is_named_when_another_one_is_fine(handler, mock_openai_client, material):
+    await handler.generate_reply("/compare the labs -csc340 -xyz999", "", "Kruskal", "1", allow_files=True)
+    asked = mock_openai_client.chat.completions.create.call_args[1]["messages"][-1]["content"]
+    assert "XYZ999" in asked and "not a course u hold" in asked
+
+
+async def test_an_accent_in_an_english_message_does_not_send_it_down_the_slow_path(handler, mock_openai_client, material):
+    await handler.generate_reply("/explain the naïve approach from the café example -csc340", "", "Kruskal", "1", allow_files=True)
+    call = mock_openai_client.chat.completions.create.call_args[1]
+    # Looked up before the model was asked, like any English message, and no search is forced
+    assert "tool_choice" not in call and mock_openai_client.embeddings.create.await_count == 1

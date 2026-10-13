@@ -317,3 +317,19 @@ def test_the_library_reports_a_broken_file_once(path, caplog):
     assert library.store() is None
     assert library.store() is None
     assert len([record for record in caplog.records if "cannot be read" in record.message]) == 1
+
+
+def test_the_course_list_and_counts_are_read_from_the_file_once(store, path):
+    reader = CourseStore.open(path)
+    first = (reader.courses(), reader.counts(), reader.newest())
+
+    class Gone:
+        def execute(self, *args, **kwargs):
+            raise AssertionError("the file was read again")
+    real, reader._connection = reader._connection, Gone()
+    assert (reader.courses(), reader.counts(), reader.newest()) == first
+    # What a caller does to its copy does not reach the next caller
+    reader.courses()[0]["aliases"].append("changed")
+    assert reader.courses() == first[0]
+    reader._connection = real
+    reader.close()

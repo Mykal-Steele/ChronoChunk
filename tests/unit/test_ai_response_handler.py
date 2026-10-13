@@ -1042,3 +1042,25 @@ async def test_every_reply_is_told_the_current_date_and_time_in_bangkok(handler,
     # It goes with the message, so the system prompt stays the same from one minute to the next
     assert "right now it is" not in call["messages"][0]["content"]
     assert asked.rstrip().endswith('[TestUser]: "what day is it"')
+
+
+async def test_a_kept_reply_is_only_served_for_a_few_minutes(handler, mock_openai_client):
+    # Every prompt carries the time, so yesterday's answer to "what day is it" is wrong today
+    assert handler.cache_seconds == 300
+    await handler.generate_response("what day is it", "", "TestUser", "12345")
+    await handler.generate_response("what day is it", "", "TestUser", "12345")
+    assert mock_openai_client.chat.completions.create.call_count == 1
+    handler.cache_seconds = 0
+    await handler.generate_response("what day is it", "", "TestUser", "12345")
+    assert mock_openai_client.chat.completions.create.call_count == 2
+
+
+async def test_an_error_that_only_has_the_letters_rate_in_it_is_not_called_a_rate_limit(handler, mock_openai_client):
+    for error in ("Failed to generate a completion", "invalid separate tool_call arguments", "moderate load, connection reset"):
+        mock_openai_client.chat.completions.create.side_effect = Exception(error)
+        reply = await handler.generate_response(f"test {error}", "", "TestUser", "12345")
+        assert "something broke on my end" in reply and "rate limit" not in reply, error
+    for error in ("Error code: 429 - too many", "Rate limit reached for requests", "rate-limited, retry later", "Too Many Requests"):
+        mock_openai_client.chat.completions.create.side_effect = Exception(error)
+        reply = await handler.generate_response(f"test {error}", "", "TestUser", "12345")
+        assert "rate limit" in reply, error

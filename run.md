@@ -16,6 +16,12 @@ Rules:
 | Answer check with a judge, about 60 questions, per run | The gate for every change to retrieval or the prompt | about $0.06 a run, about 6 runs |
 | Full sync for the server, after the remaining sync work | The course file the live bot will read | about $0.01 |
 
+## Running
+
+| Date | Run | Why | Calls | Estimate |
+|---|---|---|---|---|
+| 2026-10-14 | Sixth check with the judge, same 104 messages, on `gpt-6-luna-checks` | The review of pull request 32 found 10 things. Two of the fixes change how a reply is built (the kept-reply rule and the search wording), so the gate is run again before the merge. Course file with the picture instructions | about 110 chat calls, 73 judge calls, 75 embedding calls | about $0.10 |
+
 ## Done
 
 | Date | Run | Why | Calls | Estimate | Actual | Result |

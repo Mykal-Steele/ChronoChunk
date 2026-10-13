@@ -16,7 +16,7 @@ import sqlite3
 import struct
 import threading
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 from urllib.parse import quote
 
 import sqlite_vec
@@ -155,6 +155,9 @@ class CourseStore:
     def __init__(self, path: str, writable: bool = False):
         self.path = path
         self.version = SCHEMA_VERSION
+        # A file opened for reading never changes under the bot: the sync swaps in a new file, and that
+        # is a new store. So what every reply asks for is read once.
+        self._kept: Optional[dict] = None if writable else {}
         self._lock = threading.RLock()
         if writable:
             self._connection = sqlite3.connect(path, check_same_thread=False)
@@ -251,32 +254,47 @@ class CourseStore:
             row = self._connection.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
         return row["value"] if row else None
 
+    def _once(self, name: str, read: Callable[[], Any]) -> Any:
+        """The answer of read, kept after the first time for a file that is only read."""
+        if self._kept is None:
+            return read()
+        if name not in self._kept:
+            self._kept[name] = read()
+        return self._kept[name]
+
     def courses(self) -> List[dict]:
         """Every course, with its other names as a list."""
-        with self._lock:
-            rows = self._connection.execute("SELECT code, name, aliases FROM courses ORDER BY code").fetchall()
-        return [{"code": row["code"], "name": row["name"], "aliases": [a for a in row["aliases"].split("\n") if a]}
-                for row in rows]
+        def read() -> List[dict]:
+            with self._lock:
+                rows = self._connection.execute("SELECT code, name, aliases FROM courses ORDER BY code").fetchall()
+            return [{"code": row["code"], "name": row["name"], "aliases": [a for a in row["aliases"].split("\n") if a]}
+                    for row in rows]
+        # A copy each time, so one caller adding to its list does not change the next one's
+        return [dict(course, aliases=list(course["aliases"])) for course in self._once("courses", read)]
 
     def counts(self) -> Dict[str, Dict[str, int]]:
         """How many sources of each kind every course has."""
-        with self._lock:
-            rows = self._connection.execute(
-                "SELECT course, kind, COUNT(*) AS sources FROM sources GROUP BY course, kind").fetchall()
-        result: Dict[str, Dict[str, int]] = {}
-        for row in rows:
-            result.setdefault(row["course"], {})[row["kind"]] = row["sources"]
-        return result
+        def read() -> Dict[str, Dict[str, int]]:
+            with self._lock:
+                rows = self._connection.execute(
+                    "SELECT course, kind, COUNT(*) AS sources FROM sources GROUP BY course, kind").fetchall()
+            result: Dict[str, Dict[str, int]] = {}
+            for row in rows:
+                result.setdefault(row["course"], {})[row["kind"]] = row["sources"]
+            return result
+        return {course: dict(kinds) for course, kinds in self._once("counts", read).items()}
 
     def newest(self) -> Dict[str, Dict[str, str]]:
         """The latest date (YYYY-MM-DD) among the sources of each kind every course has. Sources with no date are left out."""
-        with self._lock:
-            rows = self._connection.execute(
-                "SELECT course, kind, MAX(date) AS newest FROM sources WHERE date != '' GROUP BY course, kind").fetchall()
-        result: Dict[str, Dict[str, str]] = {}
-        for row in rows:
-            result.setdefault(row["course"], {})[row["kind"]] = row["newest"]
-        return result
+        def read() -> Dict[str, Dict[str, str]]:
+            with self._lock:
+                rows = self._connection.execute(
+                    "SELECT course, kind, MAX(date) AS newest FROM sources WHERE date != '' GROUP BY course, kind").fetchall()
+            result: Dict[str, Dict[str, str]] = {}
+            for row in rows:
+                result.setdefault(row["course"], {})[row["kind"]] = row["newest"]
+            return result
+        return {course: dict(kinds) for course, kinds in self._once("newest", read).items()}
 
     def assignments(self, course: Optional[str] = None) -> List[dict]:
         """

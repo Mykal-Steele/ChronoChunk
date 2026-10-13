@@ -7,7 +7,9 @@ its code. A message that does not end in one is plain chat.
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import List
+from typing import List, Sequence
+
+from src.course_store import _STOP_WORDS
 
 # The flags that end a message, each a word of its own: "... -c", "... -csc340 -csc345"
 _FLAGS = re.compile(r"(?:(?:^|\s+)-(?:course|c|[a-z]{3}\d{3}))+\s*$", re.IGNORECASE)
@@ -80,12 +82,18 @@ def search_words(text: str, courses: List[dict], codes: List[str]) -> str:
     """The message as a search: without the names of the courses in scope and without the words about asking."""
     names = [name for course in courses if course["code"] in codes
              for name in (course["code"], f"{course['code'][:3]} {course['code'][3:]}", course["name"], *course["aliases"])]
-    out = text
-    # Longest first, so "ai class" goes before "ai" can leave "class" behind
-    for name in sorted(names + _ASKING, key=len, reverse=True):
-        out = re.sub(rf"(?<![\w]){re.escape(name)}(?![\w])", " ", out, flags=re.IGNORECASE)
-    out = re.sub(r"\s+([?.,:;!])", r"\1", " ".join(out.split())).strip(" :;,.-?!")
-    return out or text.strip()
+    def without(words: Sequence[str]) -> str:
+        out = text
+        # Longest first, so "ai class" goes before "ai" can leave "class" behind
+        for name in sorted(words, key=len, reverse=True):
+            out = re.sub(rf"(?<![\w]){re.escape(name)}(?![\w])", " ", out, flags=re.IGNORECASE)
+        return re.sub(r"\s+([?.,:;!])", r"\1", " ".join(out.split())).strip(" :;,.-?!")
+
+    searched = without(names + _ASKING)
+    if not any(word not in _STOP_WORDS for word in re.findall(r"[^\W_]+", searched.lower())):
+        # Nothing to look for is left, so what the course is called was the topic: "what is ai"
+        searched = without(_ASKING)
+    return searched or text.strip()
 
 
 def course_scope(message: str, courses: List[dict]) -> Scope:
