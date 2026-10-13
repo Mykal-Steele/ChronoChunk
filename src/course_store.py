@@ -257,6 +257,16 @@ class CourseStore:
             result.setdefault(row["course"], {})[row["kind"]] = row["sources"]
         return result
 
+    def newest(self) -> Dict[str, Dict[str, str]]:
+        """The latest date (YYYY-MM-DD) among the sources of each kind every course has. Sources with no date are left out."""
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT course, kind, MAX(date) AS newest FROM sources WHERE date != '' GROUP BY course, kind").fetchall()
+        result: Dict[str, Dict[str, str]] = {}
+        for row in rows:
+            result.setdefault(row["course"], {})[row["kind"]] = row["newest"]
+        return result
+
     def chunk_counts(self) -> Dict[str, int]:
         """How many chunks every course has."""
         with self._lock:

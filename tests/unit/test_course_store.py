@@ -84,6 +84,19 @@ def test_meta_values_are_kept_and_replaced(store):
     assert store.get_meta("synced_at") == "2026-10-19"
 
 
+def test_newest_gives_the_latest_date_of_each_kind_in_each_course(store):
+    store.add_source("CSC340", "transcript", "CSC340_20260818", date="2026-08-18")
+    store.add_source("CSC340", "transcript", "CSC340_20260811", date="2026-08-11")
+    assert store.newest() == {"CSC340": {"slide": "2026-09-01", "transcript": "2026-08-18"},
+                              "CSC345": {"transcript": "2026-10-06"}}
+
+
+def test_newest_leaves_out_sources_with_no_date(store):
+    store.add_source("CSC345", "slide", "Undated handout.pdf")
+    store.add_source("CSC345", "post", "Welcome")
+    assert store.newest()["CSC345"] == {"transcript": "2026-10-06"}
+
+
 def test_search_returns_the_chunk_with_its_source_and_neighbours(store):
     hits = store.search("how to reduce dimensions", direction(pca=1))
     assert len(hits) == 1
