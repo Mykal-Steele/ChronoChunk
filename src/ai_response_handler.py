@@ -18,7 +18,15 @@ from src.tools import Tool, ToolResult, Turn, default_tools
 from src.tools.base import user_content
 from src.course_session import CourseSessions
 from src.course_retrieval import render_sources
-from src.tools.courses import NOT_LOOKED_UP, NO_FLAG_PROMPT, lookup_for, read_scope, saved_material, unknown_course_reply
+from src.tools.courses import (
+    LOOKED_UP_NOTE,
+    NOT_LOOKED_UP,
+    NO_FLAG_PROMPT,
+    lookup_for,
+    read_scope,
+    saved_material,
+    unknown_course_reply,
+)
 from src.pdf_notes import NOTES_MAX_TOKENS
 
 logger = logging.getLogger(__name__)
@@ -495,6 +503,7 @@ class AIResponseHandler:
             request.keep_material = keep
             if session is not None:
                 request.course_sources = session.sources
+                request.course_seen = session.seen
             files = request.files
             # The material is searched in English. A message in another language is no use as the
             # search itself, so the model has to write the search instead, and is made to.
@@ -506,6 +515,7 @@ class AIResponseHandler:
                     user_parts.insert(-1, looked_up)
                 else:
                     keep(looked_up)
+                    user_parts.insert(-1, LOOKED_UP_NOTE)
             messages: List[dict] = [
                 {"role": "system",
                  "content": _SYSTEM_PROMPT + "".join(tool.prompt() for tool in offered)

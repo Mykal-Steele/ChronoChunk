@@ -20,9 +20,13 @@ FLAGGED = ("fact", "due", "assignment", "thai", "followup", "absent", "partial")
 # Of those, the ones the material cannot answer. Saying so is the pass.
 UNANSWERABLE = ("absent", "partial")
 
+# The bot telling someone about the flags: "-course", a code such as "-csc340", or "add -c". A bare
+# "-c" is not enough, since "gcc -c" is a compiler flag.
+_FLAG_TALK = re.compile(r"(?<![\w-])-(course|[a-z]{3}\d{3})(?![\w-])|\b(add|use|put|with|type|include|end)\b[^.\n]{0,20}(?<![\w-])-c\b",
+                        re.IGNORECASE)
 _COURSE_TALK = re.compile(
     r"course material|saved material|\bur (class|course|slides|lectures?)\b|\b(the|ur|your) (slides|lecture notes)\b|"
-    r"(?<![\w-])-(c|course|[a-z]{3}\d{3})(?![\w-])|-# source|teams assignments", re.IGNORECASE)
+    r"teams assignments", re.IGNORECASE)
 
 
 def parse_verdict(answer: str) -> Dict:
@@ -41,7 +45,7 @@ def parse_verdict(answer: str) -> Dict:
 
 def course_talk(reply: str) -> bool:
     """Whether a reply brings up course material, the flags or a source line."""
-    return bool(_COURSE_TALK.search(reply))
+    return bool(_COURSE_TALK.search(reply) or _FLAG_TALK.search(reply))
 
 
 def grade(case: Dict, outcome: Dict) -> Dict:
@@ -57,7 +61,7 @@ def grade(case: Dict, outcome: Dict) -> Dict:
         return {"ok": not touched and not course_talk(reply), "looked_up": bool(touched), "right_place": True,
                 "verdict": None, "why": "course talk in the reply" if course_talk(reply) else ""}
     if group == "unflagged":
-        points = bool(re.search(r"(?<![\w-])-(c|course|[a-z]{3}\d{3})(?![\w-])", reply, re.IGNORECASE))
+        points = bool(_FLAG_TALK.search(reply))
         return {"ok": not touched and points, "looked_up": bool(touched), "right_place": True, "verdict": None,
                 "why": "" if points else "does not point to the flag"}
     # A follow-up may be answered from what the session already holds

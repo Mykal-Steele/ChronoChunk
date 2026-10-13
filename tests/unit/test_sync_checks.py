@@ -19,9 +19,13 @@ def test_the_judges_answer_is_read_as_one_of_the_verdicts():
 
 def test_course_talk_is_noticed_in_a_reply():
     for reply in ("i couldnt find that in the course material", "add -c to look it up", "use -csc340 for that",
-                  "not in ur slides", "-# Source: teams assignments list", "nothing in the saved material on that"):
+                  "put -course at the end", "not in ur slides", "-# Source: teams assignments list",
+                  "nothing in the saved material on that"):
         assert course_talk(reply), reply
-    for reply in ("pasta, probably", "canberra", "recursion is a function calling itself, of course", "c is a language"):
+    # A source line from a web search and a compiler flag are neither
+    for reply in ("pasta, probably", "canberra", "recursion is a function calling itself, of course", "c is a language",
+                  "nah they didnt\n-# Source: [the verge](<https://example.test/a>)",
+                  "`gcc -c main.c` makes main.o without linking", "gcc -c compiles only"):
         assert not course_talk(reply), reply
 
 

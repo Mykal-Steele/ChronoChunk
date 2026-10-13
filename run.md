@@ -16,6 +16,12 @@ Rules:
 | Answer check with a judge, about 60 questions, per run | The gate for every change to retrieval or the prompt | about $0.06 a run, about 6 runs |
 | Full sync for the server, after the remaining sync work | The course file the live bot will read | about $0.01 |
 
+## Running
+
+| Date | Run | Why | Calls | Estimate |
+|---|---|---|---|---|
+| 2026-10-14 | Baseline check with the judge: question set `release1`, 104 messages (116 replies), on `gpt-6-luna-checks` | The first judged measure of flags, sessions, sources by number and assignments | about 130 chat calls, 73 judge calls, 90 embedding calls | about $0.12 |
+
 ## Done
 
 | Date | Run | Why | Calls | Estimate | Actual | Result |

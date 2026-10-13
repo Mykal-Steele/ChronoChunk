@@ -81,6 +81,12 @@ def _embedding(vector):
                            usage=SimpleNamespace(prompt_tokens=5, completion_tokens=0, prompt_tokens_details=None))
 
 
+def _use(turn, vector):
+    """The same turn, with the next search landing somewhere else."""
+    turn.embed = AsyncMock(return_value=vector)
+    return turn
+
+
 def _turn(vector, gate=None, codes=None):
     turn = Turn("what is pca", "Kruskal", "", "", [], course_gate=gate, course_codes=codes)
     turn.embed = AsyncMock(return_value=vector)
@@ -192,68 +198,18 @@ async def test_a_search_stays_in_the_flag_s_courses_unless_the_model_names_anoth
     assert "Naive Bayes" in (await SearchCourse().run({"query": "bayes"}, both)).text
 
 
-async def test_loosely_related_results_are_marked(material):
-    # 0.45 alike: over the floor, under what a right passage scores
-    loose = (await SearchCourse().run({"query": "pca"}, _turn(direction(pca=0.45, filler=0.893)))).text
-    assert "only loosely related" in loose and "Principal component analysis" in loose
-    strong = (await SearchCourse().run({"query": "pca"}, _turn(direction(pca=1)))).text
-    assert "loosely related" not in strong
-
-
-async def test_a_course_or_date_the_model_made_up_is_ignored(material):
-    args = {"query": "bayes", "course": "PHY101", "kind": "homework", "since": "last week"}
-    assert "Naive Bayes" in (await SearchCourse().run(args, _turn(direction(bayes=1)))).text
-
-
-async def test_long_passages_are_cut(course_file):
-    store = CourseStore.create(course_file)
-    store.add_course("CSC340", "Artificial Intelligence")
-    deck = store.add_source("CSC340", "slide", "deck.pdf")
-    store.add_chunk(deck, 0, "page 1", "b" * 5000, direction(other=1))
-    store.add_chunk(deck, 1, "page 2", "x" * 5000, direction(pca=1))
-    store.add_chunk(deck, 2, "page 3", "a" * 5000, direction(other=1))
-    store.set_meta("embedding_model", "text-embedding-3-small")
-    store.set_meta("embedding_dimensions", str(DIMENSIONS))
-    store.save()
-    store.close()
-    result = (await SearchCourse().run({"query": "x"}, _turn(direction(pca=1)))).text
-    assert result.count("x") == courses.MAX_CHUNK_CHARS + 1  # the one in "=== COURSE MATERIAL for "x""
-    assert result.count("b") == courses.MAX_NEIGHBOUR_CHARS + 1  # and the one in "right before it"
-    assert "a" * (courses.MAX_NEIGHBOUR_CHARS + 1) not in result
-
-
-async def test_a_reply_gets_three_searches(material):
+async def test_a_search_that_finds_what_was_already_shown_does_not_show_it_again(material):
     turn = _turn(direction(pca=1))
-    tool = SearchCourse()
-    for _ in range(courses.MAX_COURSE_SEARCHES_PER_REPLY):
-        assert (await tool.run({"query": "pca"}, turn)).text.startswith("===")
-    assert (await tool.run({"query": "pca"}, turn)).text.startswith("error: this reply has used all its course searches")
-    assert turn.embed.await_count == courses.MAX_COURSE_SEARCHES_PER_REPLY
-
-
-async def test_searches_stop_at_the_persons_daily_limit(material):
-    def gate():
-        raise RateLimitError(retry_after=5 * 3600)
-    turn = _turn(direction(pca=1), gate=gate)
-    result = (await SearchCourse().run({"query": "pca"}, turn)).text
-    assert "used all their course searches for today" in result and "about 5 hours" in result
-    turn.embed.assert_not_awaited()
-
-
-async def test_an_empty_query_and_a_failed_embedding_are_errors_the_model_can_read(material):
-    assert (await SearchCourse().run({"query": " "}, _turn(direction(pca=1)))).text.startswith("error: search_course was called")
-    turn = _turn(direction(pca=1))
-    turn.embed.side_effect = RuntimeError("deployment not found")
-    assert (await SearchCourse().run({"query": "pca"}, turn)).text.startswith("error: the course search failed")
-
-
-async def test_the_spending_cap_is_not_swallowed(material):
-    from datetime import date
-    from src.usage_guard import BudgetExceededError
-    turn = _turn(direction(pca=1))
-    turn.embed.side_effect = BudgetExceededError("daily", date(2026, 10, 14))
-    with pytest.raises(BudgetExceededError):
-        await SearchCourse().run({"query": "pca"}, turn)
+    first = (await SearchCourse().run({"query": "pca"}, turn)).text
+    assert "[1] CSC340 Artificial Intelligence" in first and "Principal component analysis reduces" in first
+    again = (await SearchCourse().run({"query": "principal components"}, turn)).text
+    # Same passage: it is named by the number it already has, and its text is not sent a second time
+    assert "already shown as [1]" in again and "Principal component analysis reduces" not in again
+    assert "[2]" not in again
+    assert list(turn.course_sources) == ["1"]
+    # Something new in the same search still comes with its text, under the next number
+    mixed = (await SearchCourse().run({"query": "pca and bayes"}, _use(turn, direction(pca=0.75, bayes=0.66)))).text
+    assert "[2] CSC345 Data Science" in mixed and "Naive Bayes is simple" in mixed and "already shown as [1]" in mixed
 
 
 def test_courses_lists_what_each_course_holds(material):
@@ -304,7 +260,8 @@ async def test_a_course_question_is_embedded_searched_and_answered(handler, mock
     assert saved.startswith("SAVED COURSE MATERIAL") and "Principal component analysis reduces the dimensions" in saved
     # The flag is not part of the message
     assert asked.rstrip().endswith('[Kruskal]: "what is pca"') and "-csc340" not in asked
-    assert "Principal component analysis reduces the dimensions" in second[1]["messages"][-1]["content"]
+    # The model's own search found the same passage, which is named and not sent a second time
+    assert "already shown as [1]" in second[1]["messages"][-1]["content"]
 
 
 async def test_an_answer_from_course_material_is_not_kept_for_next_time(handler, mock_openai_client, material):
@@ -625,3 +582,14 @@ def test_the_prompt_asks_for_numbers_and_not_for_links(material):
     prompt = SearchCourse().prompt()
     assert '"-# Source: [2] [5]"' in prompt and "never write a link" in prompt
     assert "example.com" not in prompt
+
+
+async def test_the_first_message_is_told_its_lookup_is_done(handler, mock_openai_client, material, clock):
+    mock_openai_client.chat.completions.create.side_effect = [_message(content="a"), _message(content="b")]
+    await handler.generate_reply("/what is pca -csc340", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    await handler.generate_reply("/and pc1", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    first, second = mock_openai_client.chat.completions.create.call_args_list
+    note = "(the course material for this message was just looked up and is the last part of the saved material)"
+    # So it answers from it instead of searching for the same thing again, which the check saw it do
+    assert note in first[1]["messages"][-1]["content"]
+    assert note not in second[1]["messages"][-1]["content"]

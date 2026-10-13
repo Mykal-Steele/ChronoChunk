@@ -108,3 +108,26 @@ def test_a_reply_with_no_source_line_is_left_alone():
 def test_passages_can_be_numbered_on_from_an_earlier_lookup():
     text = format_hits("homework", [_hit(), _hit(locator="page 48")], {"LNG320": "Content-based Language Learning"}, start=4)
     assert "[4] LNG320 Content-based Language Learning" in text and "[5] LNG320" in text and "[1]" not in text
+
+
+def test_code_in_an_answer_keeps_its_brackets():
+    # The check on the real model caught this: "new int[3][]" came out as "new int[]", since 3 was a passage number
+    reply = ("declare it like this [2]:\n```java\nint[][] rows = new int[3][];\nrows[1] = new int[2];\n```\n"
+             "or inline: `rows[2] = new int[3]` works too [3].\n-# Source: [2] [3]")
+    shown = render_sources(reply, SOURCES)
+    assert "int[][] rows = new int[3][];\nrows[1] = new int[2];" in shown
+    assert "`rows[2] = new int[3]`" in shown
+    assert "declare it like this:" in shown and "works too." in shown
+    # A number glued to a word is an index, not a passage
+    assert render_sources("take list[2] and matrix[3]\n-# Source: [2]", SOURCES).startswith("take list[2] and matrix[3]\n")
+
+
+def test_a_score_only_says_strong_when_it_is_high_enough_to_mean_it():
+    from src.course_retrieval import label_of
+    # Measured on 300 passages a judge read: from 0.55 up, 3 in 48 were off the topic. Under it, about 1 in 3.
+    assert label_of([_hit()]) == "strong"
+    weak = _hit()
+    weak.similarity = 0.54
+    assert label_of([weak]) == "unsure" and label_of([]) == "nothing"
+    # A weaker score is no reason to tell the model its passages are off: a third of them answer the question
+    assert "loosely" not in format_hits("homework", [weak], {})

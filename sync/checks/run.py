@@ -45,6 +45,10 @@ verdict is exactly one of:
 REFERENCE lists what a right answer contains, when that is known. If it is empty, go by the material alone. If the \
 reply contradicts the reference, it is not correct.
 
+Judge what the reply says about the course in answer to the message. A joke, a side remark or naming what the course \
+is called is not a claim to check. Before you say "made_up", read the material again for the exact thing you think is \
+missing: a table, a schedule or a list in a passage counts.
+
 passages has one entry for every numbered passage in the material: "answers" when it answers the message, "related" \
 when it is on the topic without answering it, "unrelated" otherwise.
 
@@ -148,7 +152,7 @@ async def run(cases: List[Dict], courses_file: str, label: str, deployment: str)
             await asyncio.sleep(RATE_LIMIT_PAUSE)
         return reply.text
 
-    async def judge(case: Dict, material: str, reply: str) -> Dict:
+    async def judge(case: Dict, material: str, reply: str, again: bool = False) -> Dict:
         reference = "\n".join(f"- {fact}" for fact in case.get("facts") or case.get("expect_source") or []) or "(none)"
         prompt = JUDGE_PROMPT.format(message=case["messages"][-1], reference=reference,
                                      material=material[:JUDGE_MATERIAL_CHARS] or "(nothing was looked up)", reply=reply)
@@ -164,7 +168,12 @@ async def run(cases: List[Dict], courses_file: str, label: str, deployment: str)
                 continue
             from src.usage_guard import UsageGuard
             costs["total"] += UsageGuard.cost_of(getattr(answer, "usage", None), deployment)
-            return parse_verdict(answer.choices[0].message.content or "")
+            verdict = parse_verdict(answer.choices[0].message.content or "")
+            if verdict["verdict"] == "made_up" and not again:
+                # The judge is a model too. Its heaviest verdict has to hold up a second time.
+                second = await judge(case, material, reply, again=True)
+                return second if second["verdict"] != "made_up" else verdict
+            return verdict
         return {"verdict": "unreadable", "why": "rate limited four times", "passages": {}}
 
     results = []

@@ -48,6 +48,8 @@ class Turn:
     keep_material: Optional[Callable[[str], None]] = None
     # What each passage number the model was shown stands for: number -> (name, link)
     course_sources: dict = field(default_factory=dict)
+    # The passages the model was already shown, by the number each has
+    course_seen: dict = field(default_factory=dict)
     calls: int = 0
     cost: float = 0.0
     started: float = field(default_factory=time.monotonic)

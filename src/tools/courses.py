@@ -153,6 +153,8 @@ def unknown_course_reply(scope: Scope) -> str:
             f"put one of those after the dash, or use -c and say the class in ur own words")
 
 
+# Told with a flagged message, so the model answers from the lookup instead of searching for the same thing again
+LOOKED_UP_NOTE = "(the course material for this message was just looked up and is the last part of the saved material)"
 # How a lookup that did not happen starts. It is told with the message and never saved as material.
 NOT_LOOKED_UP = "=== COURSE MATERIAL ===\nnot looked up"
 
@@ -189,7 +191,7 @@ async def lookup_for(turn: Turn, scope: Scope) -> str:
     words = search_words(scope.text, store.courses(), scope.codes)
     try:
         found = await retrieve(store, turn.embed, words, scope.codes, _now(), dated=about_dates(scope.text),
-                               asked=scope.text, first_number=_next_number(turn))
+                               asked=scope.text, first_number=_next_number(turn), seen=turn.course_seen)
     except BudgetExceededError:
         raise
     except Exception as e:
@@ -317,7 +319,8 @@ class SearchCourse(Tool):
             since = ""
         try:
             found = await retrieve(store, turn.embed, query, codes, _now(), kind=kind, since=since or None,
-                                   dated=about_dates(query), due=due, first_number=_next_number(turn))
+                                   dated=about_dates(query), due=due, first_number=_next_number(turn),
+                                   seen=turn.course_seen)
         except BudgetExceededError:
             raise
         except Exception as e:

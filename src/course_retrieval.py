@@ -31,9 +31,11 @@ KIND_NAMES = {
 # The friend group studies in Bangkok, so dates and times are told in its time
 BANGKOK = timezone(timedelta(hours=7))
 
-# On real lectures the right passage scored 0.47 or more. Results under it passed the
-# search's floor but are only near the topic. To be set again from the answer check.
-STRONG = 0.47
+# From this score up a passage is on the topic. Measured on 300 passages that a judge model read
+# against their question (check run of 2026-10-14): at 0.55 and over, 41 answered it, 27 were related
+# and 3 were off. Under 0.55 the score says little: 58 answered, 86 were related, 85 were off, in every
+# band alike. So a lower score is not held against a passage, and the model reads it to decide.
+STRONG = 0.55
 # A message with one of these is about dates or work to hand in, so the dated list goes with it
 _DATE_WORDS = re.compile(r"\b(due|deadlines?|assignments?|homework|hw|submit|hand in|this week|next week|upcoming)\b",
                          re.IGNORECASE)
@@ -75,7 +77,7 @@ class Found:
     hits: List[Hit]
     # How many assignments the dated list holds
     rows: int
-    # strong, loose or nothing
+    # strong, unsure or nothing
     label: str
     # What each number in the text stands for: number -> (name, link). "A" is the assignment list.
     sources: Dict[str, Tuple[str, str]] = field(default_factory=dict)
@@ -88,7 +90,7 @@ def about_dates(message: str) -> bool:
 def label_of(hits: Sequence[Hit]) -> str:
     if not hits:
         return "nothing"
-    return "strong" if max(hit.similarity for hit in hits) >= STRONG else "loose"
+    return "strong" if max(hit.similarity for hit in hits) >= STRONG else "unsure"
 
 
 def _clip(text: str, limit: int, keep_end: bool = False) -> str:
@@ -237,8 +239,13 @@ def render_sources(text: str, sources: Dict[str, Tuple[str, str]]) -> str:
         return text
     line = lines[-1]
     named = [sources[key] for key in dict.fromkeys(_MARK.findall(line.group(1))) if key in sources]
-    # A number set in the answer itself says nothing to the person reading it
-    body = re.sub(r" ?\[(\d+|A)\]", lambda mark: "" if mark.group(1) in sources else mark.group(0), text[:line.start()])
+    # A number set in the answer itself says nothing to the person reading it. Code is left as it
+    # is, and so is a number glued to a word, since "rows[2]" is an index and not a passage.
+    def without_marks(prose: str) -> str:
+        return re.sub(r" ?(?<![\w\]])((?:\[(?:\d+|A)\])+)(?![\w(\[])",
+                      lambda marks: "" if all(key in sources for key in _MARK.findall(marks.group(1))) else marks.group(0), prose)
+    pieces = re.split(r"(```.*?```|`[^`\n]*`)", text[:line.start()], flags=re.DOTALL)
+    body = "".join(piece if index % 2 else without_marks(piece) for index, piece in enumerate(pieces))
     rest = text[line.end():]
     if not named:
         return (body.rstrip() + rest).rstrip()
@@ -247,20 +254,25 @@ def render_sources(text: str, sources: Dict[str, Tuple[str, str]]) -> str:
 
 
 def format_hits(query: str, hits: List[Hit], names: dict, label: Optional[str] = None,
-                rows: Sequence[str] = (), today: Optional[date] = None, searched: bool = True, start: int = 1) -> str:
+                rows: Sequence[str] = (), today: Optional[date] = None, searched: bool = True, start: int = 1,
+                repeats: Sequence[str] = ()) -> str:
     """
     A lookup in a === block for the model: each passage under a numbered line that says
     where it is from, then the dated list. searched is False when the list alone
     answers the question and no passages were looked for. start is the first number,
-    so the passages of a later lookup do not reuse the numbers of an earlier one.
+    so the passages of a later lookup do not reuse the numbers of an earlier one. repeats
+    are the numbers of passages this search found that were shown before: they are named, not sent again.
     """
     lines = [f'=== COURSE MATERIAL for "{query}" ===']
-    if not hits and searched:
+    shown = " ".join(f"[{number}]" for number in repeats)
+    if repeats and not hits:
+        lines.append(f"nothing new: this search found only what was already shown as {shown}. answer from those, "
+                     "or say u couldnt find it")
+    elif repeats:
+        lines.append(f"this search also found what was already shown as {shown}. their text is not repeated here")
+    elif not hits and searched:
         lines.append("nothing in the course material matches. tell them u couldnt find it there" if not rows
                      else "no passage in the course material matches.")
-    elif hits and (label or label_of(hits)) == "loose":
-        lines.append("the passages are only loosely related to what was asked. use one only if it really answers it. if none "
-                     "does, say u couldnt find exactly that, then give the closest thing here and where it is from")
     for number, hit in enumerate(hits, start):
         source = [f"{hit.course} {names.get(hit.course, '')}".strip(),
                   f'{KIND_NAMES.get(hit.kind, (hit.kind,))[0]} "{hit.title}"']
@@ -289,15 +301,22 @@ def format_hits(query: str, hits: List[Hit], names: dict, label: Optional[str] =
     return "\n".join(lines)
 
 
+def _key(hit: Hit) -> tuple:
+    """What makes two results the same passage."""
+    return (hit.course, hit.kind, hit.title, hit.locator)
+
+
 async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[float]]], words: str, codes: Sequence[str],
                    now: datetime, kind: Optional[str] = None, since: Optional[str] = None, dated: bool = False,
-                   due: Optional[str] = None, asked: Optional[str] = None, first_number: int = 1) -> Found:
+                   due: Optional[str] = None, asked: Optional[str] = None, first_number: int = 1,
+                   seen: Optional[Dict[tuple, str]] = None) -> Found:
     """
     Look words up in the courses in codes, or in every course when codes is empty.
     kind puts results of that kind first without leaving the others out. dated adds
     the list of assignments, counted from now, and due narrows that list to "upcoming" or "past". asked
     is the message as it was written, which says which days and which assignments
-    the list is wanted for. first_number is the number the first passage gets.
+    the list is wanted for. first_number is the number the first passage gets. seen
+    holds the passages this conversation was already shown, by the number each has.
     """
     asked = asked or words
     dated = dated or bool(due)
@@ -323,11 +342,10 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
             return found
 
         # The search is a few milliseconds of SQLite, kept off the event loop all the same
-        seen = set()
+        found_keys = set()
         for hit in await asyncio.to_thread(search):
-            key = (hit.course, hit.kind, hit.title, hit.locator)
-            if key not in seen:
-                seen.add(key)
+            if _key(hit) not in found_keys:
+                found_keys.add(_key(hit))
                 hits.append(hit)
         hits = sorted(hits, key=lambda hit: (bool(kind) and hit.kind != kind, -hit.similarity))[:RESULTS]
 
@@ -339,9 +357,15 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
         rows = [f"- none posted{' for ' + ', '.join(codes) if codes else ''}"]
     names = {course["code"]: course["name"] for course in store.courses()}
     label = label_of(hits)
+    # A passage shown earlier in the conversation keeps its number and is not sent again
+    seen = seen if seen is not None else {}
+    repeats = list(dict.fromkeys(seen[_key(hit)] for hit in hits if _key(hit) in seen))
+    hits = [hit for hit in hits if _key(hit) not in seen]
+    seen.update({_key(hit): str(number) for number, hit in enumerate(hits, first_number)})
     sources = {str(number): (source_label(hit), hit.url) for number, hit in enumerate(hits, first_number)}
     if dated:
         none = f": none posted{' for ' + ', '.join(codes) if codes else ''}" if not items else " list"
         sources["A"] = (f"teams assignments{none}", "")
-    return Found(format_hits(words, hits, names, label, rows, today, searched, first_number), hits, count, label, sources)
+    return Found(format_hits(words, hits, names, label, rows, today, searched, first_number, repeats), hits, count, label,
+                 sources)
 

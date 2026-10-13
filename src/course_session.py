@@ -22,6 +22,8 @@ class Session:
     material: List[str] = field(default_factory=list)
     # What each passage number in the material stands for: number -> (name, link)
     sources: Dict[str, Tuple[str, str]] = field(default_factory=dict)
+    # The passages already in the material, by the number each has, so none is shown twice
+    seen: Dict[tuple, str] = field(default_factory=dict)
     opened: float = 0.0
 
 
