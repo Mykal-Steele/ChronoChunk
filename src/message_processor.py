@@ -366,13 +366,14 @@ is_correction: bool) -> None:
         watch = watch or Stopwatch()
         try:
             async with typing_in_background(message.channel):
-                # Files made, PDFs read in full and web lookups each count against a daily limit per user
-                file_gate = pdf_gate = web_gate = None
+                # Files made, PDFs read in full, web lookups and course searches each count against a daily limit per user
+                file_gate = pdf_gate = web_gate = course_gate = None
                 limiter = self.rate_limiter
                 if limiter:
                     file_gate = lambda: limiter.check_rate_limit(user_id, "file")
                     pdf_gate = lambda: limiter.check_rate_limit(user_id, "pdf")
                     web_gate = lambda: limiter.check_rate_limit(user_id, "web")
+                    course_gate = lambda: limiter.check_rate_limit(user_id, "course")
                 with watch.step("context"):
                     enriched_query, linked = await resolve_message_link(self.bot, query)
                     # Read the message they replied to or linked and any files or images involved.
@@ -391,7 +392,7 @@ is_correction: bool) -> None:
                     reply = await self.ai_handler.generate_reply(
                         enriched_query, conversation_history, username, user_id,
                         attached_context=attached.text, images=attached.images,
-                        allow_files=True, file_gate=file_gate, web_gate=web_gate,
+                        allow_files=True, file_gate=file_gate, web_gate=web_gate, course_gate=course_gate,
                         emoji_prompt=emoji.prompt(reactions=may_react)
                     )
 

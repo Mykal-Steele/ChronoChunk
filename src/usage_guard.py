@@ -252,24 +252,30 @@ class UsageGuard:
         }
 
 
-class _GuardedCompletions:
-    def __init__(self, completions, guard: UsageGuard):
-        self._completions = completions
+class _GuardedCalls:
+    """One kind of model call, chat completions or embeddings. Both are made with create and report their usage."""
+
+    def __init__(self, calls, guard: UsageGuard):
+        self._calls = calls
         self._guard = guard
 
     async def create(self, **kwargs):
         self._guard.check()
-        response = await self._completions.create(**kwargs)
+        response = await self._calls.create(**kwargs)
         model = getattr(response, "model", None)
         self._guard.record(getattr(response, "usage", None), model if isinstance(model, str) else kwargs.get("model"))
         return response
 
 
 class GuardedClient:
-    """Stands in for AsyncOpenAI. chat.completions.create checks the budget first and records the cost after."""
+    """
+    Stands in for AsyncOpenAI. chat.completions.create and embeddings.create check the
+    budget first and record the cost after.
+    """
 
     def __init__(self, client, guard: UsageGuard):
-        self.chat = SimpleNamespace(completions=_GuardedCompletions(client.chat.completions, guard))
+        self.chat = SimpleNamespace(completions=_GuardedCalls(client.chat.completions, guard))
+        self.embeddings = _GuardedCalls(client.embeddings, guard)
 
 
 _shared_guard: Optional[UsageGuard] = None
@@ -284,5 +290,5 @@ def get_usage_guard() -> UsageGuard:
 
 
 def guard_client(client) -> GuardedClient:
-    """Wrap an AsyncOpenAI client so all its chat completions obey the shared budget."""
+    """Wrap an AsyncOpenAI client so all its chat completions and embeddings obey the shared budget."""
     return GuardedClient(client, get_usage_guard())

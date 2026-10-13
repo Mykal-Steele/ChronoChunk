@@ -399,7 +399,7 @@ async def test_the_document_writer_sees_what_was_looked_up(handler, mock_openai_
     reply = await handler.generate_reply("/make a pdf of https://a.example/1", "", "Kruskal", "1", allow_files=True)
     assert len(reply.files) == 1
     writer_call = mock_openai_client.chat.completions.create.call_args_list[2][1]
-    assert "LOOKED UP ON THE WEB FOR THIS REQUEST" in writer_call["messages"][1]["content"]
+    assert "LOOKED UP FOR THIS REQUEST" in writer_call["messages"][1]["content"]
     assert "the page text" in writer_call["messages"][1]["content"]
 
 

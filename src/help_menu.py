@@ -33,6 +33,7 @@ def limit_lines() -> List[str]:
     tldr_count, tldr_window = Config.RATE_LIMITS["tldr"]
     pdf_count, pdf_window = Config.RATE_LIMITS["pdf"]
     web_count, web_window = Config.RATE_LIMITS["web"]
+    course_count, course_window = Config.RATE_LIMITS["course"]
     return [
         f"images: png, jpg or webp, up to {MAX_IMAGE_BYTES // MB} MB each. files: pdf, md, txt and code files, up to {MAX_FILE_BYTES // MB} MB each",
         f"i read up to {MAX_IMAGES} images and {MAX_FILES} files per message",
@@ -45,7 +46,7 @@ def limit_lines() -> List[str]:
         f"chat: {chat_count} messages {_window(chat_window)}. files i make: {file_count} {_window(file_window)}, "
         f"{MAX_FILES_PER_REPLY} per reply",
         f"new pdfs i read in full: {pdf_count} {_window(pdf_window)}. web lookups: {web_count} {_window(web_window)}. "
-        "`/usage` shows what u have left",
+        f"course searches: {course_count} {_window(course_window)}. `/usage` shows what u have left",
         "cant read yet: gifs, videos, voice messages, word, excel and powerpoint files",
     ]
 
@@ -84,7 +85,7 @@ def build_help_embed() -> discord.Embed:
         "ask for an email, proposal, report, cover letter or notes and i write it properly, no slang",
         "ask for it as a pdf or docx (`/make this a pdf`, `/write a proposal for X as docx`) and i attach the file",
         "ask for a diagram or flowchart and i send it as an image",
-        "`/usage` - what u have left today: messages, pdfs, files, web lookups and ur ai limit. only u see it",
+        "`/usage` - what u have left today: messages, pdfs, files, web lookups, course searches and ur ai limit. only u see it",
         "`/model` - which ai model im running on",
         "`/setup` - where i run and with which settings, for the devs",
         "`/stats` - everything i used so far: ai calls, tokens, cost"
@@ -97,6 +98,12 @@ def build_help_embed() -> discord.Embed:
         "i cant log in to sites, and pages behind a login or a paywall mostly come back empty"
     ]
     embed.add_field(name="🌐 the web", value="\n".join(web_cmds), inline=False)
+
+    course_cmds = [
+        "ask about ur classes (`/what did the ai lecture say about search`) and i look it up in the slides and lecture recordings, then say where i found it",
+        "`/courses` - which courses i have, how much of each, and when they were last synced"
+    ]
+    embed.add_field(name="📚 course material", value="\n".join(course_cmds), inline=False)
 
     embed.add_field(name="📏 limits", value="\n".join(f"- {line}" for line in limit_lines()), inline=False)
 

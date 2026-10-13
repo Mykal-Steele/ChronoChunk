@@ -8,6 +8,7 @@ from src.help_menu import build_help_embed
 from src.rate_limiter import RateLimiter
 from src.setup_info import setup_summary
 from src.stats import stats_summary
+from src.tools.courses import courses_summary
 from src.message_context import read_channel_messages
 from src.usage_guard import get_usage_guard
 from src.logger import logger
@@ -25,7 +26,7 @@ CHANNEL_ANSWER_RULE = (
 
 class CommandHandler:
     """
-    Handles the commands that also work as typed messages: /tldr, /usage, /model, /setup, /stats and /help.
+    Handles the commands that also work as typed messages: /tldr, /usage, /model, /setup, /stats, /courses and /help.
     Every other command is a slash command, in src/slash_commands.py.
     """
 
@@ -38,6 +39,7 @@ class CommandHandler:
             "model": self._handle_model,
             "setup": self._handle_setup,
             "stats": self._handle_stats,
+            "courses": self._handle_courses,
             "help": self._handle_help,
         }
 
@@ -106,6 +108,7 @@ class CommandHandler:
             allow_files=bool(prompt),
             file_gate=lambda: self.rate_limiter.check_rate_limit(user_id, "file"),
             web_gate=lambda: self.rate_limiter.check_rate_limit(user_id, "web"),
+            course_gate=lambda: self.rate_limiter.check_rate_limit(user_id, "course"),
         )
 
     async def _handle_help(self, args: List[str], message: discord.Message, user_id: str) -> Optional[discord.Embed]:
@@ -127,6 +130,10 @@ class CommandHandler:
     async def _handle_stats(self, args: List[str], message: discord.Message, user_id: str) -> Optional[str]:
         """Show everything the bot has used so far for a bare '/stats'. With more words it is chat."""
         return None if args else stats_summary()
+
+    async def _handle_courses(self, args: List[str], message: discord.Message, user_id: str) -> Optional[str]:
+        """Show the course material the bot can search for a bare '/courses'. With more words it is chat."""
+        return None if args else courses_summary()
 
     def setup_summary(self) -> str:
         """Where the bot runs and the settings it runs with, for other developers."""
@@ -171,6 +178,7 @@ USAGE_ROWS = (
     ("pdfs read", "pdf"),
     ("files made", "file"),
     ("web lookups", "web"),
+    ("course asks", "course"),
     ("recaps", "tldr"),
 )
 
