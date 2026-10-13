@@ -372,6 +372,30 @@ def test_assignments_are_stored_as_material_of_their_course(tmp_path, material, 
     assert "2 assignments" in "\n".join(report.lines)
 
 
+def test_a_picture_in_an_assignment_is_described_once_and_kept_as_a_reference(tmp_path, material, cache):
+    picture = tmp_path / "maze.png"
+    Image.new("RGB", (120, 80), "white").save(picture, "PNG")
+    assignment = _assignment(5, "2026-09-22T16:59:00Z", "") | {
+        "instructions": {"content": '<img data-e="png" data-i="01ITEM" data-d="b!drive">', "contentType": "html"},
+        "pictures": [{"path": str(picture), "sha": file_sha(picture), "url": "https://example.test/maze.png"}]}
+    material.assignments = [assignment]
+
+    def describe(prompt, images):
+        return "Find the shortest path through the maze with A*." if "assignment" in prompt else "## Page 2\nRows."
+    client = FakeClient(describe=describe)
+    out = tmp_path / "courses.db"
+    build([material], Models(cache, client=client), cache, out, Report())
+    store = CourseStore.open(str(out))
+    [stored] = store.assignments("CSC340")
+    assert "Picture in the instructions: Find the shortest path through the maze with A*." in stored["text"]
+    assert stored["meta"]["pictures"] == ["https://example.test/maze.png"]
+    store.close()
+
+    asked = len(client.chats)
+    build([material], Models(cache, client=client), cache, out, Report())
+    assert len(client.chats) == asked
+
+
 def test_the_nicknames_of_a_course_are_written_beside_its_codes(tmp_path, material, cache, monkeypatch):
     from sync import build as build_module
     monkeypatch.setattr(build_module, "NICKNAMES", {"CSC340": ("ai", "ai class"), "CSC999": ("not synced",)})

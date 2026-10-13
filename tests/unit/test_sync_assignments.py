@@ -253,3 +253,30 @@ def test_the_assignments_apps_own_id_does_not_stop_a_run():
 def test_an_id_outside_the_parts_about_people_is_not_a_persons():
     raw = _raw(moduleUrl="https://example.test/e1e1e1e1-1111-4222-8333-444444444444/module", channelId="19:abcdef@thread.tacv2")
     assert personal_ids([raw]) == {"student-id-1"}
+
+
+# ── pictures inside the instructions ──────────────────────────────────────────
+
+from sync.assignments import facts_meta, picture_refs  # noqa: E402
+
+PICTURE = '<img data-e="png" data-i="01ITEMAAA" data-d="b!driveAAA" class="c0">'
+
+
+def test_pictures_in_the_instructions_are_found_by_where_teams_keeps_them():
+    html = {"content": f"<style>.c0{{max-width: 100%;}}</style><div>See below.</div>{PICTURE}"
+                       '<img class="c0" data-d="b!driveBBB" data-e="png" data-i="01ITEMBBB"><img src="https://example.test/x.png">',
+            "contentType": "html"}
+    assert picture_refs(html) == [("b!driveAAA", "01ITEMAAA"), ("b!driveBBB", "01ITEMBBB")]
+    assert picture_refs(None) == [] and picture_refs({"content": "<p>no picture</p>"}) == []
+
+
+def test_what_a_picture_says_becomes_part_of_the_assignment():
+    item = _item() | {"instructions": {"content": PICTURE, "contentType": "html"},
+                      "pictures": [{"url": "https://example.test/p.png", "description": "Find the shortest path through the maze with A*."},
+                                   {"url": "https://example.test/q.png", "description": ""}]}
+    text = assignment_text(item)
+    assert "Picture in the instructions: Find the shortest path through the maze with A*." in text
+    # A picture that could not be read adds nothing, and both are kept as references
+    assert text.count("Picture in the instructions") == 1
+    assert facts_meta(item)["pictures"] == ["https://example.test/p.png", "https://example.test/q.png"]
+    assert "pictures" not in facts_meta(_item())

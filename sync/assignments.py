@@ -61,6 +61,21 @@ def clean_html(instructions: object) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def picture_refs(instructions: object) -> List[Tuple[str, str]]:
+    """
+    The pictures set into an assignment's instructions, each as (drive id, item id).
+    Teams keeps them as files in the class's SharePoint and marks the picture with both.
+    """
+    if not isinstance(instructions, dict):
+        return []
+    refs = []
+    for tag in re.findall(r"<img\b[^>]*>", str(instructions.get("content") or ""), flags=re.IGNORECASE):
+        drive, item = re.search(r'data-d="([^"]+)"', tag), re.search(r'data-i="([^"]+)"', tag)
+        if drive and item:
+            refs.append((drive.group(1), item.group(1)))
+    return refs
+
+
 def dedupe(items: Iterable[dict]) -> List[dict]:
     """One copy per assignment id, first one wins."""
     seen: Set[str] = set()
@@ -172,6 +187,10 @@ def facts_meta(item: Dict) -> Dict:
     attached = _resource_names(item.get("resources"))
     if attached:
         meta["attached"] = attached
+    # Where each picture of the instructions is, for when its description is not enough
+    pictures = [str(picture.get("url") or "") for picture in item.get("pictures") or [] if picture.get("url")]
+    if pictures:
+        meta["pictures"] = pictures
     return meta
 
 
@@ -189,6 +208,9 @@ def assignment_text(item: Dict) -> str:
     instructions = clean_html(item.get("instructions"))
     if instructions:
         lines.append(instructions)
+    for picture in item.get("pictures") or []:
+        if str(picture.get("description") or "").strip():
+            lines.append(f"Picture in the instructions: {picture['description'].strip()}")
     for name in _resource_names(item.get("resources")):
         lines.append(f"Attached: {name}")
     rubric = item.get("rubric")
@@ -435,3 +457,4 @@ def collect(context, class_ids: Sequence[str], semester_start: str, cache=None) 
         opened_now += len(to_open)
     logger.info(f"Assignments: {len(facts)} kept, {opened_now} opened in this run, the rest from earlier runs")
     return facts, problems
+

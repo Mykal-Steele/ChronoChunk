@@ -35,7 +35,7 @@ from sync.material import (
     without_names,
     wanted,
 )
-from sync.models import Models
+from sync.models import Models, SpendCapReached
 from sync.reading import READER_VERSION, Page, ReadError, Reading, read_document
 from sync.settings import COURSE_PREFIX, EMBEDDING_MODEL, NICKNAMES, SEMESTER_START
 
@@ -142,6 +142,10 @@ def collect(only: Sequence[str], cache: Cache, report: Report, headless: bool = 
         except Exception as error:
             # The slides and lectures are still worth a course file when the Assignments app cannot be read
             facts, problems = [], [f"assignments: {str(error)[:200]}"]
+        try:
+            sharepoint.fetch_pictures(context, facts, cache)
+        except Exception as error:
+            problems.append(f"pictures in assignments: {str(error)[:200]}")
         for fact in facts:
             target = classes.get(str(fact.get("classId") or ""))
             if target is None:
@@ -224,6 +228,13 @@ def _add_course(store: CourseStore, material: CourseMaterial, models: Models, ca
 
     # One chunk per assignment, dated by the day it is due
     for item in sorted(material.assignments, key=lambda item: (due_day(item), str(item.get("displayName") or ""))):
+        for picture in item.get("pictures") or []:
+            try:
+                picture["description"] = models.read_picture(picture["path"], picture["sha"])
+            except SpendCapReached:
+                raise
+            except Exception as error:
+                material.failed.append(f"picture in {item.get('displayName')!r}: {str(error)[:150]}")
         text = assignment_text(item)
         if len(text) < CHUNK_MIN_CHARS:
             continue

@@ -10,6 +10,8 @@ What it collects per course:
 
 People's names are taken out of the transcripts. Teams writes a name it knows from the meeting in capitals, so a word in capitals that the course never uses as a word becomes `[name]`. This misses a name written like any other word and a name shorter than five letters. Names in the documents, such as a presenter's name on a slide, are kept.
 
+A picture set into an assignment's instructions is downloaded and read once by the model, and what it says becomes part of the assignment's text. The picture's link is kept with the assignment.
+
 An assignment is opened once for its instructions, and again only after a teacher changed it. Before anything is written, the run checks that no id from the parts about people (who made it, who it went to, who handed in what) is in what it keeps, and stops if one is.
 
 An assignment is kept as material of its course, not as anyone's work. Teams sends the signed-in person's own submissions and whether they finished along with each list, and the sync drops those before anything is stored. It never reads the calls that are only about people (submissions, class members, the person's own work list). Assignments that are not active, and ones due before the semester, are left out.
