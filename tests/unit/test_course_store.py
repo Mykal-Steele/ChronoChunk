@@ -97,6 +97,22 @@ def test_newest_leaves_out_sources_with_no_date(store):
     assert store.newest()["CSC345"] == {"transcript": "2026-10-06"}
 
 
+def test_assignments_come_back_by_due_day_with_what_they_ask_for(store):
+    late = store.add_source("CSC340", "assignment", "Mini project", url="https://example.test/a/2", date="2026-11-16")
+    store.add_chunk(late, 0, "", "Mini project\nDue 2026-11-16 23:59 Bangkok time", direction(agents=1))
+    early = store.add_source("CSC340", "assignment", "Assignment 5: Search", url="https://example.test/a/1", date="2026-09-22")
+    store.add_chunk(early, 0, "", "Assignment 5: Search\nDue 2026-09-22 23:59 Bangkok time\n10 points", direction(agents=1))
+    undated = store.add_source("CSC345", "assignment", "Survey")
+    store.add_chunk(undated, 0, "", "Survey", direction(bayes=1))
+    assert [(item["course"], item["title"], item["date"]) for item in store.assignments()] == [
+        ("CSC345", "Survey", ""), ("CSC340", "Assignment 5: Search", "2026-09-22"), ("CSC340", "Mini project", "2026-11-16")]
+    first = store.assignments("CSC340")[0]
+    assert first == {"course": "CSC340", "title": "Assignment 5: Search", "date": "2026-09-22",
+                     "url": "https://example.test/a/1", "text": "Assignment 5: Search\nDue 2026-09-22 23:59 Bangkok time\n10 points"}
+    assert [item["title"] for item in store.assignments("CSC345")] == ["Survey"]
+    assert store.assignments("CSC999") == []
+
+
 def test_search_returns_the_chunk_with_its_source_and_neighbours(store):
     hits = store.search("how to reduce dimensions", direction(pca=1))
     assert len(hits) == 1

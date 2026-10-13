@@ -50,9 +50,9 @@ def handler(mock_openai_client):
     return h
 
 
-def test_the_bot_ships_with_its_five_tools():
+def test_the_bot_ships_with_its_six_tools():
     assert [tool.name for tool in default_tools()] == ["create_document", "create_diagram", "open_url", "web_search",
-                                                       "search_course"]
+                                                       "search_course", "course_assignments"]
     assert all(tool.definition["function"]["name"] == tool.name for tool in default_tools())
 
 

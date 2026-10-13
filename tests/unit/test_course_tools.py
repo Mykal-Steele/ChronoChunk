@@ -1,4 +1,5 @@
-"""The course search tool: what the model is offered, what a search hands back, and /courses."""
+"""The course tools: what the model is offered, what a search and the assignment list hand back, and /courses."""
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -9,7 +10,7 @@ from src.course_store import DIMENSIONS, CourseStore
 from src.exceptions import RateLimitError
 from src.tools import courses
 from src.tools.base import Turn
-from src.tools.courses import SearchCourse, courses_summary
+from src.tools.courses import CourseAssignments, SearchCourse, courses_summary
 from tests.unit.test_ai_response_handler import _message, _tool_call
 from tests.unit.test_course_store import direction
 
@@ -25,7 +26,7 @@ def course_file(tmp_path, monkeypatch):
 
 
 def _fill(path, model="text-embedding-3-small", dimensions=DIMENSIONS, synced_at="2026-10-12T16:43:27+00:00",
-          deck_date="2026-09-01"):
+          deck_date="2026-09-01", assignments=False):
     store = CourseStore.create(path)
     store.add_course("CSC340", "Artificial Intelligence", aliases=["BIF651"])
     store.add_course("CSC345", "Data Science")
@@ -37,6 +38,16 @@ def _fill(path, model="text-embedding-3-small", dimensions=DIMENSIONS, synced_at
     store.add_chunk(deck, 2, "page 36", "PC1 and PC2", direction(pca=0.7, other=0.7))
     lecture = store.add_source("CSC345", "transcript", "CSC345_20261006", date="2026-10-06")
     store.add_chunk(lecture, 0, "2:45:25", "Naive Bayes is simple and pretty good", direction(bayes=1))
+    if assignments:
+        for course, title, due, text in (
+                ("CSC340", "Assignment 5: Search", "2026-09-22", "10 points\nSolve the maze with A* search."),
+                ("CSC340", "Mini project", "2026-11-16", "Build an agent."),
+                ("CSC345", "Lab 7", "2026-10-13", "5 points\nTrain a classifier."),
+                ("CSC345", "Lab 8", "2026-10-14", "Evaluate the model."),
+                ("CSC345", "Survey", "", "Tell us your background.")):
+            source = store.add_source(course, "assignment", title, url=f"https://example.test/{title[-1]}", date=due)
+            head = f"{title}\nDue {due} 23:59 Bangkok time\n" if due else f"{title}\n"
+            store.add_chunk(source, 0, "", head + text, direction(other=1))
     store.set_meta("synced_at", synced_at)
     store.set_meta("embedding_model", model)
     store.set_meta("embedding_dimensions", str(dimensions))
@@ -47,6 +58,14 @@ def _fill(path, model="text-embedding-3-small", dimensions=DIMENSIONS, synced_at
 @pytest.fixture
 def material(course_file):
     _fill(course_file)
+    return course_file
+
+
+@pytest.fixture
+def assigned(course_file, monkeypatch):
+    """The course file with five assignments, on 13 Oct 2026 in Bangkok."""
+    _fill(course_file, assignments=True)
+    monkeypatch.setattr(courses, "_today", lambda: date(2026, 10, 13))
     return course_file
 
 
@@ -255,3 +274,102 @@ async def test_without_a_course_file_the_model_hears_nothing_about_courses(handl
     call = mock_openai_client.chat.completions.create.call_args[1]
     assert "search_course" not in [tool["function"]["name"] for tool in call["tools"]]
     assert "COURSE MATERIAL" not in call["messages"][0]["content"]
+
+
+# ── the assignment list ───────────────────────────────────────────────────────
+
+def test_the_assignment_list_is_only_offered_when_the_file_holds_assignments(material):
+    assert SearchCourse().available()
+    assert not CourseAssignments().available()
+    assert CourseAssignments().prompt() == ""
+
+
+async def test_assignments_are_listed_with_the_days_left_in_bangkok_time(assigned):
+    turn = _turn(direction(pca=1))
+    text = (await CourseAssignments().run({}, turn)).text
+    assert text.startswith("=== ASSIGNMENTS, today is Tuesday 13 Oct 2026 in Bangkok ===")
+    assert text.endswith("=== END ===")
+    assert 'CSC345 Data Science, "Lab 7", due today (13 Oct 2026)' in text
+    assert 'CSC345 Data Science, "Lab 8", due tomorrow (14 Oct 2026)' in text
+    assert 'CSC340 Artificial Intelligence, "Mini project", due in 34 days (16 Nov 2026)' in text
+    assert 'CSC340 Artificial Intelligence, "Assignment 5: Search", was due 21 days ago (22 Sep 2026)' in text
+    assert 'CSC345 Data Science, "Survey", no due date' in text
+    assert "Due 2026-11-16 23:59 Bangkok time" in text and "Solve the maze with A* search." in text
+    assert "link: https://example.test/8" in text
+    # What is still to come is listed first, the soonest on top, then what has passed, the latest on top
+    order = [text.index(title) for title in ('"Lab 7"', '"Lab 8"', '"Mini project"', '"Survey"', '"Assignment 5: Search"')]
+    assert order == sorted(order)
+
+
+async def test_the_list_takes_no_search_and_no_embedding(assigned):
+    gate_calls = []
+    turn = _turn(direction(pca=1), gate=lambda: gate_calls.append(1))
+    result = await CourseAssignments().run({"when": "upcoming"}, turn)
+    turn.embed.assert_not_awaited()
+    assert gate_calls == []
+    # It still counts as an answer from course material, which is looked up again next time
+    assert turn.course_searches == 1
+    assert turn.findings == [result.text]
+
+
+async def test_when_and_course_narrow_the_list(assigned):
+    upcoming = (await CourseAssignments().run({"when": "upcoming"}, _turn(direction(pca=1)))).text
+    assert "Lab 7" in upcoming and "Mini project" in upcoming and "Survey" in upcoming and "Assignment 5" not in upcoming
+    past = (await CourseAssignments().run({"when": "past"}, _turn(direction(pca=1)))).text
+    assert "Assignment 5" in past and "Lab 7" not in past and "Survey" not in past
+    one = (await CourseAssignments().run({"course": "bif651"}, _turn(direction(pca=1)))).text
+    assert "Mini project" in one and "Assignment 5" in one and "Lab 7" not in one
+    made_up = (await CourseAssignments().run({"course": "CSC999", "when": "sometime"}, _turn(direction(pca=1)))).text
+    assert "Lab 7" in made_up and "Assignment 5" in made_up
+
+
+async def test_an_empty_list_says_what_that_means(assigned):
+    text = (await CourseAssignments().run({"course": "CSC340", "when": "past"}, _turn(direction(pca=1)))).text
+    assert "Assignment 5" in text
+    with patch.object(courses, "_today", lambda: date(2026, 7, 1)):
+        text = (await CourseAssignments().run({"course": "CSC340", "when": "past"}, _turn(direction(pca=1)))).text
+    assert "no past assignments for CSC340" in text and "teams" in text.lower()
+
+
+async def test_long_instructions_are_cut_in_the_list(course_file, monkeypatch):
+    store = CourseStore.create(course_file)
+    store.add_course("CSC340", "Artificial Intelligence")
+    source = store.add_source("CSC340", "assignment", "Essay", date="2026-11-01")
+    store.add_chunk(source, 0, "", "Essay\n" + "x" * 5000, direction(other=1))
+    store.set_meta("embedding_model", "text-embedding-3-small")
+    store.set_meta("embedding_dimensions", str(DIMENSIONS))
+    store.save()
+    store.close()
+    text = (await CourseAssignments().run({}, _turn(direction(pca=1)))).text
+    assert "x" * (courses.MAX_ASSIGNMENT_CHARS + 1) not in text and "x" * 200 in text
+
+
+def test_the_assignment_prompt_says_the_list_is_the_same_for_everyone(assigned):
+    prompt = CourseAssignments().prompt()
+    assert "course_assignments" in prompt
+    assert "who has done" in prompt
+    properties = CourseAssignments().definition["function"]["parameters"]["properties"]
+    assert properties["course"]["enum"] == ["CSC340", "CSC345"]
+    assert properties["when"]["enum"] == ["upcoming", "past", "all"]
+
+
+def test_courses_counts_assignments_and_keeps_their_due_dates_out_of_newest(assigned):
+    text = courses_summary()
+    assert "CSC340  Artificial Intelligence (BIF651): 1 slides, 2 assignments" in text
+    assert "newest: slides 1 Sep 2026\n" in text
+    # A due date in November is not how new the material is
+    assert "16 Nov 2026" not in text and "16 Nov 2026" not in SearchCourse().prompt()
+    assert "slide decks, lecture recordings, assignments." in SearchCourse().prompt()
+
+
+async def test_a_due_date_question_is_answered_from_the_list(handler, mock_openai_client, assigned):
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("course_assignments", {"course": "CSC345", "when": "upcoming"})]),
+        _message(content="lab 7 is due today"),
+    ]
+    reply = await handler.generate_reply("/when is lab 7 due", "", "Kruskal", "1", allow_files=True)
+    assert reply.text == "lab 7 is due today"
+    mock_openai_client.embeddings.create.assert_not_awaited()
+    first, second = mock_openai_client.chat.completions.create.call_args_list
+    assert "course_assignments" in [tool["function"]["name"] for tool in first[1]["tools"]]
+    assert '"Lab 7", due today' in second[1]["messages"][-1]["content"]

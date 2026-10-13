@@ -267,6 +267,19 @@ class CourseStore:
             result.setdefault(row["course"], {})[row["kind"]] = row["newest"]
         return result
 
+    def assignments(self, course: Optional[str] = None) -> List[dict]:
+        """
+        Every assignment, of one course or of all, by the day it is due, with the text that
+        says what it asks for. Those with no due date come first.
+        """
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT sources.course, sources.title, sources.date, sources.url, chunks.text FROM sources "
+                "JOIN chunks ON chunks.source_id = sources.id AND chunks.position = 0 "
+                "WHERE sources.kind = 'assignment'" + ("" if course is None else " AND sources.course = ?")
+                + " ORDER BY sources.date, sources.title", () if course is None else (course,)).fetchall()
+        return [dict(row) for row in rows]
+
     def chunk_counts(self) -> Dict[str, int]:
         """How many chunks every course has."""
         with self._lock:

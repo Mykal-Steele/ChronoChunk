@@ -1,4 +1,4 @@
-"""The tool that searches the course material, and what the bot says about that material."""
+"""The tools that search the course material and list its assignments, and what the bot says about that material."""
 import asyncio
 import logging
 import re
@@ -20,6 +20,8 @@ MAX_COURSE_SEARCHES_PER_REPLY = 3
 MAX_CHUNK_CHARS = 2500
 MAX_NEIGHBOUR_CHARS = 500
 MAX_ORIGINAL_CHARS = 800
+# The most characters of one assignment in the list. The longest real one was about 1,400.
+MAX_ASSIGNMENT_CHARS = 900
 
 # What each kind of source is called, for one of them and for a count of them
 KIND_NAMES = {
@@ -31,6 +33,10 @@ KIND_NAMES = {
 
 # The friend group studies in Bangkok, so the sync time is told in its time
 BANGKOK = timezone(timedelta(hours=7))
+# The kinds whose newest date says how up to date a course is. An assignment's date is the day it is due.
+DATED_KINDS = tuple(kind for kind in KINDS if kind != "assignment")
+# What course_assignments can be asked for
+WHEN = ("upcoming", "past", "all")
 
 # The wording of the query argument decides whether a Thai question is searched in English.
 # It was picked by test, and sync/evaluate.py scores search with the same text, so change both.
@@ -53,6 +59,16 @@ COURSE MATERIAL:
 - the results are only the closest matches, so check that they really answer the question. answer facts about a course only from the results. if they dont answer it, say u couldnt find it in the course material. never make up what a slide, a teacher or an assignment said.
 - when u answered from course material, end with a source line: "-# Source: " then a link whose name says where it came from, the deck and page or the lecture date and time, like [Search slides, page 44](<https://example.com>) or [AI lecture 15 Sep, 1:25:27](<https://example.com>). two sources are two links on that one line. only use links the tool gave back.
 - keep ur normal voice. the facts come from the material, the tone is still urs.
+"""
+
+# Added to the system prompt while course_assignments is offered
+ASSIGNMENTS_PROMPT = """
+ASSIGNMENTS:
+- course_assignments lists the assignments posted in the Assignments tab of those courses' teams: the title, when it is due in bangkok time, how many days are left, the points, what it asks for and the names of the attached files. past ones are in it too. it takes no search, so use it instead of search_course when they ask when something is due, what is due soon or this week, which assignments a course has or had, or what one assignment asks for. set course when u can tell which course they mean. set when to upcoming or past when they only want those.
+- the list is the same for everyone in the class. u dont know who has done, handed in or been graded on anything, so never say that someone has or hasnt done one.
+- it holds what was posted there up to the last sync, nothing else. exam dates, and homework a teacher only gave in class or on a slide, are not in it. so when they ask about an exam, or the list does not have the work they mean, use search_course for it before u say u couldnt find it. when the list has nothing due, say there is nothing in the teams assignments, not that there is no work.
+- for a study guide or exam prep, look at the course's past assignments to see what kind of work was given, then use search_course for the topics.
+- when u answered from the list, end with the same source line, with the assignment's link: "-# Source: " then [Lab 7 assignment](<https://example.com>). only use links the tool gave back.
 """
 
 _library: Optional[CourseLibrary] = None
@@ -92,7 +108,7 @@ def _synced_on(store: CourseStore) -> str:
 def _newest(dates: dict, lead: str = "") -> str:
     """The newest date of each kind a course holds, like "slides 1 Sep 2026, lecture recording 6 Oct 2026"."""
     parts = []
-    for kind in KINDS:
+    for kind in DATED_KINDS:
         try:
             day = date.fromisoformat(dates.get(kind) or "")
         except ValueError:
@@ -271,4 +287,118 @@ class SearchCourse(Tool):
             turn.findings.append(result)
         logger.info(f"{self.name} for {turn.username}: {query[:200]!r} gave {len(hits)} results, "
                     f"best {hits[0].similarity if hits else 0}, {len(result)} chars")
+        return ToolResult(result)
+
+
+def _today() -> date:
+    """Today in Bangkok, where the due times are told."""
+    return datetime.now(BANGKOK).date()
+
+
+def _due(day: str, today: date) -> str:
+    """How far off a due day is, like "due in 3 days (16 Oct 2026)"."""
+    try:
+        due = date.fromisoformat(day)
+    except ValueError:
+        return "no due date"
+    days = (due - today).days
+    if days > 1:
+        left = f"due in {days} days"
+    elif days < -1:
+        left = f"was due {-days} days ago"
+    else:
+        left = {1: "due tomorrow", 0: "due today", -1: "was due yesterday"}[days]
+    return f"{left} ({due.day} {due:%b %Y})"
+
+
+def format_assignments(items: List[dict], when: str, today: date, names: dict, scope: str, synced: str) -> str:
+    """Assignments in a === block for the model: what is still to come first, the soonest on top, then what has passed."""
+    day = today.isoformat()
+    upcoming = [item for item in items if item["date"] >= day]
+    undated = [item for item in items if not item["date"]]
+    past = [item for item in reversed(items) if item["date"] and item["date"] < day]
+    chosen = {"upcoming": upcoming + undated, "past": past}.get(when, upcoming + undated + past)
+    lines = [f"=== ASSIGNMENTS, today is {today:%A} {today.day} {today:%b %Y} in Bangkok ==="]
+    if not chosen:
+        which = {"upcoming": "no assignments still to come", "past": "no past assignments"}.get(when, "no assignments")
+        lines.append(f"{which} {scope} in the list from the teams Assignments tab, as of the last sync on {synced}. "
+                     "work given only in class or in a post is not in that list, and neither are exam dates. "
+                     "search_course may still find it in the slides or lectures")
+        lines.append("=== END ===")
+        return "\n".join(lines)
+    for number, item in enumerate(chosen, 1):
+        course = f"{item['course']} {names.get(item['course'], '')}".strip()
+        lines.append(f'[{number}] {course}, "{item["title"]}", {_due(item["date"], today)}')
+        if item["url"]:
+            lines.append(f"link: {item['url']}")
+        # The text starts with the title, which the line above already has
+        text = item["text"].strip()
+        if text.startswith(item["title"]):
+            text = text[len(item["title"]):]
+        if text.strip():
+            lines.append(_clip(text, MAX_ASSIGNMENT_CHARS))
+        lines.append("")
+    lines[-1] = "=== END ==="
+    return "\n".join(lines)
+
+
+class CourseAssignments(Tool):
+    """The assignments of the courses as a dated list. No search and no embedding, so a due date costs next to nothing."""
+    name = "course_assignments"
+
+    @property
+    def definition(self) -> dict:
+        store = course_store()
+        codes = [code for code, held in store.counts().items() if held.get("assignment")] if store else []
+        course: dict = {"type": "string", "description": "The course whose assignments to list, by its code. Leave it out for every course."}
+        if codes:
+            course["enum"] = sorted(codes)
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": "List the assignments of the user's university courses with their due dates, days left and what "
+                               "they ask for. Past assignments are included.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "course": course,
+                        "when": {
+                            "type": "string",
+                            "enum": list(WHEN),
+                            "description": "upcoming: due today or later. past: already due. all: both. Leave it out for all.",
+                        },
+                    },
+                    "required": [],
+                },
+            },
+        }
+
+    def available(self) -> bool:
+        store = course_store()
+        return bool(store and any(held.get("assignment") for held in store.counts().values()))
+
+    def prompt(self) -> str:
+        return ASSIGNMENTS_PROMPT if self.available() else ""
+
+    async def run(self, args: dict, turn: Turn) -> ToolResult:
+        if turn.course_searches >= MAX_COURSE_SEARCHES_PER_REPLY:
+            return ToolResult("error: this reply has used all its course lookups. answer from what you already have")
+        # Counted with the searches, so an answer from the list is looked up again next time like any course answer
+        turn.course_searches += 1
+        store = course_store()
+        if not store:
+            return ToolResult("error: the course material is not loaded right now. tell them the assignments cannot be listed at the moment")
+        courses = store.courses()
+        code = SearchCourse._course_code(str(args.get("course") or ""), courses)
+        when = args.get("when") if args.get("when") in WHEN else "all"
+        try:
+            items = await asyncio.to_thread(store.assignments, code)
+        except Exception as e:
+            logger.error(f"Tool {self.name} crashed: {e!r}")
+            return ToolResult("error: the assignment list failed because of an internal error. tell them it could not be read")
+        names = {course["code"]: course["name"] for course in courses}
+        result = format_assignments(items, when, _today(), names, f"for {code}" if code else "for any course", _synced_on(store))
+        turn.findings.append(result)
+        logger.info(f"{self.name} for {turn.username}: {code or 'every course'}, {when}, {len(items)} assignments, {len(result)} chars")
         return ToolResult(result)
