@@ -433,7 +433,22 @@ async def test_a_date_question_with_a_topic_gets_the_passages_and_the_list(assig
 
 async def test_the_list_keeps_to_the_flag_s_course(assigned):
     text = await lookup_for(_turn(direction(filler=1)), Scope("any homework", True, ["CSC340"]))
-    assert "Mini project" in text and "Assignment 5" in text and "Lab 7" not in text
+    assert "Mini project" in text and "Lab 7" not in text
+
+
+async def test_the_list_looks_forward_unless_the_past_is_asked_for(assigned):
+    ahead = await lookup_for(_turn(direction(filler=1)), Scope("any homework", True, ["CSC340"]))
+    # What was due three weeks ago is not homework. It is counted, so the bot knows there was some.
+    assert "Assignment 5" not in ahead and "1 past one is not listed" in ahead
+    back = await lookup_for(_turn(direction(filler=1)), Scope("what homework was there", True, ["CSC340"]))
+    assert "Assignment 5" in back and "not listed" not in back
+
+
+async def test_a_course_whose_work_is_all_past_says_nothing_is_coming(assigned, monkeypatch):
+    monkeypatch.setattr(courses, "_today", lambda: date(2026, 12, 1))
+    text = await lookup_for(_turn(direction(filler=1)), Scope("any homework", True, ["CSC340"]))
+    assert "nothing in the teams assignments is due from now on" in text and "2 past ones are not listed" in text
+    assert "Mini project" not in text
 
 
 async def test_a_question_about_one_assignment_gets_that_assignment(assigned):

@@ -19,8 +19,6 @@ MAX_NEIGHBOUR_CHARS = 500
 MAX_ORIGINAL_CHARS = 800
 # The most assignments one list holds
 MAX_ROWS = 40
-# How many assignments that are already past a list shows when nobody asked for the past ones
-RECENT_PAST = 3
 
 # What each kind of source is called, for one of them and for a count of them
 KIND_NAMES = {
@@ -137,8 +135,8 @@ def assignment_rows(items: List[dict], today: date, due: Optional[str] = None,
     """
     Assignments as one line each, and how many of them. Only the ones the question is
     about: the days of window when it names days, "upcoming" or "past" for due, all of
-    them for everything. Otherwise what is still to come and the few latest past ones.
-    Still to come is first, the soonest on top, then what has passed, the latest on top.
+    them for everything. Otherwise only what is still to come, with a count of the past
+    ones. Still to come is first, the soonest on top, then what has passed, the latest on top.
     """
     day = today.isoformat()
     upcoming = [item for item in items if item["date"] >= day]
@@ -159,11 +157,14 @@ def assignment_rows(items: List[dict], today: date, due: Optional[str] = None,
     elif everything:
         chosen, left_out = upcoming + undated + past, 0
     else:
-        chosen, left_out = upcoming + undated + past[:RECENT_PAST], len(past[RECENT_PAST:])
+        # A question about homework is about what is still to do
+        chosen, left_out = upcoming + undated, len(past)
     chosen = chosen[:MAX_ROWS]
     lines = [f"- {_row(item, today)}" for item in chosen]
+    if not chosen and left_out:
+        lines.append("nothing in the teams assignments is due from now on")
     if left_out:
-        lines.append(f"{left_out} earlier ones are not listed here")
+        lines.append(f"{left_out} past {'one is' if left_out == 1 else 'ones are'} not listed")
     return lines, len(chosen)
 
 

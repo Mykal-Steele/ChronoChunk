@@ -18,8 +18,9 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - A flagged message is looked up before the model is asked, so the lookup always happens and most course answers take one model call instead of two. The search uses the message without the course's name and without words like "lecture" or "teacher".
 - Asking for one kind of material (`kind`) puts that kind first and still returns the rest. As a hard filter it hid the answer when someone said "lecture" and the fact was on a slide.
 - After a call the bot weighs exactly one message nobody sent to it (it was up to three, with two answers), and only half the time. The coin is flipped once per call, before the model is asked, so a lost flip costs nothing. `JOIN_IN_CHANCE` sets the odds.
-- A question about dates gets only the assignments it is about: the ones due today, tomorrow, this week or next week when it names those days, and otherwise what is coming plus the three latest past ones. "Whats due this week" is answered from that list alone, with no search. A course with nothing posted in Teams says so, and its slides and lectures are searched for homework given in class.
+- A question about dates gets only the assignments it is about: the ones due today, tomorrow, this week or next week when it names those days, and otherwise only what is still to come. Past ones are listed when the question asks for them. "Whats due this week" is answered from that list alone, with no search. A course with nothing posted in Teams says so, and its slides and lectures are searched for homework given in class.
 - When Azure turns a call down, the reply says why: a rate limit ("try again in like 30 sec"), a spent quota, or a fault on the bot's side. It was one of ten jokes for all three.
+- Every reply is told the current date and time in Bangkok, so "today", "tonight" and "this week" mean what they should.
 - Results that are only near the topic are marked as loosely related, and the bot is told to say it could not find exactly that and give the closest thing.
 
 ### Added

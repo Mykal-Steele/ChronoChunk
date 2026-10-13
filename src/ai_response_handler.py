@@ -4,7 +4,7 @@ import json
 import re
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from openai import AsyncOpenAI
 from typing import Callable, List, Optional, Tuple
@@ -25,6 +25,20 @@ logger = logging.getLogger(__name__)
 _clean_personality = re.sub(
     r'\{conversation_history\}.*$', '', PERSONALITY_PROMPT, flags=re.DOTALL
 ).strip()
+
+# The friend group lives in Bangkok, so "now" is told in its time
+_BANGKOK = timezone(timedelta(hours=7))
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _right_now() -> str:
+    """The moment a reply is written, for the model: "(right now it is Tuesday 13 Oct 2026, 21:05 Bangkok time)"."""
+    now = _now().astimezone(_BANGKOK)
+    return f"(right now it is {now:%A} {now.day} {now:%b %Y}, {now:%H:%M} Bangkok time)"
+
 
 _SYSTEM_PROMPT = _clean_personality + voice_examples_prompt(load_voice_examples()) + """
 
@@ -433,6 +447,8 @@ class AIResponseHandler:
                 user_parts.append(conversation_history)
             if attached_context:
                 user_parts.append(attached_context)
+            # With the message and not in the system prompt, which stays the same from one minute to the next
+            user_parts.append(_right_now())
             user_parts.append(f'[{username}]: "{clean_query}"')
 
             # Course material only comes into a reply when the message asks for it with a flag

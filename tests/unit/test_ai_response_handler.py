@@ -1028,3 +1028,17 @@ def test_a_link_to_another_page_of_the_same_site_is_not_swapped():
     sources = ["link: https://docs.python.org/3/library/re.html"]
     reply = "that one is in [the os docs](<https://docs.python.org/3/library/os.html>)"
     assert repair_links(reply, sources) == reply
+
+
+async def test_every_reply_is_told_the_current_date_and_time_in_bangkok(handler, mock_openai_client, monkeypatch):
+    from datetime import datetime, timezone
+    import src.ai_response_handler as module
+    # 14:05 UTC is 21:05 in Bangkok
+    monkeypatch.setattr(module, "_now", lambda: datetime(2026, 10, 13, 14, 5, tzinfo=timezone.utc))
+    await handler.generate_response("what day is it", "", "TestUser", "12345")
+    call = mock_openai_client.chat.completions.create.call_args[1]
+    asked = call["messages"][1]["content"]
+    assert "(right now it is Tuesday 13 Oct 2026, 21:05 Bangkok time)" in asked
+    # It goes with the message, so the system prompt stays the same from one minute to the next
+    assert "right now it is" not in call["messages"][0]["content"]
+    assert asked.rstrip().endswith('[TestUser]: "what day is it"')
