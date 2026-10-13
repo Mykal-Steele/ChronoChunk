@@ -127,7 +127,8 @@ def _resource_names(resources: object) -> List[str]:
     for entry in resources:
         if not isinstance(entry, dict):
             continue
-        resource = entry.get("resource") if isinstance(entry.get("resource"), dict) else entry
+        inner = entry.get("resource")
+        resource = inner if isinstance(inner, dict) else entry
         name = str(resource.get("displayName") or "").strip()
         if name:
             names.append(name)
@@ -202,7 +203,11 @@ def opened(answers: Sequence[dict], class_id: str, assignment_id: str) -> Option
 
 
 def _app_frame(page):
-    return next((frame for frame in page.frames if ASSIGNMENTS_HOST in (frame.url or "")), None)
+    """The frame the Assignments app runs in. Raises while there is none, which a wait reads as "not yet"."""
+    for frame in page.frames:
+        if ASSIGNMENTS_HOST in (frame.url or ""):
+            return frame
+    raise LookupError("the Assignments app is not open")
 
 
 def _until(page, test: Callable[[], object], seconds: float) -> bool:
@@ -232,12 +237,12 @@ def _read_list(page, recorder, class_id: str) -> Optional[List[dict]]:
     for tab in TABS:
         mark = len(recorder.answers)
         _app_frame(page).get_by_role("tab", name=re.compile(tab)).first.click()
-        _until(page, lambda: _class_lists(recorder.answers[mark:], class_id), TAB_SECONDS)
+        _until(page, lambda mark=mark: _class_lists(recorder.answers[mark:], class_id), TAB_SECONDS)
         # A list comes 20 rows at a time, and the next rows load when the last one scrolls into view
         while more_to_load(recorder.answers[mark:], class_id):
             seen = len(recorder.answers)
             _app_frame(page).get_by_role("listitem").last.scroll_into_view_if_needed()
-            if not _until(page, lambda: len(_class_lists(recorder.answers[seen:], class_id)) > 0, TAB_SECONDS):
+            if not _until(page, lambda seen=seen: _class_lists(recorder.answers[seen:], class_id), TAB_SECONDS):
                 break
     return listed(recorder.answers[start:], class_id)
 
@@ -250,7 +255,7 @@ def _open(page, recorder, class_id: str, assignment_id: str) -> Optional[dict]:
             _app_frame(page).goto(f"{APP}/classes/{class_id}/assignments/{assignment_id}", wait_until="commit")
         except Exception:
             continue
-        if _until(page, lambda: opened(recorder.answers[mark:], class_id, assignment_id), DETAIL_SECONDS):
+        if _until(page, lambda mark=mark: opened(recorder.answers[mark:], class_id, assignment_id), DETAIL_SECONDS):
             return opened(recorder.answers[mark:], class_id, assignment_id)
     return None
 
@@ -271,7 +276,7 @@ def collect(context, class_ids: Sequence[str], semester_start: str) -> Tuple[Lis
     recorder = Recorder(context, ASSIGNMENTS_HOST, recorded)
     page = open_teams(context)
     page.get_by_role("button", name=re.compile(r"^Assignments")).first.click()
-    if not _until(page, lambda: _app_frame(page) is not None, APP_SECONDS):
+    if not _until(page, lambda: _app_frame(page), APP_SECONDS):
         raise RuntimeError("the Assignments app did not open in Teams")
 
     facts: List[dict] = []
