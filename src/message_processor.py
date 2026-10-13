@@ -395,7 +395,7 @@ is_correction: bool) -> None:
                         enriched_query, conversation_history, username, user_id,
                         attached_context=attached.text, images=attached.images,
                         allow_files=True, file_gate=file_gate, web_gate=web_gate, course_gate=course_gate,
-                        emoji_prompt=emoji.prompt(reactions=may_react)
+                        emoji_prompt=emoji.prompt(reactions=may_react), session_key=f"{channel_id}:{user_id}"
                     )
 
             with watch.step("send"):

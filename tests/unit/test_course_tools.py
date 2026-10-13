@@ -76,6 +76,11 @@ def _bangkok(year, month, day, hour=15, minute=0):
     return datetime(year, month, day, hour, minute, tzinfo=courses.BANGKOK)
 
 
+def _embedding(vector):
+    return SimpleNamespace(data=[SimpleNamespace(embedding=vector)],
+                           usage=SimpleNamespace(prompt_tokens=5, completion_tokens=0, prompt_tokens_details=None))
+
+
 def _turn(vector, gate=None, codes=None):
     turn = Turn("what is pca", "Kruskal", "", "", [], course_gate=gate, course_codes=codes)
     turn.embed = AsyncMock(return_value=vector)
@@ -178,11 +183,11 @@ async def test_kind_puts_that_kind_first_and_still_returns_the_rest(material):
     assert plain.index("Principal component analysis") < plain.index("Naive Bayes")
 
 
-async def test_the_flag_s_courses_bound_a_search(material):
-    # The message was flagged for CSC340, so a search cannot wander into another course
+async def test_a_search_stays_in_the_flag_s_courses_unless_the_model_names_another(material):
     turn = _turn(direction(bayes=1), codes=["CSC340"])
     assert "nothing in the course material matches" in (await SearchCourse().run({"query": "bayes"}, turn)).text
-    assert "nothing in the course material matches" in (await SearchCourse().run({"query": "bayes", "course": "CSC345"}, turn)).text
+    # They moved on to another class in the same conversation. The model says which, and that is searched.
+    assert "Naive Bayes" in (await SearchCourse().run({"query": "bayes", "course": "CSC345"}, turn)).text
     both = _turn(direction(bayes=1), codes=["CSC340", "CSC345"])
     assert "Naive Bayes" in (await SearchCourse().run({"query": "bayes"}, both)).text
 
@@ -293,9 +298,11 @@ async def test_a_course_question_is_embedded_searched_and_answered(handler, mock
     first, second = mock_openai_client.chat.completions.create.call_args_list
     assert "search_course" in [tool["function"]["name"] for tool in first[1]["tools"]]
     assert "COURSE MATERIAL:" in first[1]["messages"][0]["content"]
-    asked = first[1]["messages"][1]["content"]
-    # The material was looked up before the model was asked, and the flag is not part of the message
-    assert "Principal component analysis reduces the dimensions" in asked
+    # The list of messages grows as the reply is built, so the turn is found by its place
+    saved, asked = first[1]["messages"][1]["content"], first[1]["messages"][2]["content"]
+    # The material was looked up before the model was asked, and sits in a message of its own
+    assert saved.startswith("SAVED COURSE MATERIAL") and "Principal component analysis reduces the dimensions" in saved
+    # The flag is not part of the message
     assert asked.rstrip().endswith('[Kruskal]: "what is pca"') and "-csc340" not in asked
     assert "Principal component analysis reduces the dimensions" in second[1]["messages"][-1]["content"]
 
@@ -340,8 +347,8 @@ async def test_the_course_flag_looks_up_before_the_model_is_asked(handler, mock_
     assert mock_openai_client.chat.completions.create.await_count == 1
     # Searched with the topic, not with the course's name or the words about asking
     assert mock_openai_client.embeddings.create.call_args[1]["input"] == ["what did the about pca in"]
-    asked = mock_openai_client.chat.completions.create.call_args[1]["messages"][1]["content"]
-    assert "CSC340 Artificial Intelligence, slides" in asked and "Naive Bayes" not in asked
+    saved = mock_openai_client.chat.completions.create.call_args[1]["messages"][1]["content"]
+    assert "CSC340 Artificial Intelligence, slides" in saved and "Naive Bayes" not in saved
 
 
 async def test_a_code_the_bot_does_not_hold_is_answered_without_the_model(handler, mock_openai_client, material):
@@ -357,8 +364,10 @@ async def test_the_daily_limit_is_told_to_the_model_instead_of_a_lookup(handler,
     mock_openai_client.chat.completions.create.side_effect = [_message(content="u used ur lookups, back in 5h")]
     reply = await handler.generate_reply("/what is pca -course", "", "Kruskal", "1", allow_files=True, course_gate=gate)
     assert reply.text == "u used ur lookups, back in 5h"
-    asked = mock_openai_client.chat.completions.create.call_args[1]["messages"][1]["content"]
-    assert "used all their course lookups for today" in asked and "about 5 hours" in asked
+    messages = mock_openai_client.chat.completions.create.call_args[1]["messages"]
+    # A lookup that did not happen is told with the message, and is not saved as material
+    assert len(messages) == 2
+    assert "used all their course lookups for today" in messages[1]["content"] and "about 5 hours" in messages[1]["content"]
     mock_openai_client.embeddings.create.assert_not_awaited()
 
 
@@ -495,3 +504,94 @@ async def test_a_message_that_is_not_in_english_is_searched_with_words_the_model
     assert "=== COURSE MATERIAL" not in first[1]["messages"][1]["content"]
     assert "tool_choice" not in second[1]
     assert [call[1]["input"] for call in mock_openai_client.embeddings.create.call_args_list] == [["principal component analysis"]]
+
+
+# ── course sessions ───────────────────────────────────────────────────────────
+
+class _Clock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
+
+
+@pytest.fixture
+def clock(handler):
+    from src.course_session import CourseSessions
+    clock = _Clock()
+    handler.course_sessions = CourseSessions(clock)
+    return clock
+
+
+def _names(call):
+    return [tool["function"]["name"] for tool in call[1].get("tools") or []]
+
+
+async def test_after_a_flag_they_just_keep_chatting(handler, mock_openai_client, material, clock):
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(content="pca squashes the dimensions"), _message(content="pc1 is the direction with the most variance")]
+    await handler.generate_reply("/what is pca -csc340", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    reply = await handler.generate_reply("/and what is pc1 then", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    assert reply.text == "pc1 is the direction with the most variance"
+
+    first, second = mock_openai_client.chat.completions.create.call_args_list
+    # No new lookup: one embedding for the whole exchange, one model call for the follow-up
+    assert mock_openai_client.embeddings.create.await_count == 1
+    # The follow-up has what was looked up before, and may search if that is not enough
+    assert "COURSE MATERIAL:" in second[1]["messages"][0]["content"]
+    assert second[1]["messages"][1]["content"] == first[1]["messages"][1]["content"]
+    assert "PC1 and PC2" in second[1]["messages"][1]["content"]
+    assert "search_course" in _names(second) and "tool_choice" not in second[1]
+    assert second[1]["messages"][-1]["content"].rstrip().endswith('[Kruskal]: "and what is pc1 then"')
+
+
+async def test_a_search_made_while_chatting_is_kept_for_what_comes_next(handler, mock_openai_client, material, clock):
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(content="pca squashes the dimensions"),
+        _message(tool_calls=[_tool_call("search_course", {"query": "naive bayes", "course": "CSC345"})]),
+        _message(content="naive bayes is simple"),
+        _message(content="yeah it is"),
+    ]
+    mock_openai_client.embeddings.create.side_effect = [
+        _embedding(direction(pca=1)), _embedding(direction(bayes=1))]
+    await handler.generate_reply("/what is pca -csc340", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    await handler.generate_reply("/what about naive bayes in data science", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    await handler.generate_reply("/is it really that simple", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    saved = mock_openai_client.chat.completions.create.call_args_list[-1][1]["messages"][1]["content"]
+    assert "Principal component analysis" in saved and "Naive Bayes is simple and pretty good" in saved
+    assert saved.index("Principal component analysis") < saved.index("Naive Bayes is simple")
+
+
+async def test_a_session_belongs_to_one_person_in_one_channel(handler, mock_openai_client, material, clock):
+    await handler.generate_reply("/what is pca -csc340", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    for key in ("chan:2", "other:1", None):
+        await handler.generate_reply("/and what is pc1 then", "", "Sam", "2", allow_files=True, session_key=key)
+        call = mock_openai_client.chat.completions.create.call_args
+        assert "search_course" not in _names(call) and "COURSE MATERIAL" not in call[1]["messages"][0]["content"]
+        assert len(call[1]["messages"]) == 2
+
+
+async def test_after_an_hour_they_are_asked_for_the_flag_again(handler, mock_openai_client, material, clock):
+    await handler.generate_reply("/what is pca -csc340", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    clock.now += 3601
+    await handler.generate_reply("/and what is pc1 then", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    call = mock_openai_client.chat.completions.create.call_args
+    system = call[1]["messages"][0]["content"]
+    assert "search_course" not in _names(call) and "COURSE MATERIAL" not in system
+    assert "-c " in system and len(call[1]["messages"]) == 2
+
+
+async def test_the_session_prompt_says_to_leave_the_material_out_of_other_talk(handler, mock_openai_client, material, clock):
+    await handler.generate_reply("/what is pca -csc340", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    await handler.generate_reply("/whats for dinner", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    system = mock_openai_client.chat.completions.create.call_args[1]["messages"][0]["content"]
+    assert "not about their classes" in system and "never mention" in system
+
+
+async def test_a_reply_inside_a_session_is_not_kept_for_next_time(handler, mock_openai_client, material, clock):
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(content="a"), _message(content="first"), _message(content="second")]
+    await handler.generate_reply("/what is pca -csc340", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    assert (await handler.generate_reply("/and pc1", "", "Kruskal", "1", allow_files=True, session_key="chan:1")).text == "first"
+    assert (await handler.generate_reply("/and pc1", "", "Kruskal", "1", allow_files=True, session_key="chan:1")).text == "second"

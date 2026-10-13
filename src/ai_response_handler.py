@@ -16,7 +16,8 @@ from src.document_builder import BuiltFile, strip_filler
 from src.usage_guard import BudgetExceededError, UsageGuard, get_usage_guard, guard_client
 from src.tools import Tool, ToolResult, Turn, default_tools
 from src.tools.base import user_content
-from src.tools.courses import NO_FLAG_PROMPT, lookup_for, read_scope, unknown_course_reply
+from src.course_session import CourseSessions
+from src.tools.courses import NOT_LOOKED_UP, NO_FLAG_PROMPT, lookup_for, read_scope, saved_material, unknown_course_reply
 from src.pdf_notes import NOTES_MAX_TOKENS
 
 logger = logging.getLogger(__name__)
@@ -284,6 +285,8 @@ class AIResponseHandler:
     def __init__(self, endpoint: str, api_key: str, deployment: str):
         self.response_cache = {}
         self.cache_size = 50
+        # Who is in a course session, and what was looked up for them
+        self.course_sessions = CourseSessions()
 
         # Every call goes through the budget guard
         self.ai_client = guard_client(AsyncOpenAI(base_url=endpoint, api_key=api_key))
@@ -414,7 +417,8 @@ class AIResponseHandler:
                              file_gate: Optional[Callable[[], None]] = None,
                              web_gate: Optional[Callable[[], None]] = None,
                              emoji_prompt: str = "",
-                             course_gate: Optional[Callable[[], None]] = None) -> Reply:
+                             course_gate: Optional[Callable[[], None]] = None,
+                             session_key: Optional[str] = None) -> Reply:
         """
         Generate the bot's reply using Azure OpenAI chat completions.
 
@@ -425,7 +429,9 @@ class AIResponseHandler:
         RateLimitError when this user has made too many. web_gate does the same for
         web searches and opened links, and course_gate for searches of the course
         material. emoji_prompt names the server emoji this reply may use
-        (EmojiSet.prompt()), empty for none.
+        (EmojiSet.prompt()), empty for none. session_key says who is talking and where
+        ("channel:user"), so a course flag keeps course mode on for their next messages.
+        With none, a flag only counts for the message it is on.
         """
         images = images or []
 
@@ -451,39 +457,61 @@ class AIResponseHandler:
             user_parts.append(_right_now())
             user_parts.append(f'[{username}]: "{clean_query}"')
 
-            # Course material only comes into a reply when the message asks for it with a flag
+            # Course material comes into a reply when the message asks for it with a flag, and for
+            # an hour after that for the same person in the same place
             scope = read_scope(clean_query) if allow_files else None
             flagged = bool(scope and scope.flagged)
+            material: List[str] = []
             if scope and flagged:
                 if scope.unknown and not scope.codes:
                     return Reply(unknown_course_reply(scope))
                 clean_query = scope.text
                 user_parts[-1] = f'[{username}]: "{clean_query}"'
+                if session_key:
+                    self.course_sessions.open(session_key, scope.codes)
+            session = self.course_sessions.get(session_key) if scope else None
+            in_course = flagged or session is not None
+            if session is not None:
+                material = session.material
+            codes = scope.codes if scope and flagged else (session.codes if session else None)
 
             # Reading a file or image, or writing a tool call, needs more room than a chat reply
             max_tokens = 4000 if (attached_context or images or allow_files) else 2000
 
             # The tools on offer for this reply, and the state they share
-            offered = [tool for tool in self.tools if tool.available() and (flagged or not tool.course_only)] if allow_files else []
+            offered = [tool for tool in self.tools if tool.available() and (in_course or not tool.course_only)] if allow_files else []
             by_name = {tool.name: tool for tool in offered}
             request = Turn(clean_query, username, conversation_history or "", attached_context, images,
-                           file_gate=file_gate, web_gate=web_gate, course_gate=course_gate,
-                           course_codes=scope.codes if scope and flagged else None)
+                           file_gate=file_gate, web_gate=web_gate, course_gate=course_gate, course_codes=codes)
             request.ask_model = lambda model_messages, limit: self._chat(model_messages, limit, request=request)
             request.embed = lambda text: self._embed(text, request)
+
+            def keep(block: str) -> None:
+                if session is not None:
+                    self.course_sessions.add(session_key, block)
+                elif block not in material:
+                    material.append(block)
+            request.keep_material = keep
             files = request.files
             # The material is searched in English. A message in another language is no use as the
             # search itself, so the model has to write the search instead, and is made to.
             must_search = flagged and bool(re.search(r"[^\W\d_a-zA-Z]", clean_query))
             if scope and flagged and not must_search:
-                # Looked up here, before the model is asked, so the lookup does not hang on the model's choice
-                user_parts.insert(-1, await lookup_for(request, scope))
-            messages = [
+                # Looked up here, before the model is asked, so the first answer does not hang on the model's choice
+                looked_up = await lookup_for(request, scope)
+                if looked_up.startswith(NOT_LOOKED_UP):
+                    user_parts.insert(-1, looked_up)
+                else:
+                    keep(looked_up)
+            messages: List[dict] = [
                 {"role": "system",
                  "content": _SYSTEM_PROMPT + "".join(tool.prompt() for tool in offered)
-                            + (NO_FLAG_PROMPT if scope and not flagged else "") + emoji_prompt},
-                {"role": "user",   "content": user_content("\n\n".join(user_parts), images)}
+                            + (NO_FLAG_PROMPT if scope and not in_course else "") + emoji_prompt},
             ]
+            if material:
+                # In a message of its own ahead of the conversation, so it is the same text from one turn to the next
+                messages.append({"role": "user", "content": saved_material(material)})
+            messages.append({"role": "user", "content": user_content("\n\n".join(user_parts), images)})
             definitions = [tool.definition for tool in offered]
             effort = Config.AI_CHAT_REASONING_EFFORT
             raw = ""
@@ -512,7 +540,7 @@ class AIResponseHandler:
                         raise
                     logger.warning(f"Request with images failed, retrying without them: {e}")
                     user_parts.insert(-1, "(the attached images failed to load, tell them u couldnt open the image)")
-                    messages[1] = {"role": "user", "content": "\n\n".join(user_parts)}
+                    messages[-1] = {"role": "user", "content": "\n\n".join(user_parts)}
                     message = await self._chat(messages, max_tokens, tools, effort, force_tool, request)
 
                 raw = message.content if isinstance(message.content, str) else ""
@@ -551,7 +579,7 @@ class AIResponseHandler:
                     # A long link does not always survive being typed out again by the model
                     reply = Reply(repair_links(self._format_ai_response(raw), request.findings), files)
                 # An answer from the web or the course material goes stale, so it is looked up again next time
-                if not files and not request.lookups and not request.course_searches:
+                if not files and not request.lookups and not request.course_searches and not in_course:
                     self.response_cache[cache_key] = reply.text
                     if len(self.response_cache) > self.cache_size:
                         for k in list(self.response_cache.keys())[:-self.cache_size]:

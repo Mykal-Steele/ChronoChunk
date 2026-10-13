@@ -229,7 +229,9 @@ The bot can answer questions about your university courses from the slides, lect
 
 - Course material only comes into a reply when you ask for it with a flag at the very end of the message. A `-c` anywhere else is just text. `-course`, or `-c` for short, says the message is about a course, and you name the class in your own words: `/what did the lecture say about heuristic search in the ai class -c`. A course code names it directly: `/what is a heuristic -csc340`. Small typos in a course name are fine.
 - With `-c` and no class named, every course is searched: `/whats due this week -c`.
-- Without a flag the bot does not look anything up and does not talk about course material. Asked a class question without one, it tells you to add the flag instead of guessing.
+- A flag turns course mode on for you in that channel for an hour. After it you just keep chatting: `/and what about week 6`. The bot keeps what it looked up, answers from that when it can, and searches again only when it needs something new. A message that is not about class gets a normal answer.
+- Without a flag, and once the hour is over, the bot does not look anything up and does not talk about course material. Asked a class question then, it tells you to add the flag instead of guessing.
+- `COURSE_SESSION_SECONDS` sets how long course mode stays on (3600).
 - The bot looks the material up before it answers, answers from what it found, and ends with the deck and page, the lecture and time, or the assignment, plus the link.
 - When the material has no answer, the bot says it could not find one. When it only found something near the topic, it says so and gives the closest thing. It does not answer course facts from memory.
 - Ask for a file in the same message and the document is written from what it found: `/make a one page pdf on what the class covered about agents -csc340`.

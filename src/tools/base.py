@@ -44,6 +44,8 @@ class Turn:
     course_searches: int = 0
     # The courses the message's flag is about. None for a message with no course flag, empty for every course.
     course_codes: Optional[List[str]] = None
+    # Keeps a lookup for the rest of the person's course session: keep_material(block)
+    keep_material: Optional[Callable[[str], None]] = None
     calls: int = 0
     cost: float = 0.0
     started: float = field(default_factory=time.monotonic)
