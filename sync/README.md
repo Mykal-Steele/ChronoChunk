@@ -6,8 +6,11 @@ What it collects per course:
 
 - Documents from the class site's libraries (PDF, PowerPoint, Word, Excel, CSV, text).
 - The transcript of every lecture recording. The recordings themselves are never downloaded.
+- Every assignment of the class's Assignments tab, past ones included: title, due and close time, points, instructions and the names of the attached files.
 
 People's names are taken out of the transcripts. Teams writes a name it knows from the meeting in capitals, so a word in capitals that the course never uses as a word becomes `[name]`. This misses a name written like any other word and a name shorter than five letters. Names in the documents, such as a presenter's name on a slide, are kept.
+
+An assignment is kept as material of its course, not as anyone's work. Teams sends the signed-in person's own submissions and whether they finished along with each list, and the sync drops those before anything is stored. It never reads the calls that are only about people (submissions, class members, the person's own work list). Assignments that are not active, and ones due before the semester, are left out.
 
 It leaves out the `Student Work` library, files last changed before the semester, photos, archives, and the Classwork and Class Notebook tabs.
 
@@ -48,11 +51,12 @@ The run prints what it found per course, what it left out and why, what failed, 
 1. Opens the saved sign-in without a window and finds every class site whose title starts with the semester prefix.
 2. Lists each site's files and downloads the ones that changed, six at a time.
 3. Fetches the transcripts that changed.
-4. Reads each document page by page. A page gives its text, and the model adds what the text misses (tables, charts, text inside pictures) from a picture of the page.
-5. Cuts transcripts into chunks of about 75 seconds.
-6. Translates anything in Thai into English and keeps the Thai beside it. Search runs on the English.
-7. Embeds every chunk and writes `courses.db.new`.
-8. Checks the new file, keeps the old one as `courses.db.previous`, and swaps the new one in.
+4. Opens the Assignments app inside Teams, goes through each class's Upcoming, Past due and Completed tabs, and opens every assignment of the semester once for its instructions. This takes about two minutes for nine classes.
+5. Reads each document page by page. A page gives its text, and the model adds what the text misses (tables, charts, text inside pictures) from a picture of the page.
+6. Cuts transcripts into chunks of about 75 seconds, and stores each assignment as one chunk dated by the Bangkok day it is due.
+7. Translates anything in Thai into English and keeps the Thai beside it. Search runs on the English.
+8. Embeds every chunk and writes `courses.db.new`.
+9. Checks the new file, keeps the old one as `courses.db.previous`, and swaps the new one in.
 
 ## Reruns are cheap
 
@@ -82,7 +86,7 @@ Set these in the environment. The defaults are in `settings.py`.
 | Name | Default | Meaning |
 |---|---|---|
 | `COURSE_PREFIX` | `1-2569` | Class teams of the semester start with this |
-| `SEMESTER_START` | `2026-07-01` | Files changed before this day are left out |
+| `SEMESTER_START` | `2026-07-01` | Files changed before this day, and assignments due before it, are left out |
 | `SYNC_SPEND_CAP` | `2` | USD one run may spend |
 | `SYNC_CHAT_DEPLOYMENT` | `gpt-6-luna` | Describes pages and translates |
 | `EMBEDDING_DEPLOYMENT` | `text-embedding-3-small` | Embeds chunks |

@@ -328,6 +328,40 @@ def test_a_run_writes_a_course_file_the_bot_can_search(tmp_path, material, cache
     assert not (tmp_path / "out" / "courses.db.new").exists()
 
 
+def _assignment(number: int, due: str, instructions: str) -> dict:
+    return {"id": f"a{number}", "classId": "group-1", "displayName": f"Lab {number}", "dueDateTime": due,
+            "instructions": {"content": f"<div>{instructions}</div>", "contentType": "html"},
+            "grading": {"maxPoints": 5}, "resources": [{"resource": {"displayName": f"Lab{number}.pptx"}}],
+            "webUrl": f"https://example.test/assignment/{number}"}
+
+
+def test_assignments_are_stored_as_material_of_their_course(tmp_path, material, cache):
+    material.assignments = [_assignment(7, "2026-09-27T18:30:00Z", "Train a classifier and report its confusion matrix."),
+                            _assignment(2, "2026-08-13T16:59:00Z", f"{THAI} {THAI}")]
+    models = Models(cache, client=FakeClient(describe=lambda prompt, images: "## Page 2\nRows."))
+    out = tmp_path / "courses.db"
+    report = Report()
+    build([material], models, cache, out, report)
+
+    store = CourseStore.open(str(out))
+    assert store.counts()["CSC340"] == {"slide": 1, "transcript": 1, "assignment": 2}
+    # The date of an assignment is the Bangkok day it is due
+    assert store.newest()["CSC340"]["assignment"] == "2026-09-28"
+    wording = ("CSC340 Artificial Intelligence | assignment | Lab 7\nLab 7\nDue 2026-09-28 01:30 Bangkok time\n5 points\n"
+               "Train a classifier and report its confusion matrix.\nAttached: Lab7.pptx")
+    hit = store.search("classifier confusion matrix", models.embed([wording])[0], kind="assignment")[0]
+    assert (hit.kind, hit.title, hit.date, hit.url) == ("assignment", "Lab 7", "2026-09-28", "https://example.test/assignment/7")
+    assert hit.text == wording.split("\n", 1)[1]
+
+    import sqlite3
+    thai = sqlite3.connect(out).execute(
+        "SELECT text, original FROM chunks JOIN sources ON sources.id = source_id WHERE title = 'Lab 2'").fetchone()
+    # Thai instructions are searched in English and keep their own wording
+    assert thai[0].startswith("English: ") and THAI in thai[1]
+    store.close()
+    assert "2 assignments" in "\n".join(report.lines)
+
+
 def test_a_second_run_with_nothing_new_calls_no_model(tmp_path, material, cache):
     client = FakeClient(describe=lambda prompt, images: "## Page 2\nRows.")
     out = tmp_path / "courses.db"
