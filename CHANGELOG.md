@@ -17,6 +17,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - The bot knows how new its course material is. For each course it has the date of the newest slides and the newest lecture recording, so it can say which lecture is the latest one it holds and whether this week's files are in yet.
 - It knows the material is its copy of the classes' Microsoft Teams, so a question about its "Teams data" gets the sync time as the answer.
 - `/courses` shows the newest slides and lecture recording under each course.
+- Asked which teams or courses it has, the bot names them from its own list without running a search. Asked about channels, it names the teams and says it does not hold their channels or posts.
 
 ### Changed
 
