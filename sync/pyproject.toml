@@ -9,6 +9,7 @@ dependencies = [
     "openai==3.26.1",
     "pillow==12.3.0",
     "playwright==1.63.0",
+    "pymongo==4.18.3",
     "pypdfium2==5.14.0",
     "python-dotenv==1.2.4",
     "sqlite-vec==0.1.9",
