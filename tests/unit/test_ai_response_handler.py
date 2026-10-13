@@ -239,7 +239,7 @@ def test_format_leaves_code_blocks_exactly_as_written(handler):
     code = "```js\nitems\n    .filter(x => x , y)\n    .map(f)\n```"
     result = handler._format_ai_response(f"here , look\n{code}\nok !!!!")
     assert code in result
-    assert result.startswith("Here, look")
+    assert result.startswith("here, look")
 
 
 def _message(content=None, tool_calls=None):
@@ -852,6 +852,46 @@ async def test_the_reply_carries_a_heads_up_once_near_the_daily_limit(handler, m
 
 # ── how a reply is typed ──────────────────────────────────────────────────────
 
+LONG = ("a linked list is a chain of nodes, where each node holds a value and a pointer to the next one. "
+        "the nodes dont sit next to each other in memory like an array. to reach item number n you walk from the "
+        "first node, so lookup is O(n). adding or removing a node is O(1) once you are at that spot.")
+
+
+def test_day_to_day_talk_is_left_in_small_letters(handler):
+    assert handler._format_ai_response("yo not much. what's good with u?") == "yo not much. what's good with u?"
+    assert handler._format_ai_response("nah. thats cooked\nu good tho?") == "nah. thats cooked\nu good tho?"
+
+
+def test_capitals_the_model_added_to_day_to_day_talk_are_taken_off(handler):
+    assert handler._format_ai_response("Yo, not much. What's good with u?") == "yo, not much. what's good with u?"
+    assert handler._format_ai_response("Bro what. It is an ai class\nWrong class my guy") == "bro what. it is an ai class\nwrong class my guy"
+
+
+def test_taking_capitals_off_leaves_real_capitals_alone(handler):
+    assert handler._format_ai_response("Nah. I think TCP is fine. O(n) is slow. I'm sure") == "nah. I think TCP is fine. O(n) is slow. I'm sure"
+    assert handler._format_ai_response("Its on the syllabus.\n-# Source: [CSC345 syllabus](<https://a.example/s.pdf>)") == (
+        "its on the syllabus.\n-# Source: [CSC345 syllabus](<https://a.example/s.pdf>)")
+    assert handler._format_ai_response("Use `Foo.bar()`. FastAPI does that. iPhone too") == "use `Foo.bar()`. FastAPI does that. iPhone too"
+
+
+def test_a_long_explanation_gets_a_capital_at_every_sentence(handler):
+    from src.ai_response_handler import CAPITALS_MIN_CHARS
+    assert len(LONG) >= CAPITALS_MIN_CHARS
+    sent = handler._format_ai_response(LONG)
+    assert sent.startswith("A linked list is a chain of nodes")
+    assert ". The nodes dont sit" in sent and ". To reach item" in sent and ". Adding or removing" in sent
+    assert sent.lower() == LONG.lower()
+
+
+def test_the_source_line_and_code_do_not_make_a_short_answer_long(handler):
+    from src.ai_response_handler import CAPITALS_MIN_CHARS
+    link = "https://uni.example/sites/" + "x" * CAPITALS_MIN_CHARS + "/deck.pdf"
+    reply = f"the syllabus only lists exam 1. ask the teacher for exam 2.\n-# Source: [CSC345 syllabus](<{link}>)"
+    assert handler._format_ai_response(reply) == reply
+    code = "here, look\n```js\n" + "items.map(f)\n" * 40 + "```\nok !!!"
+    assert handler._format_ai_response(code).startswith("here, look") and handler._format_ai_response(code).endswith("ok !!!")
+
+
 def test_every_sentence_starts_with_a_capital_and_nothing_else_changes():
     from src.ai_response_handler import capitalize_sentences
     assert capitalize_sentences("nah. i think john is right?? yeah") == "Nah. I think john is right?? Yeah"
@@ -872,30 +912,24 @@ def test_capitals_never_touch_code_links_or_addresses():
     assert capitalize_sentences(text) == text[:-4] + "Done"
 
 
-def test_a_star_after_a_single_letter_does_not_open_italics():
-    from src.ai_response_handler import capitalize_sentences
-    assert capitalize_sentences("For A*, the score is **f(n)**. see *this* too") == "For A\\*, the score is **f(n)**. See *this* too"
+def test_a_star_after_a_single_letter_does_not_open_italics(handler):
+    assert handler._format_ai_response("for A*, the score is **f(n)**. see *this* too") == "for A\\*, the score is **f(n)**. see *this* too"
 
 
 def test_an_answer_the_model_wrote_twice_is_sent_once(handler):
     answer = "in csc319, singleton is a creational pattern that ensures a class has one instance and a shared access point. "
     doubled = answer + "it uses a private constructor. burugburu\n" + answer + "it uses a private constructor and a static method."
-    assert handler._format_ai_response(doubled) == (answer + "it uses a private constructor and a static method.").replace(
-        "in csc319", "In csc319").replace(". it uses", ". It uses")
+    assert handler._format_ai_response(doubled) == answer + "it uses a private constructor and a static method."
     once = answer + "it uses a private constructor."
-    assert handler._format_ai_response(once).lower() == once.lower()
+    assert handler._format_ai_response(once) == once
 
 
-def test_a_reply_of_one_line_and_one_sentence_keeps_its_small_first_letter(handler):
-    assert handler._format_ai_response("yo wassup") == "yo wassup"
-    assert handler._format_ai_response("nah thats cooked 💀") == "nah thats cooked 💀"
-    assert handler._format_ai_response("idk... maybe") == "idk... maybe"
-    assert handler._format_ai_response("its on p. 4 of the deck") == "its on p. 4 of the deck"
-
-
-def test_a_reply_of_several_sentences_or_lines_gets_its_capitals(handler):
-    assert handler._format_ai_response("nah. thats cooked") == "Nah. Thats cooked"
-    assert handler._format_ai_response("first idea\nsecond idea") == "First idea\nSecond idea"
+def test_a_reply_that_uses_its_opening_words_again_is_not_cut(handler):
+    opening = "the singleton pattern in csc319 is about one instance of a class"
+    reply = (f"{opening}, and the slides spend three pages on it with a diagram of the class and its members.\n"
+             "they also cover the observer pattern, the decorator pattern and the factory method in the weeks after.\n"
+             f"so if the exam asks, {opening} and nothing more than that.")
+    assert handler._format_ai_response(reply).lower() == reply.lower()
 
 
 def test_a_link_the_model_changed_is_put_back():
@@ -921,11 +955,3 @@ def test_a_link_to_another_page_of_the_same_site_is_not_swapped():
     sources = ["link: https://docs.python.org/3/library/re.html"]
     reply = "that one is in [the os docs](<https://docs.python.org/3/library/os.html>)"
     assert repair_links(reply, sources) == reply
-
-
-def test_a_reply_that_uses_its_opening_words_again_is_not_cut(handler):
-    opening = "the singleton pattern in csc319 is about one instance of a class"
-    reply = (f"{opening}, and the slides spend three pages on it with a diagram of the class and its members.\n"
-             "they also cover the observer pattern, the decorator pattern and the factory method in the weeks after.\n"
-             f"so if the exam asks, {opening} and nothing more than that.")
-    assert handler._format_ai_response(reply).lower() == reply.lower()
