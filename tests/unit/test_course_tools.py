@@ -403,3 +403,18 @@ def test_courses_counts_assignments_and_keeps_their_due_dates_out_of_newest(assi
 
 def test_the_prompt_says_the_assignment_list_is_the_same_for_everyone(assigned):
     assert "who has done" in SearchCourse().prompt()
+
+
+async def test_a_message_that_is_not_in_english_is_searched_with_words_the_model_writes(handler, mock_openai_client, material):
+    # The material is searched in English, so a Thai message is no use as the search itself
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("search_course", {"query": "principal component analysis"})]),
+        _message(content="pca คือการลดมิติ"),
+    ]
+    reply = await handler.generate_reply("/pca คืออะไร -csc340", "", "Kruskal", "1", allow_files=True)
+    assert reply.text == "pca คือการลดมิติ"
+    first, second = mock_openai_client.chat.completions.create.call_args_list
+    assert first[1]["tool_choice"] == {"type": "function", "function": {"name": "search_course"}}
+    assert "=== COURSE MATERIAL" not in first[1]["messages"][1]["content"]
+    assert "tool_choice" not in second[1]
+    assert [call[1]["input"] for call in mock_openai_client.embeddings.create.call_args_list] == [["principal component analysis"]]

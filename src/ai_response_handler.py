@@ -462,7 +462,10 @@ class AIResponseHandler:
             request.ask_model = lambda model_messages, limit: self._chat(model_messages, limit, request=request)
             request.embed = lambda text: self._embed(text, request)
             files = request.files
-            if scope and flagged:
+            # The material is searched in English. A message in another language is no use as the
+            # search itself, so the model has to write the search instead, and is made to.
+            must_search = flagged and bool(re.search(r"[^\W\d_a-zA-Z]", clean_query))
+            if scope and flagged and not must_search:
                 # Looked up here, before the model is asked, so the lookup does not hang on the model's choice
                 user_parts.insert(-1, await lookup_for(request, scope))
             messages = [
@@ -487,7 +490,7 @@ class AIResponseHandler:
                     break
                 # After a diagram that did not parse, the model has to draw it again. Left to
                 # choose, it pastes the source into chat and tells them to render it themselves.
-                force_tool = redo
+                force_tool = redo or ("search_course" if must_search and round_number == 0 else None)
                 redo = None
                 try:
                     message = await self._chat(messages, max_tokens, tools, effort, force_tool, request)

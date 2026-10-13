@@ -14,14 +14,7 @@ Rules:
 |---|---|---|
 | Picture probe, then 4 picture descriptions | Assignment instructions that are only a picture | about $0.01 |
 | Answer check with a judge, about 60 questions, per run | The gate for every change to retrieval or the prompt | about $0.06 a run, about 6 runs |
-| Full sync, twice | The course file with assignments, for the check and for the server | about $0.01 |
-
-## Running
-
-| Date | Run | Why | Calls | Estimate |
-|---|---|---|---|---|
-| 2026-10-13 | Full sync, 9 courses, into a scratch file | A course file with the nicknames in it, and a rerun of the assignment collection after its type fix | a few embedding calls, the rest is cached | under $0.01 |
-| 2026-10-13 | First check of the flag on the real model: 51 V12 questions with `-course`, 12 assignment questions, 9 unflagged messages, one at a time on `gpt-6-luna-checks` | Nothing built today for the flag has met the real model yet | about 90 chat calls, 75 embedding calls | about $0.05 |
+| Full sync for the server, after the remaining sync work | The course file the live bot will read | about $0.01 |
 
 ## Done
 
@@ -36,5 +29,7 @@ Rules:
 | 2026-10-13 | V12, 51 questions, one at a time, on the live deployment | Gate for the assignment tool | about 100 | none made | about $0.03 | 37 of 41 found the right passage, 10 of 10 with no answer said so |
 | 2026-10-13 | E1: the 51 V12 questions searched with the raw message, embeddings only, one at a time | Decides whether the lookup can run before the first model call | 51 embedding calls | under $0.001 | $0.00002 | English 31 of 33 found (the model's own wording got 30). But only 2 of 10 questions with no answer came back empty, because the course name and words like "lecture" match everything a little |
 | 2026-10-13 | E1b: the same with the course name and filler words taken out first | Fix for the above | 51 embedding calls | under $0.001 | $0.00002 | English 31 of 33, no-answer 10 of 10. Decision: the lookup runs before the first model call, with the cleaned message as the search |
+| 2026-10-13 | Full sync, 9 courses, into a scratch file | A course file with the nicknames in it, and a rerun of the assignment collection after its type fix | 0 model calls, all cached | under $0.01 | $0 | 16 assignments, no problems, 125 seconds to collect |
+| 2026-10-13 | First check of the flag on the real model, 78 messages, one at a time on `gpt-6-luna-checks` | Nothing built for the flag had met the real model | 78 chat replies, 71 lookups | about $0.05 | $0.033 | Every flagged message got a lookup. Right passage in 36 of 41, no-answer 10 of 10 said so, 6 of 6 chat replies had no course talk, 3 of 3 unflagged class questions pointed to the flag. 55 of 63 flagged replies took one model call. Median 3.2 seconds (4.8 before). No rate limit hits. Found: the nickname "java" sent a question to the wrong course, and two Thai questions found nothing and were not searched again in English |
 
-Total so far on 2026-10-13: about $0.06.
+Total so far on 2026-10-13: about $0.10.

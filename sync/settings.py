@@ -32,7 +32,8 @@ SEMESTER_START = os.getenv("SEMESTER_START", "2026-07-01")
 # short one only counts as a whole word. Change it when the courses change.
 NICKNAMES = {
     "CSC102": ("intro to programming", "intro programming", "programming class"),
-    "CSC219": ("modern java", "java", "java class"),
+    # Not "java" alone: other courses use Java too, and a question about java.io went to this one
+    "CSC219": ("modern java", "java class"),
     "CSC302": ("seminar", "seminar class"),
     "CSC319": ("oo", "ood", "oop", "oo class", "oo design", "object oriented"),
     "CSC340": ("ai", "ai class"),
