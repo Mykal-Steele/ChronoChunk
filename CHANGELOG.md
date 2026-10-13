@@ -10,6 +10,12 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.18.1 (2026-10-13)
+
+### Fixed
+
+- A reply no longer goes out with the same answer in it twice. The model writes its answer, then writes it again on a new line in about 4 of 10 replies to some messages, and only when tools are offered with the request. The cut that existed caught a word for word copy of 200 characters or more. It now also catches a reworded copy, a short one, and one with stray text between the two. The later copy is the one sent.
+
 ## 3.18.0 (2026-10-13)
 
 ### Added
