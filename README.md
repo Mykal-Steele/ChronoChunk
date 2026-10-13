@@ -10,7 +10,7 @@ A Discord bot with a personality. It chats, remembers things about the people it
 - Reads images, PDFs, text and code files, and sums up a channel with `/tldr`
 - Writes PDFs, Word files and diagrams
 - Opens web links and searches the web
-- Answers questions about your university courses from the slides and lecture recordings
+- Answers questions about your university courses from the slides, lecture recordings and assignments
 - Plays music in a voice channel
 - A number guessing game
 - A spending cap on the AI, and limits per user
@@ -152,7 +152,7 @@ Slash commands:
 - `/forget` - Delete everything the bot has stored about you. `/forget <text>` deletes one fact.
 - `/game <max>`, `/guess <number>`, `/end` - The number guessing game
 - `/usage` - What you have left today: messages, PDFs, files, web lookups, course searches and your AI limit. Only you see the answer.
-- `/courses` - The course material the bot can search: each course, how much it holds, its newest slides and lecture recording, and the time of the last sync
+- `/courses` - The course material the bot can search: each course, how much it holds (slides, lecture recordings, assignments), its newest slides and lecture recording, and the time of the last sync
 - `/model` - Which AI model the bot is running on
 - `/setup` - Where the bot runs and the settings it runs with, for developers
 - `/stats` - Everything the bot has used so far: AI calls, tokens and cost, by day, by job and by model
@@ -224,11 +224,14 @@ The bot can open links and search the web.
 
 ## Course material
 
-The bot can answer questions about your university courses from the slides and lecture recordings of the semester.
+The bot can answer questions about your university courses from the slides, lecture recordings and assignments of the semester.
 
 - Ask in your own words, in any channel: `/what did the AI lecture say about heuristic search`. The bot searches the material, answers from what it finds, and ends with the deck and page or the lecture and time, plus the link.
 - When the material has no answer, the bot says it could not find one. It does not answer course facts from memory.
 - Ask for a file in the same message and the document is written from what it found: `/make a one page pdf on what CSC340 covered about agents`.
+- Ask when something is due, what is due this week, or what an assignment asks for: `/when is lab 7 due`. The bot reads the course's assignment list, which has the due time in Bangkok time, the days left, the points, the instructions and the names of the attached files. Past assignments stay in the list. This takes no search, so it is quicker and cheaper than a question about a topic.
+- An assignment is stored as material of its course. The bot does not know who has done, handed in or been graded on anything, and it never says so.
+- The list holds what was posted in the Assignments tab of each class team. Work a teacher only gave in class is not in it.
 - `/courses` lists the courses it holds, the date of the newest slides and lecture recording of each, and when they were last synced. Ask the bot how up to date it is, or which lecture is the latest it has, and it answers from the same dates.
 - The material comes from the course sync in [`sync/`](sync/README.md). It runs on a PC, writes one file, `courses.db`, and uploads it to `data/state` on the server. The bot opens the new file on the next question, with no restart. With no file there, the bot has no course search.
 - The search runs in English. The bot writes the search words in English for a question in another language, and material in Thai is translated when it is synced.
@@ -324,7 +327,7 @@ ChronoChunk/
 │   │   ├── base.py            # The interface every tool implements
 │   │   ├── documents.py       # create_document and create_diagram
 │   │   ├── web.py             # open_url and web_search
-│   │   └── courses.py         # search_course and /courses
+│   │   └── courses.py         # search_course, course_assignments and /courses
 │   ├── document_builder.py    # Turns Markdown into PDF, DOCX and diagram images
 │   ├── web_tools.py           # Fetches pages and calls the search service
 │   ├── course_store.py        # The course material file and its search

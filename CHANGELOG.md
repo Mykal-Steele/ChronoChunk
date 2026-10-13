@@ -10,6 +10,19 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.19.0 (2026-10-13)
+
+### Added
+
+- The bot knows each course's assignments: the title, the due time in Bangkok time, how many days are left, the points, the instructions and the names of the attached files. Ask `/when is lab 7 due` or `/what is due this week`. Past assignments stay in the list, so the bot can also say what kind of work a course has given.
+- A due date question is answered from a dated list with no search and no embedding call, through the new `course_assignments` tool. Assignments are also part of the normal course search.
+- The sync reads every class's Assignments tab in Teams and opens each assignment of the semester for its instructions.
+- `/courses` counts the assignments of each course.
+
+### Privacy
+
+- An assignment is stored as material of its course. Nothing about who did it is kept: no submissions, no grades, no completion state, no class members. The bot is told it does not know who has done what.
+
 ## 3.18.1 (2026-10-13)
 
 ### Fixed
