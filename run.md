@@ -16,12 +16,6 @@ Rules:
 | Answer check with a judge, about 60 questions, per run | The gate for every change to retrieval or the prompt | about $0.06 a run, about 6 runs |
 | Full sync for the server, after the remaining sync work | The course file the live bot will read | about $0.01 |
 
-## Running
-
-| Date | Run | Why | Calls | Estimate |
-|---|---|---|---|---|
-| 2026-10-14 | Sixth check with the judge, same 104 messages, on `gpt-6-luna-checks` | The review of pull request 32 found 10 things. Two of the fixes change how a reply is built (the kept-reply rule and the search wording), so the gate is run again before the merge. Course file with the picture instructions | about 110 chat calls, 73 judge calls, 75 embedding calls | about $0.10 |
-
 ## Done
 
 | Date | Run | Why | Calls | Estimate | Actual | Result |
@@ -47,5 +41,7 @@ Rules:
 | 2026-10-14 | Full sync into the real local `courses.db` | The local course file gets assignments, nicknames and due times | 0 model calls | under $0.01 | $0 | 16 assignments, 162 decks, 75 lectures, version 2. The file before it is kept as `courses.db.previous`. Not uploaded yet: the server still runs 3.18.1, which cannot read version 2 |
 | 2026-10-14 | Probe: fetch the pictures inside assignment instructions through SharePoint | 4 of 16 assignments carry a picture, 3 of them nothing else | no model calls | $0 | $0 | All 4 answer with their file details and a download link. They are PNG files under `Assignments/<title>/` in the class site |
 | 2026-10-14 | Full sync into a scratch file, with the pictures inside assignment instructions | 3 assignments had nothing but a picture as their instructions | 6 model calls | about $0.01 | $0.001 | All 4 pictures downloaded and read. The three picture-only assignments now carry their task: a confusion matrix to compute from, the decision tree data table, and a graph with edge costs to search |
+| 2026-10-14 | Sixth check with the judge, same 104 messages | The gate again, after the fixes from the review of pull request 32, on the course file with picture instructions | 116 replies, 73 judged | about $0.10 | $0.092 | Gate passed, 103 of 104. Lookup 73 of 73, right place 56 of 56, answers judged right 55 of 56, made up 0, says so when it is not there 17 of 17, plain chat clean 20 of 20, session small talk clean 6 of 6, flag pointed to 5 of 5. Median reply 3.7 seconds. The one miss: a reply added a general Java alternative that the lecture's instruction disagrees with |
+| 2026-10-14 | Full sync into the real local `courses.db` | So the local file has the picture instructions too | 0 model calls, all cached | under $0.01 | $0 | 16 assignments, 4 with pictures read. Not uploaded yet |
 
-Total so far: about $0.54.
+Total so far: about $0.63.
