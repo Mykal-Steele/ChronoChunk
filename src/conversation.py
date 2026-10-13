@@ -6,6 +6,7 @@ answer pings the person it is for. And for a short while after someone called th
 bot, it may answer a message nobody addressed to it, the way a person who is part
 of a conversation would. Everything here is held in memory and is gone on a restart.
 """
+import random
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -17,9 +18,10 @@ from config.config import Config
 CROWD_SECONDS = 60
 # Calls no further apart than this are one conversation with the bot. A call after a longer quiet starts a new one.
 SESSION_GAP_SECONDS = 300
-# After one call the bot weighs at most this many uncalled messages, and answers at most this many of them
+# After one call the bot weighs at most this many uncalled messages, and answers at most one of them.
+# It gets another go when someone calls it again.
 MAX_WEIGHED_PER_CALL = 3
-MAX_UNCALLED_REPLIES_PER_CALL = 2
+MAX_UNCALLED_REPLIES_PER_CALL = 1
 
 # What the model answers when it decides to stay out of it
 STAY_OUT = "SKIP"
@@ -32,6 +34,22 @@ UNCALLED_NOTE = (
     "between other people, or u have nothing worth adding, answer with exactly SKIP and nothing else. "
     "when in doubt, SKIP.)"
 )
+
+
+def is_call(content: str) -> bool:
+    """
+    Whether a message calls the bot by how it starts: with a slash, or with a dollar
+    sign for servers where a slash sets off another bot's commands. A price such as
+    "$5" is not a call.
+    """
+    if content.startswith("/"):
+        return True
+    return content.startswith("$") and len(content) > 1 and not content[1].isdigit() and content[1] != "$"
+
+
+def as_slash(content: str) -> str:
+    """A dollar-sign call written as the slash call it stands for. Anything else comes back as it is."""
+    return "/" + content[1:].lstrip() if content.startswith("$") and is_call(content) else content
 
 
 def stays_out(text: str) -> bool:
@@ -51,13 +69,16 @@ class _Channel:
     answered: int = 0
     # True while the bot is deciding about one uncalled message, so a burst of messages costs one model call
     deciding: bool = False
+    # Whether the bot takes its chance to join in after the last call. None until the coin is flipped.
+    joins: Optional[bool] = None
 
 
 class Conversation:
     """Tracks, per channel, who called the bot and how often it has joined in since."""
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic):
+    def __init__(self, clock: Callable[[], float] = time.monotonic, chance: Callable[[], float] = random.random):
         self._clock = clock
+        self._chance = chance
         self._channels: Dict[str, _Channel] = {}
 
     def _channel(self, channel_id) -> _Channel:
@@ -65,7 +86,7 @@ class Conversation:
 
     def called(self, channel_id, user_id, at: Optional[datetime] = None) -> None:
         """
-        Someone called the bot here: a / message, a ping, a reply to it or the /chat
+        Someone called the bot here: a / or $ message, a ping, a reply to it or the /chat
         command. at is when their message was sent.
         """
         channel = self._channel(channel_id)
@@ -76,6 +97,7 @@ class Conversation:
         channel.callers[str(user_id)] = now
         channel.last_call = now
         channel.weighed = channel.answered = 0
+        channel.joins = None
 
     def session_start(self, channel_id) -> Optional[datetime]:
         """When the conversation with the bot in this channel began, or None when none is going on."""
@@ -92,14 +114,21 @@ class Conversation:
     def may_join_in(self, channel_id) -> bool:
         """
         Whether the bot may weigh a message here that nobody addressed to it: someone
-        called it a moment ago, and it has not used up what one call allows.
+        called it a moment ago, it has not used up what one call allows, and the coin
+        flipped for that call landed on joining in.
         """
         window = Config.JOIN_IN_SECONDS
         channel = self._channel(channel_id)
-        return (window > 0 and not channel.deciding
-                and self._clock() - channel.last_call <= window
-                and channel.weighed < MAX_WEIGHED_PER_CALL
-                and channel.answered < MAX_UNCALLED_REPLIES_PER_CALL)
+        open_now = (window > 0 and not channel.deciding
+                    and self._clock() - channel.last_call <= window
+                    and channel.weighed < MAX_WEIGHED_PER_CALL
+                    and channel.answered < MAX_UNCALLED_REPLIES_PER_CALL)
+        if not open_now:
+            return False
+        # One flip per call, made before anything is read or any model is asked
+        if channel.joins is None:
+            channel.joins = self._chance() < Config.JOIN_IN_CHANCE
+        return channel.joins
 
     def start_deciding(self, channel_id) -> None:
         channel = self._channel(channel_id)

@@ -84,6 +84,8 @@ class Config:
     # For this many seconds after someone calls the bot in a channel, it may answer a message there
     # that nobody addressed to it, when the model thinks a person in the chat would. 0 turns that off.
     JOIN_IN_SECONDS = int(os.getenv("JOIN_IN_SECONDS", 30))
+    # How likely the bot is to take that chance at all, from 0 to 1. Decided once per call, before the model is asked.
+    JOIN_IN_CHANCE = float(os.getenv("JOIN_IN_CHANCE", 0.5))
 
     # Tavily key for web search. Without it the bot can still open links, it just cannot search.
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()

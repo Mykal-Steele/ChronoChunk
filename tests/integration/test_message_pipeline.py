@@ -365,7 +365,37 @@ async def test_joining_in_stops_after_what_one_call_allows(pipeline):
     for number in range(5):
         await processor.process_message(_plain(_make_message(bot.user, content=f"message {number}")))
 
-    assert ai_handler.generate_reply.await_count == 2
+    # One uncalled answer per call
+    assert ai_handler.generate_reply.await_count == 1
+
+
+async def test_a_lost_coin_flip_keeps_the_bot_out_without_asking_the_model(pipeline, monkeypatch):
+    from config.config import Config
+    processor, _, _, _, ai_handler, bot = pipeline
+    monkeypatch.setattr(Config, "JOIN_IN_CHANCE", 0.0)
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("yo"))
+    await processor.process_message(_plain(_make_message(bot.user, content="/yo")))
+
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("lol"))
+    await processor.process_message(_plain(_make_message(bot.user, content="bro that exam was brutal")))
+    ai_handler.generate_reply.assert_not_called()
+
+
+async def test_a_dollar_sign_calls_the_bot_like_a_slash(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("yo"))
+    msg = _plain(_make_message(bot.user, content="$yo whats up"))
+    await processor.process_message(msg)
+    assert msg.reply.await_args.args[0] == "yo"
+    # The model sees it the way it sees a slash message
+    assert ai_handler.generate_reply.await_args.args[0] == "/yo whats up"
+
+
+async def test_a_price_does_not_call_the_bot(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("yo"))
+    await processor.process_message(_plain(_make_message(bot.user, content="$5 for lunch lol")))
+    ai_handler.generate_reply.assert_not_called()
 
 
 async def test_joining_in_can_be_switched_off_for_a_channel(pipeline):

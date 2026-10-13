@@ -111,6 +111,7 @@ Everything else uses the default from `config/config.py` unless `.env` sets it:
 | `PDF_NOTES_KEEP_DAYS` | 7 | Days a PDF's page descriptions are kept |
 | `LOG_RETENTION_DAYS` | 30 | Days a log file is kept |
 | `JOIN_IN_SECONDS` | 30 | Seconds after a call in which the bot may answer a message nobody addressed to it. 0 turns it off. |
+| `JOIN_IN_CHANCE` | 0.5 | How likely the bot is to take that chance, from 0 to 1. It is decided once per call, before the model is asked. |
 | `COURSES_FILE` | `state/courses.db` | The course material the bot searches. See [Course material](#course-material). |
 | `TEST_BOT_ID`, `TEST_CHANNEL_ID` | empty | For testing the live bot: the one other bot it answers, and the one channel it answers it in. Both must be set. |
 
@@ -164,7 +165,7 @@ Slash commands:
 
 For 30 seconds after someone calls the bot in a channel, it may also answer a message there that nobody addressed to it, when it fits the conversation. When several people talk to it at once, its answer pings the person it is for.
 
-You can also type to the bot without picking a slash command. A message that starts with `/`, a ping, or a reply to one of its messages is chat. `/tldr`, `/usage`, `/model`, `/setup`, `/stats`, `/courses` and `/help` work typed as well.
+You can also type to the bot without picking a slash command. A message that starts with `/` or `$`, a ping, or a reply to one of its messages is chat. `$` is there for servers where a slash sets off another bot's commands, and a price such as `$5` does not count. After a call the bot may also answer one message nobody sent to it, within 30 seconds, on a coin flip, and without any course lookup. `/tldr`, `/usage`, `/model`, `/setup`, `/stats`, `/courses` and `/help` work typed as well.
 
 ## Reading messages and files
 

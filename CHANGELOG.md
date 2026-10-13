@@ -17,10 +17,12 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - Course material is asked for with a flag at the end of the message. `-course`, or `-c` for short, means the message is about a course, named in your own words ("the ai class", typos forgiven), and a code such as `-csc340` names it directly. Without a flag the bot looks nothing up and knows nothing about the courses in that reply. Before, the model decided on its own, so it sometimes skipped the search for a course question and sometimes said "i dont see it in the course material" in a chat that had nothing to do with class.
 - A flagged message is looked up before the model is asked, so the lookup always happens and most course answers take one model call instead of two. The search uses the message without the course's name and without words like "lecture" or "teacher".
 - Asking for one kind of material (`kind`) puts that kind first and still returns the rest. As a hard filter it hid the answer when someone said "lecture" and the fact was on a slide.
+- After a call the bot joins in on at most one message nobody sent to it (it was two), and only half the time. The coin is flipped once per call, before the model is asked, so a lost flip costs nothing. `JOIN_IN_CHANCE` sets the odds.
 - Results that are only near the topic are marked as loosely related, and the bot is told to say it could not find exactly that and give the closest thing.
 
 ### Added
 
+- A message that starts with `$` calls the bot the same way `/` does, for servers where a slash runs another bot's commands. `$tldr` and the other typed commands work too. A price such as `$5` is not a call.
 - The bot knows each course's assignments: the title, the due time in Bangkok time, the days left, the points, the instructions and the names of the attached files. A question about dates or work to hand in gets the dated list, and what one assignment asks for is found by the same search as slides and lectures. Past assignments are kept.
 - The sync reads every class's Assignments tab in Teams and opens each assignment of the semester for its instructions.
 - `/courses` counts the assignments of each course and says how to ask with the flags.

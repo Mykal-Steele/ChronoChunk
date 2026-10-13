@@ -5,7 +5,7 @@ import pytest
 
 from config.config import Config
 from src.conversation import (
-    MAX_UNCALLED_REPLIES_PER_CALL, MAX_WEIGHED_PER_CALL, SESSION_GAP_SECONDS, Conversation, stays_out,
+    MAX_UNCALLED_REPLIES_PER_CALL, MAX_WEIGHED_PER_CALL, SESSION_GAP_SECONDS, Conversation, as_slash, is_call, stays_out,
 )
 
 
@@ -24,7 +24,8 @@ def clock():
 
 @pytest.fixture
 def conversation(clock):
-    return Conversation(clock)
+    """A conversation whose coin always lands on joining in."""
+    return Conversation(clock, chance=lambda: 0.0)
 
 
 def test_one_person_is_not_a_crowd(conversation):
@@ -130,3 +131,61 @@ def test_a_call_after_a_long_quiet_begins_a_new_conversation(conversation, clock
     later = datetime(2026, 10, 12, 12, 30, tzinfo=timezone.utc)
     conversation.called("c", "alex", later)
     assert conversation.session_start("c") == later
+
+
+def test_one_call_allows_one_uncalled_answer():
+    assert MAX_UNCALLED_REPLIES_PER_CALL == 1
+
+
+def test_joining_in_is_a_coin_flipped_once_per_call(clock, monkeypatch):
+    monkeypatch.setattr(Config, "JOIN_IN_CHANCE", 0.5)
+    rolls = iter([0.9, 0.1])
+    made = []
+
+    def roll():
+        made.append(next(rolls))
+        return made[-1]
+    conversation = Conversation(clock, chance=roll)
+    conversation.called("c", "alex")
+    # Lost: the bot stays out for this whole window, however many messages come
+    assert not conversation.may_join_in("c")
+    assert not conversation.may_join_in("c")
+    assert made == [0.9]
+    conversation.called("c", "alex")
+    assert conversation.may_join_in("c") and conversation.may_join_in("c")
+    assert made == [0.9, 0.1]
+
+
+def test_the_coin_is_not_flipped_when_the_bot_could_not_join_in_anyway(clock):
+    made = []
+    conversation = Conversation(clock, chance=lambda: made.append(1) or 0.0)
+    assert not conversation.may_join_in("c")
+    conversation.called("c", "alex")
+    clock.now += Config.JOIN_IN_SECONDS + 1
+    assert not conversation.may_join_in("c")
+    assert made == []
+
+
+def test_the_chance_is_a_setting(clock, monkeypatch):
+    monkeypatch.setattr(Config, "JOIN_IN_CHANCE", 0.5)
+    for roll, joins in ((0.49, True), (0.5, False)):
+        conversation = Conversation(clock, chance=lambda roll=roll: roll)
+        conversation.called("c", "alex")
+        assert conversation.may_join_in("c") is joins
+
+
+@pytest.mark.parametrize("content", ["/yo", "/", "$yo", "$ whats up", "$tldr 50"])
+def test_a_slash_or_a_dollar_sign_calls_the_bot(content):
+    assert is_call(content)
+
+
+@pytest.mark.parametrize("content", ["yo", "", "$", "$5 for lunch lol", "$20", "$$ rich", "cost me $5", " $yo"])
+def test_money_and_plain_talk_do_not_call_the_bot(content):
+    assert not is_call(content)
+
+
+def test_a_dollar_call_reads_like_a_slash_call():
+    assert as_slash("$yo whats up") == "/yo whats up"
+    assert as_slash("/yo") == "/yo"
+    assert as_slash("$5 for lunch") == "$5 for lunch"
+    assert as_slash("plain") == "plain"
