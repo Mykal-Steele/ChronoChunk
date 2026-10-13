@@ -104,6 +104,8 @@ async def run(cases: List[Dict], courses_file: str, label: str, deployment: str)
     from src.tools.courses import SearchCourse
 
     seen: Dict[str, List] = {"lookups": [], "searches": [], "scores": []}
+    # Every block of material the model was shown for the case being run, which is what the judge reads
+    shown: List[str] = []
     rate_limited = [False]
 
     lookup_for = handler_module.lookup_for
@@ -111,6 +113,7 @@ async def run(cases: List[Dict], courses_file: str, label: str, deployment: str)
     async def counted_lookup(turn, scope):
         text = await lookup_for(turn, scope)
         seen["lookups"].append(scope.codes)
+        shown.append(text)
         return text
     handler_module.lookup_for = counted_lookup
 
@@ -119,6 +122,7 @@ async def run(cases: List[Dict], courses_file: str, label: str, deployment: str)
     async def counted_search(self, args, turn):
         result = await search(self, args, turn)
         seen["searches"].append(args)
+        shown.append(result.text)
         return result
     SearchCourse.run = counted_search  # type: ignore[method-assign]
 
@@ -192,6 +196,7 @@ async def run(cases: List[Dict], courses_file: str, label: str, deployment: str)
         key = f"check:{case['id']}"
         history = ""
         reply = ""
+        shown.clear()
         asked_at = time.monotonic()
         for message in case["messages"]:
             reply = await ask(message, history, key)
@@ -199,8 +204,7 @@ async def run(cases: List[Dict], courses_file: str, label: str, deployment: str)
             history += f"{ASKER}: {message.lstrip('/!')}\nYOU (ChronoChunk): {reply}\n"
             await asyncio.sleep(1)
         seconds = time.monotonic() - asked_at
-        session = handler.course_sessions.get(key)
-        material = "\n\n".join(session.material) if session else ""
+        material = "\n\n".join(shown)
         outcome: Dict = {"reply": reply, "lookups": len(seen["lookups"]), "searches": len(seen["searches"]),
                          "sources": [material]}
         verdict = {"verdict": None, "why": "", "passages": {}}

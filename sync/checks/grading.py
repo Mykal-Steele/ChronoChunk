@@ -39,10 +39,15 @@ _SAYS_MISSING = re.compile(
 def parse_verdict(answer: str) -> Dict:
     """The judge's answer as a verdict, a reason and what it thought of each passage. "unreadable" when it is not one."""
     found = re.search(r"\{.*\}", answer or "", re.DOTALL)
+    text = found.group(0) if found else "{}"
     try:
-        data = json.loads(found.group(0)) if found else {}
+        data = json.loads(text)
     except ValueError:
-        data = {}
+        # A formula in the reason comes with backslashes JSON does not allow
+        try:
+            data = json.loads(re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", text))
+        except ValueError:
+            data = {}
     if data.get("verdict") not in VERDICTS:
         return {"verdict": "unreadable", "why": (answer or "")[:200], "passages": {}}
     marks = data.get("passages")
@@ -76,9 +81,9 @@ def grade(case: Dict, outcome: Dict) -> Dict:
     wanted = case.get("expect_source") or []
     # An expected phrase is one way to know the right passage was there. The judge reading a passage as
     # the answer is the other, for when the material says it in other words.
-    right_place = (not wanted or any(name.lower() in source.lower() for name in wanted for source in outcome["sources"])
-                   or "answers" in (outcome.get("passages") or {}).values())
     verdict = outcome.get("verdict")
+    right_place = (not wanted or any(name.lower() in source.lower() for name in wanted for source in outcome["sources"])
+                   or "answers" in (outcome.get("passages") or {}).values() or verdict in ("correct", "incomplete"))
     if group in UNANSWERABLE:
         # The judge sometimes calls "i cant see who submitted" correct, which it is
         good = verdict == "not_found" or (verdict in ("correct", "incomplete") and bool(_SAYS_MISSING.search(reply)))

@@ -89,3 +89,23 @@ def test_the_oldest_material_goes_when_there_is_too_much(sessions):
 def test_nothing_is_added_without_a_session(sessions):
     sessions.add("k", "block")
     assert sessions.get("k") is None
+
+
+def test_two_or_three_lookups_fit_in_a_session(sessions):
+    # Found by the check: a lookup is 10,000 to 12,000 characters, and the second one pushed the first out
+    sessions.open("k", ["CSC340"])
+    for number in range(3):
+        sessions.add("k", f"[{number + 1}] lookup {number}\n" + "x" * 12000)
+    assert len(sessions.get("k").material) == 3
+
+
+def test_a_passage_that_was_dropped_can_be_shown_again(sessions):
+    sessions.open("k", ["CSC340"])
+    session = sessions.get("k")
+    session.seen.update({("CSC340", "slide", "deck.pdf", "page 1"): "1", ("CSC340", "slide", "deck.pdf", "page 2"): "2",
+                         ("CSC340", "slide", "other.pdf", "page 9"): "3"})
+    sessions.add("k", "=== COURSE MATERIAL ===\n[1] CSC340, slides\ntext\n\n[2] CSC340, slides\ntext\n=== END ===" + "x" * MAX_MATERIAL_CHARS)
+    sessions.add("k", "=== COURSE MATERIAL ===\n[3] CSC340, slides\ntext\n=== END ===")
+    # The first lookup went. Its passages are no longer "already shown", or the bot would be pointed at text it does not have.
+    assert len(session.material) == 1 and session.material[0].startswith("=== COURSE MATERIAL ===\n[3] CSC340, slides")
+    assert session.seen == {("CSC340", "slide", "other.pdf", "page 9"): "3"}

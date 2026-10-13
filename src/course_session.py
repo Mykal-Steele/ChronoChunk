@@ -4,14 +4,17 @@ in that channel. For an hour after, they just chat: what the bot looked up stays
 them, and the model decides whether it needs to look anything else up. Held in
 memory, gone on a restart.
 """
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
 from config.config import Config
 
-# The most characters of looked-up material a session carries. A lookup is about 10,000 at most.
-MAX_MATERIAL_CHARS = 16000
+# The most characters of looked-up material a session carries. A lookup is 10,000 to 12,000, so this
+# holds three. It was 16,000 at first, and the check showed the second lookup pushing the first out
+# while the bot was still being told the first one's passages were "already shown".
+MAX_MATERIAL_CHARS = 40000
 
 
 @dataclass
@@ -60,4 +63,7 @@ class CourseSessions:
             return
         session.material.append(block)
         while len(session.material) > 1 and sum(len(piece) for piece in session.material) > MAX_MATERIAL_CHARS:
-            session.material.pop(0)
+            dropped = session.material.pop(0)
+            # Its passages are gone from what the model can read, so a later search has to show them again
+            numbers = set(re.findall(r"^\[(\d+)\] ", dropped, re.MULTILINE))
+            session.seen = {key: number for key, number in session.seen.items() if number not in numbers}

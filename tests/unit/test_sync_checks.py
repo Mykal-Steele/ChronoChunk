@@ -51,7 +51,7 @@ def test_a_flagged_question_needs_its_lookup_its_source_and_a_good_verdict():
     good = _outcome("draft intro", lookups=1, sources=["CBLL Week 9, page 47 (9 Oct 2026)"], verdict="correct")
     assert grade(case, good) == {"ok": True, "looked_up": True, "right_place": True, "verdict": "correct", "why": ""}
     assert not grade(case, dict(good, lookups=0))["ok"]
-    wrong_place = grade(case, dict(good, sources=["Week 1 slides, page 2"]))
+    wrong_place = grade(case, dict(good, sources=["Week 1 slides, page 2"], verdict="wrong_place"))
     assert not wrong_place["right_place"] and not wrong_place["ok"]
     assert grade(case, dict(good, verdict="incomplete"))["ok"]
     for verdict in ("wrong_right_place", "wrong_place", "made_up", "not_found", "unreadable"):
@@ -93,7 +93,7 @@ def test_the_right_place_is_also_what_the_judge_says_answers_it():
     outcome = dict(_outcome("close it", lookups=1, sources=["...remember to shut the scanner object..."], verdict="correct"),
                    passages={"1": "related", "2": "answers"})
     assert grade(case, outcome)["right_place"] and grade(case, outcome)["ok"]
-    assert not grade(case, dict(outcome, passages={"1": "related", "2": "unrelated"}))["right_place"]
+    assert not grade(case, dict(outcome, passages={"1": "related", "2": "unrelated"}, verdict="wrong_place"))["right_place"]
 
 
 def test_saying_it_cannot_be_known_passes_whatever_the_judge_calls_it():
@@ -106,3 +106,18 @@ def test_saying_it_cannot_be_known_passes_whatever_the_judge_calls_it():
         # Called correct while stating an answer is not a pass
         assert not grade(case, _outcome("the average was 71", lookups=1, verdict="correct"))["ok"]
         assert not grade(case, _outcome("i cant see it but it was probably 71", lookups=1, verdict="made_up"))["ok"]
+
+
+def test_a_verdict_is_still_read_when_the_judge_writes_broken_json():
+    # A formula in "why" came with backslashes that are not valid in JSON
+    answer = '{"verdict":"correct","why":"Passage 1 gives \\(f(n)=g(n)+h(n)\\) as the function","passages":{"1":"answers","2":"related"}}'
+    broken = answer.replace("\\\\", "\\")
+    read = parse_verdict(broken)
+    assert read["verdict"] == "correct" and read["passages"] == {"1": "answers", "2": "related"}
+
+
+def test_a_reply_the_judge_calls_right_was_read_in_the_right_place():
+    case = {"group": "fact", "expect_source": ["close the scanner"]}
+    outcome = dict(_outcome("close it", lookups=1, sources=["shut the scanner object"], verdict="correct"), passages={"1": "related"})
+    assert grade(case, outcome)["right_place"] and grade(case, outcome)["ok"]
+    assert not grade(case, dict(outcome, verdict="wrong_place"))["right_place"]
