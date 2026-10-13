@@ -58,6 +58,13 @@ class FakeClient:
                                usage=SimpleNamespace(prompt_tokens=10_000, completion_tokens=2_000))
 
 
+@pytest.fixture(autouse=True)
+def no_nicknames(monkeypatch):
+    """The real list of course nicknames is a setting. A test that is about them sets its own."""
+    from sync import build as build_module
+    monkeypatch.setattr(build_module, "NICKNAMES", {})
+
+
 @pytest.fixture
 def cache(tmp_path):
     cache = Cache(tmp_path / "home" / "cache.db")
@@ -360,6 +367,17 @@ def test_assignments_are_stored_as_material_of_their_course(tmp_path, material, 
     assert thai[0].startswith("English: ") and THAI in thai[1]
     store.close()
     assert "2 assignments" in "\n".join(report.lines)
+
+
+def test_the_nicknames_of_a_course_are_written_beside_its_codes(tmp_path, material, cache, monkeypatch):
+    from sync import build as build_module
+    monkeypatch.setattr(build_module, "NICKNAMES", {"CSC340": ("ai", "ai class"), "CSC999": ("not synced",)})
+    out = tmp_path / "courses.db"
+    build([material], Models(cache, client=FakeClient(describe=lambda prompt, images: "## Page 2\nRows.")), cache, out, Report())
+    store = CourseStore.open(str(out))
+    # The codes from the team's title first, then what people call the course
+    assert store.courses() == [{"code": "CSC340", "name": "Artificial Intelligence", "aliases": ["BIF651", "ai", "ai class"]}]
+    store.close()
 
 
 def test_a_second_run_with_nothing_new_calls_no_model(tmp_path, material, cache):

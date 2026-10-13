@@ -27,6 +27,21 @@ COURSE_PREFIX = os.getenv("COURSE_PREFIX", "1-2569")
 # Files and posts last changed before this day belong to an older semester
 SEMESTER_START = os.getenv("SEMESTER_START", "2026-07-01")
 
+# What people call each course, beside its code and its full name. A message with the -course flag
+# is matched against these, so the bot knows which course "the ai class" is. Lowercase, and a
+# short one only counts as a whole word. Change it when the courses change.
+NICKNAMES = {
+    "CSC102": ("intro to programming", "intro programming", "programming class"),
+    "CSC219": ("modern java", "java", "java class"),
+    "CSC302": ("seminar", "seminar class"),
+    "CSC319": ("oo", "ood", "oop", "oo class", "oo design", "object oriented"),
+    "CSC340": ("ai", "ai class"),
+    "CSC345": ("data sci", "ds", "ds class"),
+    "CSC491": ("network lab", "networking", "computer network", "network class"),
+    "CSC535": ("big data", "big data analytics"),
+    "LNG320": ("english", "english class"),
+}
+
 # Deployments on the bot's Azure resource
 CHAT_MODEL = os.getenv("SYNC_CHAT_DEPLOYMENT", "gpt-6-luna")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_DEPLOYMENT", "text-embedding-3-small")

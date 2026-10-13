@@ -37,7 +37,7 @@ from sync.material import (
 )
 from sync.models import Models
 from sync.reading import READER_VERSION, Page, ReadError, Reading, read_document
-from sync.settings import COURSE_PREFIX, EMBEDDING_MODEL, SEMESTER_START
+from sync.settings import COURSE_PREFIX, EMBEDDING_MODEL, NICKNAMES, SEMESTER_START
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +168,8 @@ def _read(file: dict, models: Models, cache: Cache) -> Reading:
 def _add_course(store: CourseStore, material: CourseMaterial, models: Models, cache: Cache, report: Report) -> None:
     course = material.course
     group = next((site["group"] for site in material.sites if site["group"]), "")
-    store.add_course(course.code, course.name, course.aliases, group_id=group, site_url=material.sites[0]["url"])
+    store.add_course(course.code, course.name, (*course.aliases, *NICKNAMES.get(course.code, ())), group_id=group,
+                     site_url=material.sites[0]["url"])
 
     # (kind, title, section, url, date, hash, [(locator, text, original)])
     sources: List[tuple] = []
