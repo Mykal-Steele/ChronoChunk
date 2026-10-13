@@ -110,6 +110,7 @@ LINK_REPAIR_CUTOFF = 0.85
 # A reply this long that starts over with its own first words is the same answer twice
 REPEAT_MIN_CHARS = 200
 REPEAT_OPENING_CHARS = 50
+REPEAT_MIN_LIKENESS = 0.5
 
 
 def capitalize_sentences(text: str, capitals: bool = True) -> str:
@@ -142,11 +143,18 @@ def capitalize_sentences(text: str, capitals: bool = True) -> str:
     return re.sub(r'\x00(\d+)\x00', lambda found: kept[int(found.group(1))], text_)
 
 
+def _site_and_name(address: str) -> Tuple[str, str]:
+    """The site a web address is on and the last part of its path."""
+    site, _, path = address.partition("://")[2].partition("/")
+    return site.lower(), path.rstrip("/").rpartition("/")[2]
+
+
 def repair_links(text: str, sources: List[str]) -> str:
     """
-    Put back a link the model changed while copying it. Every web address in the reply
-    that is not in sources word for word is swapped for the source address it is closest
-    to. One that is close to none of them is left as it is.
+    Put back a link the model changed while copying it. A web address in the reply that
+    is not in sources word for word is swapped for a source address only when both are on
+    the same site and end in the same file name, so it is the same page with a damaged
+    middle. A link to another page, however alike, is left as it is.
     """
     known = list(dict.fromkeys(address for source in sources for address in _ADDRESS.findall(source)))
     if not known:
@@ -156,7 +164,8 @@ def repair_links(text: str, sources: List[str]) -> str:
         address = found.group(0)
         if address in known:
             return address
-        closest = difflib.get_close_matches(address, known, n=1, cutoff=LINK_REPAIR_CUTOFF)
+        same_page = [source for source in known if _site_and_name(source) == _site_and_name(address)]
+        closest = difflib.get_close_matches(address, same_page, n=1, cutoff=LINK_REPAIR_CUTOFF)
         if closest:
             logger.warning(f"The model changed a link, put back {closest[0][:120]}")
         return closest[0] if closest else address
@@ -184,6 +193,10 @@ def _without_repeat(text: str) -> str:
         return text
     again = text.find(text[:REPEAT_OPENING_CHARS], REPEAT_OPENING_CHARS)
     if again == -1:
+        return text
+    # A reply may use its opening words again. It is a second copy only when what
+    # follows them says about the same as what came before.
+    if difflib.SequenceMatcher(None, text[:again], text[again:]).ratio() < REPEAT_MIN_LIKENESS:
         return text
     logger.warning(f"The model wrote its answer twice, {again} chars of the first copy dropped")
     return text[again:]

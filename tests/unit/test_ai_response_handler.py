@@ -914,3 +914,18 @@ def test_links_from_somewhere_else_are_left_alone():
     reply = "see <https://docs.python.org/3/library/re.html> and https://uni.example/sites/a/deck.pdf."
     assert repair_links(reply, sources) == reply
     assert repair_links(reply, []) == reply
+
+
+def test_a_link_to_another_page_of_the_same_site_is_not_swapped():
+    from src.ai_response_handler import repair_links
+    sources = ["link: https://docs.python.org/3/library/re.html"]
+    reply = "that one is in [the os docs](<https://docs.python.org/3/library/os.html>)"
+    assert repair_links(reply, sources) == reply
+
+
+def test_a_reply_that_uses_its_opening_words_again_is_not_cut(handler):
+    opening = "the singleton pattern in csc319 is about one instance of a class"
+    reply = (f"{opening}, and the slides spend three pages on it with a diagram of the class and its members.\n"
+             "they also cover the observer pattern, the decorator pattern and the factory method in the weeks after.\n"
+             f"so if the exam asks, {opening} and nothing more than that.")
+    assert handler._format_ai_response(reply).lower() == reply.lower()
