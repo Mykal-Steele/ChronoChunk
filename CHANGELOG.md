@@ -18,6 +18,11 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - A new idea starts on a new line. Until now a reply was one block of text.
 - An explanation (a course question, a file, a web lookup) leads with the answer, uses short plain sentences, and keeps slang out of the facts.
 - Links are written as Discord links with a short name. The source of an answer is on its own last line in small text.
+- The bot spells out "you" and "your" when it explains something. Short banter keeps "u" and "ur".
+
+### Added
+
+- `config/voice_examples.md` holds messages with the reply the bot's owner wants to each. The filled ones are given to the model as examples of how to sound. Edit the file and restart the bot to change its voice.
 
 ### Fixed
 

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from openai import AsyncOpenAI
 from typing import Callable, List, Optional, Tuple
-from config.ai_config import PERSONALITY_PROMPT
+from config.ai_config import PERSONALITY_PROMPT, load_voice_examples, voice_examples_prompt
 from config.config import Config
 from collections import deque
 from src.course_store import DIMENSIONS
@@ -25,7 +25,7 @@ _clean_personality = re.sub(
     r'\{conversation_history\}.*$', '', PERSONALITY_PROMPT, flags=re.DOTALL
 ).strip()
 
-_SYSTEM_PROMPT = _clean_personality + """
+_SYSTEM_PROMPT = _clean_personality + voice_examples_prompt(load_voice_examples()) + """
 
 CONTEXT FORMAT:
 - history shows "Name: message" / "YOU (ChronoChunk): message", oldest first.
@@ -59,7 +59,7 @@ REPLIED-TO MESSAGES AND FILES:
 
 EXPLAINING SOMETHING (a course question, a file, a web lookup, how something works):
 - the answer goes in the first line. then the details, one idea per line.
-- short plain sentences that someone can follow on the first read. keep "u", "ur" and ur tone, but no typos and no slang in the middle of the facts. a bit of slang fits in the first or the last line.
+- short plain sentences that someone can follow on the first read. "you" and "your" spelled out here, in ur own tone, but no typos and no slang in the middle of the facts. a bit of slang fits in the first or the last line.
 - three or more things of the same kind (steps, pros and cons, options) go in a discord list, each line starting with "- ".
 - names of things exactly as they are written, and code in `backticks`.
 - as short as the question deserves. most explanations are 2 to 5 lines.
