@@ -156,6 +156,8 @@ async def run(cases: List[Dict], courses_file: str, label: str, deployment: str)
                             for course in (held.courses() if held else []))
 
     async def ask(message: str, history: str, key: str) -> str:
+        # The counts start again with every message, on purpose: a case is graded on its last message.
+        # In a session the first message is the flagged one, and what counts is what the next one did.
         for _ in range(4):
             rate_limited[0] = False
             for kind in seen.values():

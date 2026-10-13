@@ -143,7 +143,12 @@ def collect(only: Sequence[str], cache: Cache, report: Report, headless: bool = 
             # The slides and lectures are still worth a course file when the Assignments app cannot be read
             facts, problems = [], [f"assignments: {str(error)[:200]}"]
         for fact in facts:
-            classes[fact["classId"]].assignments.append(fact)
+            target = classes.get(str(fact.get("classId") or ""))
+            if target is None:
+                # One assignment filed under a class that was not asked for must not cost the whole run
+                problems.append(f"assignment {fact.get('displayName')!r} belongs to a class that was not asked for, left out")
+                continue
+            target.assignments.append(fact)
         for problem in problems:
             for group, material in classes.items():
                 problem = problem.replace(group, material.course.code)
