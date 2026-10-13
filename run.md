@@ -20,7 +20,7 @@ Rules:
 
 | Date | Run | Why | Calls | Estimate |
 |---|---|---|---|---|
-| 2026-10-14 | Second check with the judge, same 104 messages, on `gpt-6-luna-checks` | After the fixes from the baseline: code brackets, no repeated passages, the loose label gone | about 120 chat calls, 73 judge calls, 80 embedding calls | about $0.09 |
+| 2026-10-14 | Third check with the judge, same 104 messages, on `gpt-6-luna-checks` | After a source line written mid-sentence is filled in, and two prompt rules about the closest thing and the bot's own knowledge | about 110 chat calls, 73 judge calls, 75 embedding calls | about $0.08 |
 
 ## Done
 
@@ -40,5 +40,6 @@ Rules:
 | 2026-10-13 | Replay of the lookup for the two bad due-date answers, then 16 date and homework questions after the fix, on `gpt-6-luna-checks` | "whats due this week" was padded with unrelated schedule lines, and "any homework" gave lecture homework with no word on Teams | 16 chat replies, about 14 embedding calls | about $0.01 | $0.0084 | Cause: a pure date question was also searched as a topic, and the block told the model its passages were only loosely related even when the list answered it. After the fix "whats due this week" answers from the list alone, in one call. A course with nothing in Teams now says so. Still weak: homework taken from a slide is not always given with that slide's date |
 | 2026-10-13 | Full sync into a scratch file, 6 runs | Fill the new assignment cache and run the privacy guard on real data | 0 model calls | under $0.01 | $0 | The first 4 runs were stopped by the guard, on a false alarm: Microsoft's own id for the Assignments app sits in every submission link. After the guard learned those two ids, run 5 opened 15 assignments and run 6 opened none. The course file is version 2 with due times |
 | 2026-10-14 | Baseline check with the judge, question set `release1`, 104 messages, on `gpt-6-luna-checks` | The first judged measure of flags, sessions, sources by number and assignments | 116 replies, 73 judged | about $0.12 | $0.083 | 98 of 104 passed. Lookup on 73 of 73 flagged messages, right passage 58 of 59, answers judged right 57 of 59, session small talk clean 6 of 6, flag pointed to 5 of 5. Gate held on 6 misses: 1 real bug (passage numbers stripped out of code), 2 wrong "made up" verdicts by the judge (both claims are in the material), 2 false alarms of the course-talk rule, 1 expected phrase that was too strict. Also seen: 15 of 42 replies searched a second time for the same thing. Median reply 5.3 seconds |
+| 2026-10-14 | Second check with the judge, same 104 messages | After the fixes from the baseline | 116 replies, 73 judged | about $0.09 | $0.074 | Right passage 59 of 59, plain chat clean 20 of 20, session small talk clean 6 of 6, median reply 3.8 seconds (5.3 before), second searches down from 36 to 24. Gate held: 2 small made-up statements (a general Java claim added from the model's own knowledge, and a sloppy retelling of "the closest thing"), one source line left as numbers because it was written mid-sentence, 3 questions that were graded as answerable though the material cannot answer them, and 1 judge verdict I do not agree with |
 
-Total so far: about $0.20.
+Total so far: about $0.28.

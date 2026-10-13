@@ -131,3 +131,11 @@ def test_a_score_only_says_strong_when_it_is_high_enough_to_mean_it():
     assert label_of([weak]) == "unsure" and label_of([]) == "nothing"
     # A weaker score is no reason to tell the model its passages are off: a third of them answer the question
     assert "loosely" not in format_hits("homework", [weak], {})
+
+
+def test_a_source_line_written_at_the_end_of_a_sentence_is_still_filled_in():
+    # Seen on the real model: "...gives no average. -# Source: [2] [7]", all on one line, went out as it was
+    shown = render_sources("couldnt find the average. -# Source: [2] [9]", SOURCES)
+    assert shown == "couldnt find the average.\n-# Source: [CBLL Week 9, page 47 (9 Oct 2026)](<https://example.test/w9.pdf>)"
+    assert render_sources("couldnt find it. -# Source: [9]", SOURCES) == "couldnt find it."
+    assert render_sources("x\n-# source: [2]", SOURCES).endswith("(<https://example.test/w9.pdf>)")

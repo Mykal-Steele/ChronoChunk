@@ -223,7 +223,8 @@ def source_label(hit: Hit) -> str:
     return f"{label} ({day})" if day else label
 
 
-_SOURCE_LINE = re.compile(r"^-# Source:(.*)$", re.MULTILINE | re.IGNORECASE)
+# The model sometimes puts it at the end of its last sentence instead of on a line of its own
+_SOURCE_LINE = re.compile(r"(?:^|(?<=\s))-# Source:(.*)$", re.MULTILINE | re.IGNORECASE)
 _MARK = re.compile(r"\[(\d+|A)\]")
 
 
