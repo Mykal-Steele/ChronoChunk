@@ -1,5 +1,7 @@
 # AI config stuff
+import re
 from pathlib import Path
+from typing import List, NamedTuple, Union
 
 SKILLS_DIR = Path(__file__).parent.parent / "skills"
 
@@ -11,6 +13,60 @@ def load_skill(name: str) -> str:
 
 # System prompt for the document writer. Chat keeps PERSONALITY_PROMPT below, documents use this.
 WRITER_PROMPT = "\n\n".join(load_skill(name) for name in ("writer", "business-writing", "no-ai-tells"))
+
+# Messages with the reply the bot's owner wants to each. Edit that file to change how the bot sounds.
+VOICE_EXAMPLES_FILE = Path(__file__).parent / "voice_examples.md"
+
+
+class VoiceExample(NamedTuple):
+    message: str
+    # What the message came with, such as a screenshot, in words. '' for a plain message.
+    context: str
+    reply: str
+
+
+def load_voice_examples(path: Union[str, Path] = VOICE_EXAMPLES_FILE) -> List[VoiceExample]:
+    """
+    The filled-in examples from the sheet, in order. One with no message or no reply
+    is skipped, and so are the notes and facts written there to help fill it in.
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return []
+    examples = []
+    # A section runs from its "### " heading to the next heading of either size
+    for section in re.split(r"^### .*$", text, flags=re.MULTILINE)[1:]:
+        section = re.split(r"^## ", section, flags=re.MULTILINE)[0]
+        asked, _, reply = section.partition("\nReply:")
+        found = re.search(r"^Message:[ \t]*(.*)$", asked, flags=re.MULTILINE)
+        if not found or not found.group(1).strip() or not reply.strip():
+            continue
+        quoted = re.match(r"`([^`]*)`(.*)", found.group(1).strip())
+        message, came_with = (quoted.group(1), quoted.group(2).strip()) if quoted else (found.group(1).strip(), "")
+        # Paragraphs under the message say what it came with, apart from the notes and the facts
+        told = [came_with] if came_with else []
+        told += [" ".join(paragraph.split()) for paragraph in re.split(r"\n\s*\n", asked[found.end():])
+                 if paragraph.strip() and not paragraph.strip().startswith(("Note:", "Facts:"))]
+        context = ". ".join(part.rstrip(".") for part in told) + ("." if told else "")
+        examples.append(VoiceExample(message, context, reply.strip()))
+    return examples
+
+
+def voice_examples_prompt(examples: List[VoiceExample]) -> str:
+    """The examples as a section of the system prompt, '' when there are none."""
+    if not examples:
+        return ""
+    lines = ["", "", "=== HOW U SOUND: messages and the exact reply ur dev wants to each. "
+             "copy the voice, the layout and the length. never reuse the words ==="]
+    for example in examples:
+        came_with = f" ({example.context})" if example.context else ""
+        # The sheet writes a source link as LINK, which the model must never send
+        reply = example.reply.replace("<LINK>", "<https://the.full/link>")
+        lines += ["", f'they said: "{example.message}"{came_with}', "u said:", reply]
+    lines += ["", "=== END OF THOSE EXAMPLES ==="]
+    return "\n".join(lines)
+
 
 # Main prompt for the bot's personality
 PERSONALITY_PROMPT = """You are ChronoChunk, a real person in a Discord chat. not an AI, not a bot, not a tool. a friend texting back.
@@ -73,13 +129,15 @@ roast angles: find something specific they said and attack THAT angle — a typo
 NEVER repeat the same word, phrase, or angle twice in the same conversation. if u used "deadweight" dont use it again. if u used "airplane mode" find something else. always find a fresh angle
 
 HOW U TYPE:
-- almost never capitalize. no proper punctuation. run thoughts together
-- "u" not "you", "ur" not "your", "n" not "and". no apostrophes in contractions (dont, cant, wont)
-- multiple ??? or !!! for emphasis. occasional typos: "teh", "jsut", "bcz" — dont overdo
-- ONE continuous block. no line breaks mid-message. no bullet points ever
+- a reply that is one short line can start with a small letter. anything longer: the first letter of every sentence is a capital. that is the ONLY proper capitalization u do: "i", names and everything else stay how u would type them fast
+- light punctuation. a period or a comma where it helps someone read it, nothing at the end of a short message
+- in short banter: "u" not "you", "ur" not "your", "n" not "and". when u explain something: "you" and "your", spelled out
+- apostrophes in contractions come and go (dont, cant, don't), like someone typing fast
+- multiple ??? or !!! for emphasis. occasional typos: "teh", "jsut", "bcz" — dont overdo, and never in an explanation
+- a short reply is one line. when u move on to a NEW idea, start a new line. never break a line in the middle of one idea, and never leave an empty line between two lines. most replies are 1 to 3 lines. no bullet points in normal chat
 - randomly CAPITALIZE single words for emphasis. no em dashes
 - lol/lmao/bruh used as punctuation not actual laughter
-- *asterisks* for emphasis sometimes
+- **bold** for the one word that matters, sometimes. never put * around a file name
 - EMOJI RULE — check ur own recent messages in the conversation history above before adding one. if u used ANY emoji in ur last 5 messages: no emoji this message, full stop. if u used a specific emoji (like 😂 or 💀) in ur last 10 messages: that emoji is banned for now, pick a different one or use none. default is NO emoji — only add one if it genuinely fits and u havent used one recently. options when u do use one: 💀 🔥 😭 🙏 😂 :catpat: :kekw: :pog: or any that fits
 - short message = short reply. long drama = longer reply. mirror their energy
 - replies feel typed fast, not composed
