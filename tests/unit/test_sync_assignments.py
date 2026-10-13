@@ -1,4 +1,6 @@
 """Unit tests for assignment rules: keeping course facts only, and turning them into chunks."""
+import pytest
+
 from sync.assignments import (
     assignment_text,
     clean_html,
@@ -162,3 +164,92 @@ def test_style_rules_inside_instructions_are_not_text():
     assert clean_html({"content": styled, "contentType": "html"}) == "Explore the data and report"
     # Instructions that are only a picture have no text to keep
     assert clean_html({"content": '<style>.c0{max-width: 100%;}</style><img class="c0" src="x.png">', "contentType": "html"}) == ""
+
+
+# ── opening only what changed, and the check that nothing personal is kept ────
+
+from sync.assignments import PrivacyError, check_nothing_personal, details_to_open, personal_ids, remember  # noqa: E402
+from sync.cache import Cache  # noqa: E402
+
+
+def _listed(id="a1", modified="2026-09-22T05:06:52Z", **changes):
+    return _raw(id=id, lastModifiedDateTime=modified, instructions=None, resources=None, grading=None, **changes)
+
+
+def _detail(id="a1", **changes):
+    return _raw(id=id, instructions={"content": "<p>Train a classifier.</p>", "contentType": "html"},
+                grading={"maxPoints": 5}, **changes)
+
+
+def test_an_assignment_is_opened_once_and_again_only_when_it_changed(tmp_path):
+    cache = Cache(tmp_path / "cache.db")
+    first, second = _listed("a1"), _listed("a2")
+    known, to_open = details_to_open([first, second], cache)
+    assert known == {} and [entry["id"] for entry in to_open] == ["a1", "a2"]
+
+    remember(cache, first, _detail("a1"))
+    known, to_open = details_to_open([first, second], cache)
+    assert list(known) == ["a1"] and [entry["id"] for entry in to_open] == ["a2"]
+    assert clean_html(known["a1"]["instructions"]) == "Train a classifier."
+
+    # The teacher edited it: the copy from before no longer counts
+    edited = _listed("a1", modified="2026-10-01T02:00:00Z")
+    known, to_open = details_to_open([edited, second], cache)
+    assert known == {} and [entry["id"] for entry in to_open] == ["a1", "a2"]
+    cache.close()
+
+
+def test_an_assignment_that_will_not_open_falls_back_to_its_last_copy(tmp_path):
+    cache = Cache(tmp_path / "cache.db")
+    remember(cache, _listed("a1"), _detail("a1"))
+    edited = _listed("a1", modified="2026-10-01T02:00:00Z")
+    from sync.assignments import last_copy
+    assert clean_html(last_copy(cache, edited)["instructions"]) == "Train a classifier."
+    assert last_copy(cache, _listed("never-opened")) is None
+    cache.close()
+
+
+def test_only_course_facts_go_into_the_cache(tmp_path):
+    cache = Cache(tmp_path / "cache.db")
+    remember(cache, _listed("a1"), _detail("a1"))
+    [stored] = [row[0] for row in cache._connection.execute("SELECT value FROM entries WHERE kind = 'assignment' LIMIT 1")]
+    assert "student-id-1" not in stored and "submissions" not in stored and "isCompleted" not in stored
+    cache.close()
+
+
+def test_the_ids_of_people_are_collected_from_what_is_dropped():
+    raw = _raw(submissions=[{"id": "sub-1", "recipient": {"userId": "0f0f0f0f-1111-4222-8333-444444444444"}}],
+               createdBy={"user": {"id": "9a9a9a9a-1111-4222-8333-444444444444"}})
+    ids = personal_ids([raw])
+    assert {"0f0f0f0f-1111-4222-8333-444444444444", "9a9a9a9a-1111-4222-8333-444444444444", "student-id-1"} <= ids
+    # The assignment's own id and its class are course facts, wherever else they also appear
+    assert raw["id"] not in ids and raw["classId"] not in ids
+
+
+def test_a_run_stops_when_something_personal_would_be_kept():
+    raw = _raw(createdBy={"user": {"id": "9a9a9a9a-1111-4222-8333-444444444444"}})
+    clean = course_facts([raw], "2026-07-01")
+    check_nothing_personal([raw], clean)
+    leaking = [dict(clean[0], webUrl="https://example.test/open?user=9a9a9a9a-1111-4222-8333-444444444444")]
+    with pytest.raises(PrivacyError, match="9a9a9a9a"):
+        check_nothing_personal([raw], leaking)
+
+
+def test_the_assignments_apps_own_id_does_not_stop_a_run():
+    # Teams puts the app's id in every link, the assignment's own and each submission's
+    from sync.assignments import APP_IDS
+    app = APP_IDS[0]
+    raw = _raw(webUrl=f"https://example.test/l/entity/{app}/classroom",
+               submissions=[{"id": "sub-1", "webUrl": f"https://example.test/l/entity/{app}/classroom?submission=1"}],
+               createdBy={"user": {"id": "9a9a9a9a-1111-4222-8333-444444444444"}})
+    assert app not in personal_ids([raw])
+    check_nothing_personal([raw], course_facts([raw], "2026-07-01"))
+    # Any other id in a submission's link is still a person's, and so is one inside an attached file's record
+    other = _raw(submissions=[{"webUrl": "https://example.test/open?user=5d5d5d5d-1111-4222-8333-444444444444"}],
+                 resources=[{"resource": {"displayName": "Lab7.pptx", "createdBy": {"user": {"id": "7b7b7b7b-1111-4222-8333-444444444444"}}}}])
+    assert {"5d5d5d5d-1111-4222-8333-444444444444", "7b7b7b7b-1111-4222-8333-444444444444"} <= personal_ids([other])
+
+
+def test_an_id_outside_the_parts_about_people_is_not_a_persons():
+    raw = _raw(moduleUrl="https://example.test/e1e1e1e1-1111-4222-8333-444444444444/module", channelId="19:abcdef@thread.tacv2")
+    assert personal_ids([raw]) == {"student-id-1"}

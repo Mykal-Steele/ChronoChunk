@@ -135,7 +135,10 @@ def collect(only: Sequence[str], cache: Cache, report: Report, headless: bool = 
         # A class in the Assignments app goes by the id of its team's group
         classes = {site["group"]: material for material in by_code.values() for site in material.sites if site["group"]}
         try:
-            facts, problems = assignments.collect(context, list(classes), SEMESTER_START)
+            facts, problems = assignments.collect(context, list(classes), SEMESTER_START, cache)
+        except assignments.PrivacyError:
+            # Not a problem to note and move past: nothing is written until it is understood
+            raise
         except Exception as error:
             # The slides and lectures are still worth a course file when the Assignments app cannot be read
             facts, problems = [], [f"assignments: {str(error)[:200]}"]

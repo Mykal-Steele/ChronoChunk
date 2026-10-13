@@ -13,6 +13,7 @@ import logging
 import sys
 from pathlib import Path
 
+from sync.assignments import PrivacyError
 from sync.build import BadRun, Report, build, collect
 from sync.cache import Cache
 from sync.models import Models, SpendCapReached
@@ -56,6 +57,9 @@ def main() -> int:
         if options.upload:
             upload(out)
             report.say(f"Uploaded to {SERVER}:{SERVER_FILE}")
+    except PrivacyError as error:
+        print(f"Stopped: {error}. The course file was not changed. Nothing is written until this is understood.", file=sys.stderr)
+        return 6
     except SignInNeeded as error:
         print(f"Not signed in: {error}. Run `python -m sync.session` and sign in, then run the sync again.", file=sys.stderr)
         return 2

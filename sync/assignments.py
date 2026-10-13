@@ -9,13 +9,18 @@ sync reads what the Assignments pages themselves load.
 """
 from __future__ import annotations
 
+import hashlib
 import html as html_lib
+import json
+import logging
 import re
 import time
 from datetime import datetime
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from sync.material import BANGKOK
+
+logger = logging.getLogger(__name__)
 
 ASSIGNMENTS_HOST = "assignments.edu.cloud.microsoft"
 # The app runs in a frame inside Teams and has an address of its own for every class and assignment
@@ -37,8 +42,9 @@ LIST_SECONDS = 25
 TAB_SECONDS = 4
 # How long one assignment may take to open. It took about a second in every test.
 DETAIL_SECONDS = 15
-# One real run in four lost a single assignment to a page that never loaded it, so it is asked for again
-DETAIL_TRIES = 2
+# One real run in four lost a single assignment to a page that never loaded it, so it is asked for again,
+# from the class's list each time
+DETAIL_TRIES = 3
 
 
 def clean_html(instructions: object) -> str:
@@ -191,6 +197,92 @@ def assignment_text(item: Dict) -> str:
     return "\n".join(line for line in lines if line)
 
 
+class PrivacyError(RuntimeError):
+    """Something about a person was about to be kept. The run stops."""
+
+
+# The parts of what Teams sends that are about people: who made or changed something, who it was
+# given to, who handed in what. An id anywhere under one of these is a person's.
+_ABOUT_PEOPLE = re.compile(r"(createdby|modifiedby|submission|assignto|recipient|member|user|student|teacher|owner|"
+                           r"reviewer|gradedby|returnedby)", re.IGNORECASE)
+_ID_KEY = re.compile(r"id$", re.IGNORECASE)
+_GUID = re.compile(_ID)
+# Microsoft's ids for the Assignments app itself, the same for every school. They are in every
+# assignment link, the ones for submissions too, and say nothing about a person.
+APP_IDS = ("66aeee93-507d-479a-a3ef-8f494af43945", "ccb65bcd-04ba-421a-8791-a299a70904b6")
+
+
+def personal_ids(raw: Iterable[dict]) -> Set[str]:
+    """
+    Every id found in the parts of an assignment that are about people. An assignment's
+    own id and its class are left out, since those are course facts wherever else they
+    also appear, and so are ids outside those parts, such as the Assignments app's own
+    id in a link.
+    """
+    found: Set[str] = set()
+    own: Set[str] = set()
+
+    def walk(value: object, key: str, personal: bool) -> None:
+        personal = personal or bool(_ABOUT_PEOPLE.search(key))
+        if isinstance(value, dict):
+            for name, inner in value.items():
+                walk(inner, name, personal)
+        elif isinstance(value, list):
+            for inner in value:
+                walk(inner, key, personal)
+        elif isinstance(value, str) and personal:
+            found.update(_GUID.findall(value))
+            if (_ID_KEY.search(key) or key == "recipients") and len(value) >= 6 and " " not in value:
+                found.add(value)
+
+    for item in raw:
+        own.update(str(item.get(key) or "") for key in ("id", "classId"))
+        walk(item, "", False)
+    return found - own - set(APP_IDS)
+
+
+def check_nothing_personal(raw: Iterable[dict], kept: List[dict]) -> None:
+    """Raise PrivacyError when an id from a dropped field shows up in what would be kept."""
+    text = json.dumps(kept, ensure_ascii=False)
+    for identifier in sorted(personal_ids(raw)):
+        if identifier in text:
+            raise PrivacyError(f"an id from a dropped field ({identifier[:8]}...) is in what would be kept of the assignments")
+
+
+def _stamp(entry: dict) -> str:
+    """What changes when a teacher edits an assignment."""
+    modified = str(entry.get("lastModifiedDateTime") or "")
+    if modified:
+        return modified
+    written = "|".join(str(entry.get(key) or "") for key in ("displayName", "dueDateTime", "closeDateTime"))
+    return hashlib.sha256(written.encode("utf-8")).hexdigest()[:16]
+
+
+def details_to_open(entries: Iterable[dict], cache) -> Tuple[Dict[str, dict], List[dict]]:
+    """Split the listed assignments into those an earlier run already opened as they are now, and those to open."""
+    known: Dict[str, dict] = {}
+    to_open: List[dict] = []
+    for entry in entries:
+        cached = cache.get("assignment", f"{entry['id']}:{_stamp(entry)}")
+        if cached is not None:
+            known[str(entry["id"])] = cached
+        else:
+            to_open.append(entry)
+    return known, to_open
+
+
+def remember(cache, entry: dict, detail: dict) -> None:
+    """Keep the course facts of an opened assignment for later runs. Nothing else of it is written anywhere."""
+    facts = strip(detail)
+    cache.put("assignment", f"{entry['id']}:{_stamp(entry)}", facts)
+    cache.put("assignment", f"{entry['id']}:latest", facts)
+
+
+def last_copy(cache, entry: dict) -> Optional[dict]:
+    """What the assignment held the last time it opened, for a run where it will not. None when it never did."""
+    return cache.get("assignment", f"{entry['id']}:latest")
+
+
 def recorded(path: str) -> bool:
     """Whether an answer of the app is read at all: a class's list and an assignment itself, nothing else."""
     return bool(_LIST_PATH.search(path) or _DETAIL_PATH.search(path))
@@ -269,8 +361,15 @@ def _read_list(page, recorder, class_id: str) -> Optional[List[dict]]:
 
 
 def _open(page, recorder, class_id: str, assignment_id: str) -> Optional[dict]:
-    """Open one assignment and hand back what the app loaded for it. None when it did not come, after a second try."""
-    for _ in range(DETAIL_TRIES):
+    """Open one assignment and hand back what the app loaded for it. None when it did not come after every try."""
+    for attempt in range(DETAIL_TRIES):
+        if attempt:
+            # Back to the class's list first. A page that hung once tends to hang again from where it is.
+            try:
+                _app_frame(page).goto(f"{APP}/classes/{class_id}/list", wait_until="commit")
+                _until(page, lambda: _app_frame(page).get_by_role("tab").count(), TAB_SECONDS)
+            except Exception:
+                pass
         mark = len(recorder.answers)
         try:
             _app_frame(page).goto(f"{APP}/classes/{class_id}/assignments/{assignment_id}", wait_until="commit")
@@ -281,16 +380,17 @@ def _open(page, recorder, class_id: str, assignment_id: str) -> Optional[dict]:
     return None
 
 
-def collect(context, class_ids: Sequence[str], semester_start: str) -> Tuple[List[dict], List[str]]:
+def collect(context, class_ids: Sequence[str], semester_start: str, cache=None) -> Tuple[List[dict], List[str]]:
     """
     The assignments of every class, past ones included, as course facts, and what went
     wrong on the way. A class's list has no instructions, points or attached files, so
-    every assignment of this semester is opened once for those.
+    an assignment is opened for those: once, and again only after a teacher changed it,
+    when a cache is given.
 
     The list a class sends also carries the signed-in person's own submissions and
     whether they finished. course_facts() drops all of that before anything is
-    returned. The calls that are only about people (/me/work, /submissions, /members)
-    are never read.
+    returned, and check_nothing_personal() stops the run if any of it got through.
+    The calls that are only about people (/me/work, /submissions, /members) are never read.
     """
     from sync.session import Recorder, open_teams
 
@@ -302,6 +402,7 @@ def collect(context, class_ids: Sequence[str], semester_start: str) -> Tuple[Lis
 
     facts: List[dict] = []
     problems: List[str] = []
+    opened_now = 0
     for class_id in class_ids:
         try:
             entries = _read_list(page, recorder, class_id)
@@ -311,14 +412,26 @@ def collect(context, class_ids: Sequence[str], semester_start: str) -> Tuple[Lis
         if entries is None:
             problems.append(f"assignments of class {class_id}: the list did not load")
             continue
-        details: Dict[str, dict] = {}
-        for entry in entries:
-            if not wanted(entry, semester_start):
-                continue
+        current = [entry for entry in entries if wanted(entry, semester_start)]
+        details, to_open = details_to_open(current, cache) if cache is not None else ({}, current)
+        seen_raw: List[dict] = list(entries)
+        for entry in to_open:
             detail = _open(page, recorder, class_id, str(entry["id"]))
             if detail is not None:
+                seen_raw.append(detail)
                 details[str(entry["id"])] = detail
+                if cache is not None:
+                    remember(cache, entry, detail)
+                continue
+            earlier = last_copy(cache, entry) if cache is not None else None
+            if earlier is not None:
+                details[str(entry["id"])] = earlier
+                problems.append(f"assignment {entry.get('displayName')!r} could not be opened, its last copy was used")
             else:
                 problems.append(f"assignment {entry.get('displayName')!r} could not be opened, kept without its instructions")
-        facts.extend(course_facts(entries, semester_start, details))
+        kept = course_facts(entries, semester_start, details)
+        check_nothing_personal(seen_raw, kept)
+        facts.extend(kept)
+        opened_now += len(to_open)
+    logger.info(f"Assignments: {len(facts)} kept, {opened_now} opened in this run, the rest from earlier runs")
     return facts, problems
