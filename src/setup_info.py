@@ -86,7 +86,7 @@ def _courses() -> str:
     """How much course material is loaded, in a few words."""
     store = course_store()
     if not store:
-        return "off, no course file"
+        return "off, no course file the bot can search"
     return f"{len(store.courses())} courses, {sum(store.chunk_counts().values()):,} passages, embedded with {Config.EMBEDDING_DEPLOYMENT}"
 
 

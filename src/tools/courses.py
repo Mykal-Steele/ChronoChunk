@@ -154,7 +154,7 @@ class SearchCourse(Tool):
         store = course_store()
         codes = [course["code"] for course in store.courses()] if store else []
         held = {kind for per_course in store.counts().values() for kind in per_course} if store else set()
-        course = {"type": "string", "description": "The course to search, by its code. Leave it out to search every course."}
+        course: dict = {"type": "string", "description": "The course to search, by its code. Leave it out to search every course."}
         if codes:
             course["enum"] = codes
         return {
