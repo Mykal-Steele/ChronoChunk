@@ -278,17 +278,11 @@ class AIResponseHandler:
         # What the model can do besides talk. Each tool lives in src/tools.
         self.tools: List[Tool] = default_tools()
 
+        # What is said when Azure turns a call down for coming too fast. It clears by itself within a minute.
         self.fallback_responses = deque([
-            "yo my neural nets are fried rn, gimme a sec",
-            "bruh i think im gettin rate limited, one sec",
-            "quota issues again? my dev needs to pay up fr",
-            "ngl my brain just glitched for a sec, try again?",
-            "lmao my processor just overheated, brb",
-            "yo whoever coded me forgot to pay the brain bill 😭",
-            "i think my dev's api quota just got clapped lol",
-            "cant think straight rn, try again in a bit?",
-            "bruh im lagging so hard rn, gimme a min",
-            "my brain cells just went on strike fr fr"
+            "azure is rate limiting me rn, too many msgs this minute. try again in like 30 sec",
+            "hit the rate limit on my model, too much going on this minute. gimme 30 sec and send it again",
+            "im getting rate limited rn (too many requests at once). wait a min and try again",
         ], maxlen=10)
 
     def _format_ai_response(self, raw_response: str) -> str:
@@ -559,13 +553,17 @@ class AIResponseHandler:
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error generating AI response: {error_msg}")
-            if "429" in error_msg or "quota" in error_msg.lower() or "rate" in error_msg.lower():
+            lowered = error_msg.lower()
+            # A spent quota answers 429 too, and waiting a minute does not fix that one
+            if "insufficient_quota" in lowered or ("quota" in lowered and "rate limit" not in lowered):
+                return Reply("my azure quota ran out, so i cant answer till my dev sorts it. nothing wrong with ur msg", ok=False)
+            if "429" in error_msg or "rate" in lowered:
                 fallback = self.fallback_responses[0]
                 self.fallback_responses.rotate(1)
                 return Reply(fallback, ok=False)
-            if "content_filter" in error_msg or "content management policy" in error_msg.lower():
+            if "content_filter" in error_msg or "content management policy" in lowered:
                 return Reply(self._content_filter_response(error_msg), ok=False)
-            return Reply("my brain just glitched fr, try again in a sec 💀", ok=False)
+            return Reply("something broke on my end, not ur msg. try again in a sec 💀", ok=False)
 
     @staticmethod
     def _log_reply(request: Turn, reply: Reply) -> None:

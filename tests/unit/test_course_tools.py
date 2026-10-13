@@ -358,9 +358,9 @@ async def test_the_daily_limit_is_told_to_the_model_instead_of_a_lookup(handler,
 
 # ── assignments through the same lookup ───────────────────────────────────────
 
-async def test_a_due_question_gets_the_dated_list_with_the_days_left(assigned):
+async def test_asked_for_every_assignment_the_list_has_them_all_with_the_days_left(assigned):
     turn = _turn(direction(filler=1))
-    text = await lookup_for(turn, Scope("whats due this week", True, []))
+    text = await lookup_for(turn, Scope("list all the assignments so far", True, []))
     assert "today is Tuesday 13 Oct 2026 in Bangkok" in text
     assert '- CSC345 "Lab 7", due today (13 Oct 2026) at 23:59, 5 points' in text
     assert '- CSC345 "Lab 8", due tomorrow (14 Oct 2026) at 23:59' in text
@@ -373,6 +373,62 @@ async def test_a_due_question_gets_the_dated_list_with_the_days_left(assigned):
     # Rows only: what each one asks for comes from the passages, when the question is about it
     assert "Solve the maze" not in text and "Train a classifier" not in text
     assert turn.findings == [text] and turn.course_searches == 1
+
+
+async def test_a_question_about_this_week_gets_this_week_only(assigned):
+    turn = _turn(direction(pca=1))
+    text = await lookup_for(turn, Scope("whats due this week", True, []))
+    # Tuesday 13 Oct: the week runs from Monday 12 to Sunday 18
+    assert "due from 12 Oct to 18 Oct 2026" in text
+    assert '"Lab 7", due today' in text and '"Lab 8", due tomorrow' in text
+    assert "Assignment 5" not in text and "Survey" not in text
+    # What comes after the window is named once, so "nothing else soon" can be said
+    assert 'next after that: CSC340 "Mini project", due in 34 days (16 Nov 2026)' in text
+    # The list answers it. No passages are searched for, and nothing is called loosely related.
+    turn.embed.assert_not_awaited()
+    assert "[1]" not in text and "loosely related" not in text and "Principal component" not in text
+
+
+async def test_a_week_with_nothing_due_says_so_and_names_what_is_next(assigned, monkeypatch):
+    monkeypatch.setattr(courses, "_today", lambda: date(2026, 10, 19))
+    text = await lookup_for(_turn(direction(pca=1)), Scope("anything due this week", True, []))
+    assert "nothing in the teams assignments is due from 19 Oct to 25 Oct 2026" in text
+    assert 'next after that: CSC340 "Mini project", due in 28 days (16 Nov 2026)' in text
+    assert "Lab 7" not in text
+
+
+async def test_tomorrow_and_next_week_are_windows_too(assigned):
+    tomorrow = await lookup_for(_turn(direction(pca=1)), Scope("what is due tomorrow", True, []))
+    assert '"Lab 8", due tomorrow' in tomorrow and '"Lab 7"' not in tomorrow
+    next_week = await lookup_for(_turn(direction(pca=1)), Scope("any homework next week", True, []))
+    assert "nothing in the teams assignments is due from 19 Oct to 25 Oct 2026" in next_week
+
+
+async def test_a_plain_homework_question_gets_what_is_coming_and_the_latest_past_ones(assigned):
+    turn = _turn(direction(pca=1))
+    text = await lookup_for(turn, Scope("do we have any homework", True, ["CSC345"]))
+    assert '"Lab 7", due today' in text and '"Lab 8", due tomorrow' in text and '"Survey", no due date' in text
+    turn.embed.assert_not_awaited()
+
+
+async def test_a_course_with_nothing_in_teams_says_so_and_looks_in_the_slides_and_lectures(material, monkeypatch):
+    # The material fixture has no assignments at all
+    monkeypatch.setattr(courses, "_today", lambda: date(2026, 10, 13))
+    turn = _turn(direction(bayes=1))
+    text = await lookup_for(turn, Scope("do we have any homework", True, ["CSC345"]))
+    assert "ASSIGNMENTS posted in teams, today is Tuesday 13 Oct 2026 in Bangkok:" in text
+    assert "- none posted for CSC345" in text
+    # Homework a teacher gave in class is in the lectures, so they are searched
+    turn.embed.assert_awaited_once()
+    assert "Naive Bayes" in text
+
+
+async def test_a_date_question_with_a_topic_gets_the_passages_and_the_list(assigned):
+    turn = _turn(direction(other=1))
+    text = await lookup_for(turn, Scope("when is lab 7 due", True, ["CSC345"]))
+    assert 'assignment "Lab 7"' in text and "Train a classifier." in text
+    assert '- CSC345 "Lab 7", due today (13 Oct 2026) at 23:59, 5 points' in text
+    turn.embed.assert_awaited_once()
 
 
 async def test_the_list_keeps_to_the_flag_s_course(assigned):

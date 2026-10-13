@@ -133,6 +133,9 @@ class MessageHandler:
         "brain cells just went on strike",
         "my brain just glitched",
         "something broke on my end",
+        "rate limiting me",
+        "hit the rate limit",
+        "azure quota",
         "something went wrong",
         "something just broke",
     )

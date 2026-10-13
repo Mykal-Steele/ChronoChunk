@@ -106,18 +106,36 @@ async def test_generate_response_cache_respects_history(handler, mock_openai_cli
     assert mock_openai_client.chat.completions.create.call_count == 2
 
 
-async def test_generate_response_429_returns_fallback(handler, mock_openai_client):
-    mock_openai_client.chat.completions.create.side_effect = Exception("429 quota exceeded")
-    result = await handler.generate_response("test", "", "TestUser", "12345")
-    assert isinstance(result, str)
-    assert len(result) > 0
+async def test_a_rate_limit_is_named_as_one_with_when_to_try_again(handler, mock_openai_client):
+    mock_openai_client.chat.completions.create.side_effect = Exception(
+        "Error code: 429 - {'error': {'message': 'Your requests to gpt-6-luna have exceeded token rate limit.', "
+        "'code': 'rate_limit_exceeded'}}")
+    replies = {await handler.generate_response(f"test {number}", "", "TestUser", "12345") for number in range(4)}
+    # Worded a few ways, and every one says what happened and that waiting fixes it
+    assert len(replies) > 1
+    for reply in replies:
+        assert "rate limit" in reply and ("sec" in reply or "min" in reply)
 
 
-async def test_generate_response_generic_error_returns_fallback(handler, mock_openai_client):
+async def test_a_spent_quota_is_not_called_a_rate_limit(handler, mock_openai_client):
+    mock_openai_client.chat.completions.create.side_effect = Exception(
+        "Error code: 429 - {'error': {'code': 'insufficient_quota', 'message': 'You exceeded your current quota'}}")
+    reply = await handler.generate_response("test", "", "TestUser", "12345")
+    assert "quota" in reply and "rate limit" not in reply
+
+
+async def test_any_other_failure_says_it_is_on_the_bots_side(handler, mock_openai_client):
     mock_openai_client.chat.completions.create.side_effect = Exception("connection refused")
-    result = await handler.generate_response("test", "", "TestUser", "12345")
-    assert isinstance(result, str)
-    assert "glitch" in result or "brain" in result or "try again" in result.lower()
+    reply = await handler.generate_response("test", "", "TestUser", "12345")
+    assert "something broke on my end" in reply and "try again" in reply
+
+
+async def test_error_replies_are_kept_out_of_later_context(handler, mock_openai_client):
+    from src.message_handler import MessageHandler
+    for error in ("429 rate limit", "429 insufficient_quota", "connection refused"):
+        mock_openai_client.chat.completions.create.side_effect = Exception(error)
+        reply = await handler.generate_response(f"test {error}", "", "TestUser", "12345")
+        assert any(marker in reply.lower() for marker in MessageHandler._EXCLUDED_BOT_PATTERNS), reply
 
 
 async def test_generate_response_short_followup_with_history(handler, mock_openai_client):
