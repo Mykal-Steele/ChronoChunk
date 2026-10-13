@@ -17,6 +17,7 @@ from src.usage_guard import BudgetExceededError, UsageGuard, get_usage_guard, gu
 from src.tools import Tool, ToolResult, Turn, default_tools
 from src.tools.base import user_content
 from src.course_session import CourseSessions
+from src.course_retrieval import render_sources
 from src.tools.courses import NOT_LOOKED_UP, NO_FLAG_PROMPT, lookup_for, read_scope, saved_material, unknown_course_reply
 from src.pdf_notes import NOTES_MAX_TOKENS
 
@@ -492,6 +493,8 @@ class AIResponseHandler:
                 elif block not in material:
                     material.append(block)
             request.keep_material = keep
+            if session is not None:
+                request.course_sources = session.sources
             files = request.files
             # The material is searched in English. A message in another language is no use as the
             # search itself, so the model has to write the search instead, and is made to.
@@ -577,7 +580,11 @@ class AIResponseHandler:
                     reply = Reply("here u go", files)
                 else:
                     # A long link does not always survive being typed out again by the model
-                    reply = Reply(repair_links(self._format_ai_response(raw), request.findings), files)
+                    shown = self._format_ai_response(raw)
+                    if in_course:
+                        # The model names passages by number. Their names, dates and links are written here.
+                        shown = render_sources(shown, request.course_sources)
+                    reply = Reply(repair_links(shown, request.findings), files)
                 # An answer from the web or the course material goes stale, so it is looked up again next time
                 if not files and not request.lookups and not request.course_searches and not in_course:
                     self.response_cache[cache_key] = reply.text

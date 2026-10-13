@@ -6,7 +6,7 @@ memory, gone on a restart.
 """
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from config.config import Config
 
@@ -20,6 +20,8 @@ class Session:
     codes: List[str]
     # What was looked up, oldest first, each a block as the model was shown it
     material: List[str] = field(default_factory=list)
+    # What each passage number in the material stands for: number -> (name, link)
+    sources: Dict[str, Tuple[str, str]] = field(default_factory=dict)
     opened: float = 0.0
 
 

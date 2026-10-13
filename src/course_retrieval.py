@@ -6,9 +6,9 @@ right answer from the closest thing it found.
 """
 import asyncio
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
-from typing import Awaitable, Callable, List, Optional, Sequence, Tuple
+from typing import Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
 from src.course_store import _STOP_WORDS, RESULTS, CourseStore, Hit
 
@@ -77,6 +77,8 @@ class Found:
     rows: int
     # strong, loose or nothing
     label: str
+    # What each number in the text stands for: number -> (name, link). "A" is the assignment list.
+    sources: Dict[str, Tuple[str, str]] = field(default_factory=dict)
 
 
 def about_dates(message: str) -> bool:
@@ -199,12 +201,58 @@ def assignment_rows(items: List[dict], now: datetime, due: Optional[str] = None,
     return lines, len(chosen)
 
 
-def format_hits(query: str, hits: List[Hit], names: dict, label: Optional[str] = None,
-                rows: Sequence[str] = (), today: Optional[date] = None, searched: bool = True) -> str:
+def _day(day: str) -> str:
+    try:
+        parsed = date.fromisoformat(day)
+    except ValueError:
+        return ""
+    return f"{parsed.day} {parsed:%b %Y}"
+
+
+def source_label(hit: Hit) -> str:
+    """How a passage is named in a reply's source line: what it is, where in it, and from which day."""
+    name = re.sub(r"\.[A-Za-z0-9]{2,5}$", "", hit.title).replace("[", "(").replace("]", ")")
+    day = _day(hit.date)
+    if hit.kind == "assignment":
+        return f"{name} (assignment, due {day})" if day else f"{name} (assignment)"
+    if hit.kind == "transcript" and day:
+        return f"{hit.course} lecture {day}" + (f", {hit.locator}" if hit.locator else "")
+    label = f"{name}, {hit.locator}" if hit.locator else name
+    return f"{label} ({day})" if day else label
+
+
+_SOURCE_LINE = re.compile(r"^-# Source:(.*)$", re.MULTILINE | re.IGNORECASE)
+_MARK = re.compile(r"\[(\d+|A)\]")
+
+
+def render_sources(text: str, sources: Dict[str, Tuple[str, str]]) -> str:
     """
-    A lookup in a === block for the model: each passage under a line that says where it
-    is from, then the dated list. searched is False when the list alone answers the
-    question and no passages were looked for.
+    Write a reply's source line from the numbers the model put on it. The model never
+    types a link: it names the passages it used, and their names, dates and links are
+    filled in here. A number that stands for nothing is dropped, and a line left with
+    nothing goes.
+    """
+    lines = list(_SOURCE_LINE.finditer(text))
+    if not lines:
+        return text
+    line = lines[-1]
+    named = [sources[key] for key in dict.fromkeys(_MARK.findall(line.group(1))) if key in sources]
+    # A number set in the answer itself says nothing to the person reading it
+    body = re.sub(r" ?\[(\d+|A)\]", lambda mark: "" if mark.group(1) in sources else mark.group(0), text[:line.start()])
+    rest = text[line.end():]
+    if not named:
+        return (body.rstrip() + rest).rstrip()
+    shown = ", ".join(f"[{name}](<{link}>)" if link else name for name, link in named)
+    return f"{body.rstrip()}\n-# Source: {shown}{rest}"
+
+
+def format_hits(query: str, hits: List[Hit], names: dict, label: Optional[str] = None,
+                rows: Sequence[str] = (), today: Optional[date] = None, searched: bool = True, start: int = 1) -> str:
+    """
+    A lookup in a === block for the model: each passage under a numbered line that says
+    where it is from, then the dated list. searched is False when the list alone
+    answers the question and no passages were looked for. start is the first number,
+    so the passages of a later lookup do not reuse the numbers of an earlier one.
     """
     lines = [f'=== COURSE MATERIAL for "{query}" ===']
     if not hits and searched:
@@ -213,7 +261,7 @@ def format_hits(query: str, hits: List[Hit], names: dict, label: Optional[str] =
     elif hits and (label or label_of(hits)) == "loose":
         lines.append("the passages are only loosely related to what was asked. use one only if it really answers it. if none "
                      "does, say u couldnt find exactly that, then give the closest thing here and where it is from")
-    for number, hit in enumerate(hits, 1):
+    for number, hit in enumerate(hits, start):
         source = [f"{hit.course} {names.get(hit.course, '')}".strip(),
                   f'{KIND_NAMES.get(hit.kind, (hit.kind,))[0]} "{hit.title}"']
         source += [part for part in (hit.section, _where(hit), hit.date) if part]
@@ -232,7 +280,7 @@ def format_hits(query: str, hits: List[Hit], names: dict, label: Optional[str] =
         if lines[-1] == "":
             lines.pop()
         when = f", today is {today:%A} {today.day} {today:%b %Y} in Bangkok" if today else ""
-        lines.append(f"ASSIGNMENTS posted in teams{when}:")
+        lines.append(f"[A] ASSIGNMENTS posted in teams{when}:")
         lines.extend(rows)
         lines.append("")
     if lines[-1] == "":
@@ -243,13 +291,13 @@ def format_hits(query: str, hits: List[Hit], names: dict, label: Optional[str] =
 
 async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[float]]], words: str, codes: Sequence[str],
                    now: datetime, kind: Optional[str] = None, since: Optional[str] = None, dated: bool = False,
-                   due: Optional[str] = None, asked: Optional[str] = None) -> Found:
+                   due: Optional[str] = None, asked: Optional[str] = None, first_number: int = 1) -> Found:
     """
     Look words up in the courses in codes, or in every course when codes is empty.
     kind puts results of that kind first without leaving the others out. dated adds
     the list of assignments, counted from now, and due narrows that list to "upcoming" or "past". asked
     is the message as it was written, which says which days and which assignments
-    the list is wanted for.
+    the list is wanted for. first_number is the number the first passage gets.
     """
     asked = asked or words
     dated = dated or bool(due)
@@ -291,4 +339,9 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
         rows = [f"- none posted{' for ' + ', '.join(codes) if codes else ''}"]
     names = {course["code"]: course["name"] for course in store.courses()}
     label = label_of(hits)
-    return Found(format_hits(words, hits, names, label, rows, today, searched), hits, count, label)
+    sources = {str(number): (source_label(hit), hit.url) for number, hit in enumerate(hits, first_number)}
+    if dated:
+        none = f": none posted{' for ' + ', '.join(codes) if codes else ''}" if not items else " list"
+        sources["A"] = (f"teams assignments{none}", "")
+    return Found(format_hits(words, hits, names, label, rows, today, searched, first_number), hits, count, label, sources)
+

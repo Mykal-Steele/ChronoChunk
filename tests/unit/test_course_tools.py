@@ -595,3 +595,33 @@ async def test_a_reply_inside_a_session_is_not_kept_for_next_time(handler, mock_
     await handler.generate_reply("/what is pca -csc340", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
     assert (await handler.generate_reply("/and pc1", "", "Kruskal", "1", allow_files=True, session_key="chan:1")).text == "first"
     assert (await handler.generate_reply("/and pc1", "", "Kruskal", "1", allow_files=True, session_key="chan:1")).text == "second"
+
+
+# ── the source line is filled in by code ──────────────────────────────────────
+
+async def test_the_model_names_passages_by_number_and_the_reply_gets_the_links(handler, mock_openai_client, material, clock):
+    mock_openai_client.chat.completions.create.side_effect = [_message(content="pca squashes the dimensions\n-# Source: [1]")]
+    reply = await handler.generate_reply("/what is pca -csc340", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    assert reply.text == ("pca squashes the dimensions\n"
+                          "-# Source: [5th--Regression, page 35 (1 Sep 2026)](<https://example.test/deck.pdf>)")
+
+
+async def test_numbers_run_on_through_a_session_so_each_names_one_passage(handler, mock_openai_client, material, clock):
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(content="pca squashes the dimensions\n-# Source: [1]"),
+        _message(tool_calls=[_tool_call("search_course", {"query": "naive bayes", "course": "CSC345"})]),
+        _message(content="bayes is simple, pca is not\n-# Source: [1] [2]"),
+    ]
+    mock_openai_client.embeddings.create.side_effect = [_embedding(direction(pca=1)), _embedding(direction(bayes=1))]
+    await handler.generate_reply("/what is pca -csc340", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    reply = await handler.generate_reply("/compare it with naive bayes", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
+    searched = mock_openai_client.chat.completions.create.call_args_list[-1][1]["messages"][-1]["content"]
+    assert "[2] CSC345 Data Science, lecture recording" in searched and "[1]" not in searched
+    assert reply.text.endswith("-# Source: [5th--Regression, page 35 (1 Sep 2026)](<https://example.test/deck.pdf>), "
+                               "CSC345 lecture 6 Oct 2026, 2:45:25")
+
+
+def test_the_prompt_asks_for_numbers_and_not_for_links(material):
+    prompt = SearchCourse().prompt()
+    assert '"-# Source: [2] [5]"' in prompt and "never write a link" in prompt
+    assert "example.com" not in prompt

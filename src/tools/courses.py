@@ -13,6 +13,7 @@ from src.course_retrieval import (  # noqa: F401  (the limits are part of this m
     MAX_ORIGINAL_CHARS,
     about_dates,
     format_hits,
+    render_sources,
     retrieve,
 )
 from src.course_scope import Scope, course_scope, search_words
@@ -54,7 +55,7 @@ COURSE MATERIAL:
 - the passages are only the closest matches, so check that they really answer the question. answer facts about a course only from them. when a lookup says its passages are only loosely related, or they dont answer it, say u couldnt find exactly that, then give the closest thing u found and where it is from. when nothing matches, say u couldnt find it in the course material. never make up what a slide, a teacher or an assignment said.
 - an ASSIGNMENTS list in the material is what was posted in the Assignments tab of the class team, with the due time in bangkok time and the days left. it is the same for everyone in the class: u dont know who has done, handed in or been graded on anything, so never say that someone has or hasnt done one. exam dates and work a teacher only gave in class are not in that list, so look for those in the passages. when the list has nothing due or says none posted, say there is nothing in the teams assignments, not that there is no work.
 - homework or a deadline that a slide or a lecture mentions belongs to that day. say which slides or lecture it is from and its date, and count "next class" or "next week" from that date, not from today. dont call it current unless the dates say so.
-- when u answered from course material, end with a source line: "-# Source: " then a link whose name says where it came from, the deck and page, the lecture date and time, or the assignment, like [Search slides, page 44](<https://example.com>) or [AI lecture 15 Sep, 1:25:27](<https://example.com>). two sources are two links on that one line. only use links that are in the saved material or the search results. the ASSIGNMENTS list has no links: when the answer comes only from that list, the source line is "-# Source: teams assignments list" with no link. never write a link with nothing in it.
+- when u answered from course material, end with one line that names the passages u really used by their numbers, like "-# Source: [2] [5]". use [A] for the ASSIGNMENTS list. never write a link, a file name or a date on that line: they are filled in for u from the numbers. when u used none of it, or the message was not about class, write no source line.
 - keep ur normal voice. the facts come from the material, the tone is still urs.
 """
 
@@ -188,17 +189,23 @@ async def lookup_for(turn: Turn, scope: Scope) -> str:
     words = search_words(scope.text, store.courses(), scope.codes)
     try:
         found = await retrieve(store, turn.embed, words, scope.codes, _now(), dated=about_dates(scope.text),
-                               asked=scope.text)
+                               asked=scope.text, first_number=_next_number(turn))
     except BudgetExceededError:
         raise
     except Exception as e:
         logger.error(f"The course lookup crashed for {words[:200]!r}: {e!r}")
         return _block("not looked up: the course search failed because of an internal error. tell them it could not be searched")
+    turn.course_sources.update(found.sources)
     if found.hits or found.rows:
         turn.findings.append(found.text)
     logger.info(f"Course lookup for {turn.username}: {words[:200]!r} in {scope.codes or 'every course'} gave "
                 f"{len(found.hits)} passages ({found.label}), {found.rows} assignments, {len(found.text)} chars")
     return found.text
+
+
+def _next_number(turn: Turn) -> int:
+    """The number the next passage gets, after every passage this conversation was already shown."""
+    return 1 + max((int(key) for key in turn.course_sources if key.isdigit()), default=0)
 
 
 def _now() -> datetime:
@@ -310,13 +317,14 @@ class SearchCourse(Tool):
             since = ""
         try:
             found = await retrieve(store, turn.embed, query, codes, _now(), kind=kind, since=since or None,
-                                   dated=about_dates(query), due=due)
+                                   dated=about_dates(query), due=due, first_number=_next_number(turn))
         except BudgetExceededError:
             raise
         except Exception as e:
             logger.error(f"Tool {self.name} crashed for {query[:200]!r}: {e!r}")
             return ToolResult("error: the course search failed because of an internal error. tell them it could not be searched")
 
+        turn.course_sources.update(found.sources)
         if found.hits or found.rows:
             turn.findings.append(found.text)
             if turn.keep_material:

@@ -46,6 +46,8 @@ class Turn:
     course_codes: Optional[List[str]] = None
     # Keeps a lookup for the rest of the person's course session: keep_material(block)
     keep_material: Optional[Callable[[str], None]] = None
+    # What each passage number the model was shown stands for: number -> (name, link)
+    course_sources: dict = field(default_factory=dict)
     calls: int = 0
     cost: float = 0.0
     started: float = field(default_factory=time.monotonic)

@@ -23,6 +23,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - When Azure turns a call down, the reply says why: a rate limit ("try again in like 30 sec"), a spent quota, or a fault on the bot's side. It was one of ten jokes for all three.
 - An assignment's due time is stored on its own, so the list can say "due today at 23:59, 9 hours left" counted from the minute you ask. The course file is now version 2, and the bot still reads version 1.
 - Every reply is told the current date and time in Bangkok, so "today", "tonight" and "this week" mean what they should.
+- The source line of a course answer is written by the bot's code. The model names the passages it used by number, and the name, page or time, the date of the file or lecture, and the link are filled in. A link can no longer come out empty or mistyped, and replies are shorter to write.
 - Results that are only near the topic are marked as loosely related, and the bot is told to say it could not find exactly that and give the closest thing.
 
 ### Added

@@ -42,3 +42,69 @@ def test_an_assignment_from_an_older_course_file_is_read_from_its_text():
            "text": "Mini project\nDue 2026-11-16 23:59 Bangkok time\n10 points\nBuild an agent."}
     lines, _ = assignment_rows([old], _at(15))
     assert lines == ['- CSC340 "Mini project", due in 34 days (16 Nov 2026) at 23:59, 10 points']
+
+
+# ── the source line is written by code, from the numbers the model gives ───────
+
+from src.course_retrieval import format_hits, render_sources, source_label  # noqa: E402
+from src.course_store import Hit  # noqa: E402
+
+
+def _hit(kind="slide", title="CBLL Week 9.pdf", locator="page 47", day="2026-10-09", url="https://example.test/w9.pdf",
+         course="LNG320"):
+    return Hit(course=course, kind=kind, title=title, section="Week 9", locator=locator, url=url, date=day,
+               text="Team homework: write a draft introduction", original=None, before="", after="", similarity=0.6)
+
+
+SOURCES = {"2": ("CBLL Week 9, page 47 (9 Oct 2026)", "https://example.test/w9.pdf"),
+           "3": ("LNG320 lecture 2 Oct 2026, 1:51:48", "https://example.test/w8.mp4"),
+           "A": ("teams assignments: none posted for LNG320", "")}
+
+
+def test_a_source_says_what_it_is_where_in_it_and_from_which_day():
+    assert source_label(_hit()) == "CBLL Week 9, page 47 (9 Oct 2026)"
+    assert source_label(_hit(kind="transcript", title="Week 8 class", locator="1:51:48", day="2026-10-02")) == \
+        "LNG320 lecture 2 Oct 2026, 1:51:48"
+    assert source_label(_hit(kind="assignment", title="Lab 7", locator="", day="2026-10-13", course="CSC345")) == \
+        "Lab 7 (assignment, due 13 Oct 2026)"
+    # No date known, and a title with brackets, which would break the link
+    assert source_label(_hit(title="Notes [draft].pdf", day="")) == "Notes (draft), page 47"
+
+
+def test_the_numbers_the_model_gives_become_named_links():
+    reply = "write a draft introduction before next class\n-# Source: [2] [3]"
+    assert render_sources(reply, SOURCES) == (
+        "write a draft introduction before next class\n"
+        "-# Source: [CBLL Week 9, page 47 (9 Oct 2026)](<https://example.test/w9.pdf>), "
+        "[LNG320 lecture 2 Oct 2026, 1:51:48](<https://example.test/w8.mp4>)")
+
+
+def test_the_assignment_list_is_named_without_a_link():
+    assert render_sources("nothing is posted\n-# Source: [A]", SOURCES) == \
+        "nothing is posted\n-# Source: teams assignments: none posted for LNG320"
+    assert "(<>)" not in render_sources("x\n-# Source: [A] [2]", SOURCES)
+
+
+def test_a_number_that_is_no_source_is_dropped_and_a_line_with_none_left_goes():
+    assert render_sources("x\n-# Source: [2] [9]", SOURCES) == \
+        "x\n-# Source: [CBLL Week 9, page 47 (9 Oct 2026)](<https://example.test/w9.pdf>)"
+    assert render_sources("couldnt find that\n-# Source: [9]", SOURCES) == "couldnt find that"
+    assert render_sources("couldnt find that\n-# Source: [0]", SOURCES) == "couldnt find that"
+
+
+def test_a_source_named_twice_is_listed_once_and_numbers_in_the_answer_are_taken_out():
+    reply = "the homework is a draft introduction [2]. it is a team task [2][3].\n-# Source: [2], [3] and [2]"
+    assert render_sources(reply, SOURCES) == (
+        "the homework is a draft introduction. it is a team task.\n"
+        "-# Source: [CBLL Week 9, page 47 (9 Oct 2026)](<https://example.test/w9.pdf>), "
+        "[LNG320 lecture 2 Oct 2026, 1:51:48](<https://example.test/w8.mp4>)")
+
+
+def test_a_reply_with_no_source_line_is_left_alone():
+    assert render_sources("pasta, probably", SOURCES) == "pasta, probably"
+    assert render_sources("use list[2] to get the third item", {}) == "use list[2] to get the third item"
+
+
+def test_passages_can_be_numbered_on_from_an_earlier_lookup():
+    text = format_hits("homework", [_hit(), _hit(locator="page 48")], {"LNG320": "Content-based Language Learning"}, start=4)
+    assert "[4] LNG320 Content-based Language Learning" in text and "[5] LNG320" in text and "[1]" not in text
