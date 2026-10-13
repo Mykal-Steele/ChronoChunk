@@ -4,7 +4,7 @@ This page says what ChronoChunk keeps about you, where it goes, and how to delet
 
 ## What the bot stores
 
-When you talk to the bot (a `/` message, a slash command, a ping or a reply to it), it saves a few rows about you in a database on its own server:
+When you talk to the bot (a `/` or `!` message, a slash command, a ping or a reply to it), it saves a few rows about you in a database on its own server:
 
 - Your Discord user ID and display name.
 - Your last 20 messages to the bot and its answers.
@@ -18,6 +18,8 @@ It uses these to remember you between conversations: the facts and your last 3 e
 - A message you did not address to the bot, when someone called it in that channel in the last 30 seconds. The bot may answer it. The message goes to the AI model like the rest of the recent channel messages, and nothing about you is saved.
 - Images, PDFs and files you point it at, and web pages it opens. They are read for the answer and not saved.
 - For a PDF, the bot writes a description of each page so it can answer about charts and tables. It keeps those descriptions in its database for 7 days after they were last used, so follow-up questions are fast and the same file does not have to be read again. A description is stored under a fingerprint of the file, with no filename and no link to who sent it. The PDF itself is not kept.
+- Course material. The bot holds a copy of the class files, lecture transcripts and assignments of the courses its owner syncs from Microsoft Teams. Names that Teams marks in a lecture transcript are taken out, which misses a name written like any other word. An assignment is kept as course material only: nothing about who handed in what, no grades and no class members. This copy is the same for everyone and holds nothing about the people who ask.
+- Course mode. When you end a message with `-c` or a course code, the bot keeps what it looked up for you in memory for an hour, so you can keep asking. It is never written to disk, and it is gone after the hour or when the bot restarts.
 - Server emoji. The bot looks at the picture of each custom emoji once and keeps a few words on what it shows, with the emoji's id and name. No message and no person is stored with it.
 
 ## Logs
@@ -32,6 +34,7 @@ The bot cannot answer without sending some of what you write to other services:
 |---|---|---|
 | Microsoft Azure OpenAI | Your message, the recent channel messages, the facts stored about you, your last 3 exchanges with the bot, and any image or file you point the bot at | Every answer |
 | Microsoft Azure OpenAI | The picture and name of each custom server emoji | Once per new emoji |
+| Microsoft Azure OpenAI | Your message, to turn it into a search of the course material, and the passages that search found | When your message is in course mode |
 | Tavily | Your search words, and links the bot cannot open on its own | When the bot searches the web or opens a link |
 | The website behind a link | A normal page request from the bot's server | When you give the bot a link |
 | mermaid.ink, and kroki.io as a backup | The text of a diagram | When the bot draws a diagram |

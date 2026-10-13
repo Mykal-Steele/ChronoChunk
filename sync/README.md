@@ -91,12 +91,13 @@ Set these in the environment. The defaults are in `settings.py`.
 |---|---|---|
 | `COURSE_PREFIX` | `1-2569` | Class teams of the semester start with this |
 | `SEMESTER_START` | `2026-07-01` | Files changed before this day, and assignments due before it, are left out |
+| `NICKNAMES` (in `settings.py`) | a list per course | What people call each course, such as "ai class". The `-c` flag reads the course from these |
 | `SYNC_SPEND_CAP` | `2` | USD one run may spend |
 | `SYNC_CHAT_DEPLOYMENT` | `gpt-6-luna` | Describes pages and translates |
 | `EMBEDDING_DEPLOYMENT` | `text-embedding-3-small` | Embeds chunks |
 | `CHRONOCHUNK_SERVER` | empty | `user@host` of the bot's server, for `--upload` |
 
-At the start of a new semester, change `COURSE_PREFIX` and `SEMESTER_START`.
+At the start of a new semester, change `COURSE_PREFIX`, `SEMESTER_START` and the `NICKNAMES` list.
 
 ## When the sign-in expires
 

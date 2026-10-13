@@ -76,7 +76,7 @@ def build_help_embed() -> discord.Embed:
         "paste a link to a discord message and i read that message and its files",
         "`/tldr <count>` - catch up on the last messages in the channel (default 50, max 200). i look at the images and files in them too",
         "`/tldr <count> <what u want>` - ask about those messages or have me make something from them, like `/tldr 60 what did we decide` or `/tldr 60 make a pdf of the design`",
-        "pinging me works the same as starting with `/`",
+        "pinging me or starting with `!` works the same as starting with `/`",
         "right after someone talks to me i might jump in on other messages for 30s. `/join-in off` stops that here"
     ]
     embed.add_field(name="📎 reading stuff", value="\n".join(reading_cmds), inline=False)
@@ -100,7 +100,9 @@ def build_help_embed() -> discord.Embed:
     embed.add_field(name="🌐 the web", value="\n".join(web_cmds), inline=False)
 
     course_cmds = [
-        "ask about ur classes (`/what did the ai lecture say about search`) and i look it up in the slides and lecture recordings, then say where i found it",
+        "end a message with `-c` and i look it up in ur class slides, lecture recordings and assignments: `/what did the ai lecture say about search -c`. a course code works too: `-csc340`",
+        "after that u just keep chatting, course mode stays on for u here for an hour. without `-c` i dont look anything up",
+        "`/whats due this week -c` - assignments with due dates and time left",
         "`/courses` - which courses i have, how much of each, and when they were last synced"
     ]
     embed.add_field(name="📚 course material", value="\n".join(course_cmds), inline=False)

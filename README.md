@@ -339,6 +339,7 @@ ChronoChunk/
 │   ├── course_store.py        # The course material file and its search
 │   ├── course_scope.py        # The -c, -course and -csc340 flags: is a message about a course, and which
 │   ├── course_retrieval.py    # One lookup: passages, the dated assignment list, and how good the match is
+│   ├── course_session.py      # Course mode: what was looked up for a person, kept for an hour
 │   ├── slash_commands.py      # Slash commands
 │   ├── command_handler.py     # Typed /tldr, /usage, /courses and /help
 │   ├── database.py            # The SQLite database and its schema
