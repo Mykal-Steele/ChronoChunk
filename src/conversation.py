@@ -7,6 +7,7 @@ bot, it may answer a message nobody addressed to it, the way a person who is par
 of a conversation would. Everything here is held in memory and is gone on a restart.
 """
 import random
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -18,9 +19,9 @@ from config.config import Config
 CROWD_SECONDS = 60
 # Calls no further apart than this are one conversation with the bot. A call after a longer quiet starts a new one.
 SESSION_GAP_SECONDS = 300
-# After one call the bot weighs at most this many uncalled messages, and answers at most one of them.
+# After one call the bot weighs exactly one uncalled message, and answers it or stays out.
 # It gets another go when someone calls it again.
-MAX_WEIGHED_PER_CALL = 3
+MAX_WEIGHED_PER_CALL = 1
 MAX_UNCALLED_REPLIES_PER_CALL = 1
 
 # What the model answers when it decides to stay out of it
@@ -36,20 +37,21 @@ UNCALLED_NOTE = (
 )
 
 
+_BANG_CALL = re.compile(r"!\s?(?=[^\W_])")
+
+
 def is_call(content: str) -> bool:
     """
-    Whether a message calls the bot by how it starts: with a slash, or with a dollar
-    sign for servers where a slash sets off another bot's commands. A price such as
-    "$5" is not a call.
+    Whether a message calls the bot by how it starts: with a slash, or with an
+    exclamation mark for servers where a slash sets off another bot's commands. An
+    outcry such as "!!!" is not a call.
     """
-    if content.startswith("/"):
-        return True
-    return content.startswith("$") and len(content) > 1 and not content[1].isdigit() and content[1] != "$"
+    return content.startswith("/") or bool(_BANG_CALL.match(content))
 
 
 def as_slash(content: str) -> str:
-    """A dollar-sign call written as the slash call it stands for. Anything else comes back as it is."""
-    return "/" + content[1:].lstrip() if content.startswith("$") and is_call(content) else content
+    """An exclamation-mark call written as the slash call it stands for. Anything else comes back as it is."""
+    return _BANG_CALL.sub("/", content, count=1) if _BANG_CALL.match(content) else content
 
 
 def stays_out(text: str) -> bool:
@@ -86,7 +88,7 @@ class Conversation:
 
     def called(self, channel_id, user_id, at: Optional[datetime] = None) -> None:
         """
-        Someone called the bot here: a / or $ message, a ping, a reply to it or the /chat
+        Someone called the bot here: a / or ! message, a ping, a reply to it or the /chat
         command. at is when their message was sent.
         """
         channel = self._channel(channel_id)

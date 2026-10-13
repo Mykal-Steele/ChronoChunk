@@ -165,7 +165,7 @@ Slash commands:
 
 For 30 seconds after someone calls the bot in a channel, it may also answer a message there that nobody addressed to it, when it fits the conversation. When several people talk to it at once, its answer pings the person it is for.
 
-You can also type to the bot without picking a slash command. A message that starts with `/` or `$`, a ping, or a reply to one of its messages is chat. `$` is there for servers where a slash sets off another bot's commands, and a price such as `$5` does not count. After a call the bot may also answer one message nobody sent to it, within 30 seconds, on a coin flip, and without any course lookup. `/tldr`, `/usage`, `/model`, `/setup`, `/stats`, `/courses` and `/help` work typed as well.
+You can also type to the bot without picking a slash command. A message that starts with `/` or `!`, a ping, or a reply to one of its messages is chat. `!` is there for servers where a slash sets off another bot's commands, and an outcry such as `!!!` does not count. After a call the bot may also answer the next message nobody sent to it, within 30 seconds, on a coin flip, and without any course lookup. `/tldr`, `/usage`, `/model`, `/setup`, `/stats`, `/courses` and `/help` work typed as well.
 
 ## Reading messages and files
 
@@ -227,7 +227,7 @@ The bot can open links and search the web.
 
 The bot can answer questions about your university courses from the slides, lecture recordings and assignments of the semester.
 
-- Course material only comes into a reply when you ask for it with a flag at the end of the message. `-course`, or `-c` for short, says the message is about a course, and you name the class in your own words: `/what did the lecture say about heuristic search in the ai class -c`. A course code names it directly: `/what is a heuristic -csc340`. Small typos in a course name are fine.
+- Course material only comes into a reply when you ask for it with a flag at the very end of the message. A `-c` anywhere else is just text. `-course`, or `-c` for short, says the message is about a course, and you name the class in your own words: `/what did the lecture say about heuristic search in the ai class -c`. A course code names it directly: `/what is a heuristic -csc340`. Small typos in a course name are fine.
 - With `-c` and no class named, every course is searched: `/whats due this week -c`.
 - Without a flag the bot does not look anything up and does not talk about course material. Asked a class question without one, it tells you to add the flag instead of guessing.
 - The bot looks the material up before it answers, answers from what it found, and ends with the deck and page, the lecture and time, or the assignment, plus the link.

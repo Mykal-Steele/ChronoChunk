@@ -381,20 +381,21 @@ async def test_a_lost_coin_flip_keeps_the_bot_out_without_asking_the_model(pipel
     ai_handler.generate_reply.assert_not_called()
 
 
-async def test_a_dollar_sign_calls_the_bot_like_a_slash(pipeline):
+async def test_an_exclamation_mark_calls_the_bot_like_a_slash(pipeline):
     processor, _, _, _, ai_handler, bot = pipeline
     ai_handler.generate_reply = AsyncMock(return_value=Reply("yo"))
-    msg = _plain(_make_message(bot.user, content="$yo whats up"))
+    msg = _plain(_make_message(bot.user, content="!yo whats up"))
     await processor.process_message(msg)
     assert msg.reply.await_args.args[0] == "yo"
     # The model sees it the way it sees a slash message
     assert ai_handler.generate_reply.await_args.args[0] == "/yo whats up"
 
 
-async def test_a_price_does_not_call_the_bot(pipeline):
+async def test_an_outcry_or_a_dollar_sign_does_not_call_the_bot(pipeline):
     processor, _, _, _, ai_handler, bot = pipeline
     ai_handler.generate_reply = AsyncMock(return_value=Reply("yo"))
-    await processor.process_message(_plain(_make_message(bot.user, content="$5 for lunch lol")))
+    for content in ("!!! no way", "$yo whats up", "$5 for lunch lol"):
+        await processor.process_message(_plain(_make_message(bot.user, content=content)))
     ai_handler.generate_reply.assert_not_called()
 
 

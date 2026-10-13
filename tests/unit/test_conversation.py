@@ -69,7 +69,16 @@ def test_only_one_uncalled_message_is_weighed_at_a_time(conversation):
     conversation.called("c", "alex")
     conversation.start_deciding("c")
     assert not conversation.may_join_in("c")
+
+
+def test_exactly_one_uncalled_message_is_weighed_per_call(conversation):
+    assert MAX_WEIGHED_PER_CALL == 1
+    conversation.called("c", "alex")
+    conversation.start_deciding("c")
+    # The model stayed out of it. That was the one chance of this call.
     conversation.done_deciding("c", answered=False)
+    assert not conversation.may_join_in("c")
+    conversation.called("c", "alex")
     assert conversation.may_join_in("c")
 
 
@@ -174,18 +183,19 @@ def test_the_chance_is_a_setting(clock, monkeypatch):
         assert conversation.may_join_in("c") is joins
 
 
-@pytest.mark.parametrize("content", ["/yo", "/", "$yo", "$ whats up", "$tldr 50"])
-def test_a_slash_or_a_dollar_sign_calls_the_bot(content):
+@pytest.mark.parametrize("content", ["/yo", "/", "!yo", "! whats up", "!tldr 50", "!5 things to know"])
+def test_a_slash_or_an_exclamation_mark_calls_the_bot(content):
     assert is_call(content)
 
 
-@pytest.mark.parametrize("content", ["yo", "", "$", "$5 for lunch lol", "$20", "$$ rich", "cost me $5", " $yo"])
-def test_money_and_plain_talk_do_not_call_the_bot(content):
+@pytest.mark.parametrize("content", ["yo", "", "!", "!!", "!!! wow", "!?", "! ", "wow!", " !yo", "$yo", "$5 for lunch"])
+def test_an_outcry_and_plain_talk_do_not_call_the_bot(content):
     assert not is_call(content)
 
 
-def test_a_dollar_call_reads_like_a_slash_call():
-    assert as_slash("$yo whats up") == "/yo whats up"
+def test_an_exclamation_call_reads_like_a_slash_call():
+    assert as_slash("!yo whats up") == "/yo whats up"
+    assert as_slash("! yo") == "/yo"
     assert as_slash("/yo") == "/yo"
-    assert as_slash("$5 for lunch") == "$5 for lunch"
+    assert as_slash("!!! wow") == "!!! wow"
     assert as_slash("plain") == "plain"

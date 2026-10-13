@@ -302,9 +302,9 @@ class MessageProcessor:
     async def _handle_command_message(self, message: discord.Message, user_id: str, 
                               username: str, channel_id: str, user_data: dict,
 is_correction: bool) -> None:
-        """Handle messages that begin with a slash or a dollar sign (potential commands)"""
+        """Handle messages that begin with a slash or an exclamation mark (potential commands)"""
         try:
-            # "$yo" is "/yo" from here on
+            # "!yo" is "/yo" from here on
             content = as_slash(message.content)
             # Split into command and args
             parts = content.split()

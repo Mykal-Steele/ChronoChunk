@@ -22,9 +22,18 @@ def test_a_code_flag_names_the_course_and_is_taken_out_of_the_message():
     scope = course_scope("what is a heuristic -csc340", COURSES)
     assert scope.flagged and scope.codes == ["CSC340"]
     assert scope.text == "what is a heuristic"
-    # Anywhere in the message, in any case
-    assert course_scope("-CSC340 what is a heuristic", COURSES).codes == ["CSC340"]
-    assert course_scope("what is -Csc340 a heuristic", COURSES).text == "what is a heuristic"
+    # In any case, and spaces after it do not matter
+    assert course_scope("what is a heuristic -CSC340  \n", COURSES).codes == ["CSC340"]
+
+
+def test_a_flag_only_counts_at_the_end_of_the_message():
+    for message in ("-csc340 what is a heuristic", "what is -csc340 a heuristic", "-c whats due this week",
+                    "how does gcc -c work", "-course when is the midterm", "is -c or -course the flag?"):
+        scope = course_scope(message, COURSES)
+        assert not scope.flagged and scope.text == message
+    # Several flags can end a message, and only that run of flags is read
+    scope = course_scope("the -c flag of gcc, is it in the notes -csc340 -c", COURSES)
+    assert scope.flagged and scope.codes == ["CSC340"] and scope.text == "the -c flag of gcc, is it in the notes"
 
 
 def test_several_code_flags_and_a_code_alias():
@@ -45,7 +54,7 @@ def test_the_course_flag_reads_the_course_from_the_message():
     scope = course_scope("what to study for my ai class -course", COURSES)
     assert scope.flagged and scope.codes == ["CSC340"]
     assert scope.text == "what to study for my ai class"
-    assert course_scope("-course when is the oo class midterm", COURSES).codes == ["CSC319"]
+    assert course_scope("when is the oo class midterm -course", COURSES).codes == ["CSC319"]
     assert course_scope("what did data science say about pca -course", COURSES).codes == ["CSC345"]
     assert course_scope("csc 340 midterm topics -course", COURSES).codes == ["CSC340"]
     assert course_scope("bif633 lab 4 -COURSE", COURSES).codes == ["CSC345"]
@@ -116,7 +125,7 @@ def test_search_words_fall_back_to_the_message_when_nothing_is_left():
 def test_c_is_the_short_form_of_the_course_flag():
     scope = course_scope("what to study for my ai class -c", COURSES)
     assert scope.flagged and scope.codes == ["CSC340"] and scope.text == "what to study for my ai class"
-    assert course_scope("-C whats due this week", COURSES).text == "whats due this week"
+    assert course_scope("whats due this week -C", COURSES).text == "whats due this week"
     # Only as a word of its own
     for message in ("vitamin-c is good", "the -cool flag", "a-c-b", "grade c- lol"):
         assert not course_scope(message, COURSES).flagged

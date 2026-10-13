@@ -1,16 +1,16 @@
 """
 The course flag. Course material is only brought into a reply when the message asks
-for it: "-course", or "-c" for short, means the message is about a course and says
-which one in its own words, and "-csc340" names the course by its code. A message with neither is plain
-chat, and nothing about courses reaches the model.
+for it, with a flag at its end: "-course", or "-c" for short, means the message is
+about a course and says which one in its own words, and "-csc340" names the course by
+its code. A message that does not end in one is plain chat.
 """
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import List
 
-_COURSE_FLAG = re.compile(r"(?<![\w-])-(?:course|c)(?![\w-])", re.IGNORECASE)
-_CODE_FLAG = re.compile(r"(?<![\w-])-([a-z]{3}\d{3})(?![\w-])", re.IGNORECASE)
+# The flags that end a message, each a word of its own: "... -c", "... -csc340 -csc345"
+_FLAGS = re.compile(r"(?:(?:^|\s+)-(?:course|c|[a-z]{3}\d{3}))+\s*$", re.IGNORECASE)
 _CODE = re.compile(r"[A-Z]{3}\d{3}")
 
 # A word shorter than this has to be written exactly. A longer one may carry a typo.
@@ -90,10 +90,12 @@ def search_words(text: str, courses: List[dict], codes: List[str]) -> str:
 
 def course_scope(message: str, courses: List[dict]) -> Scope:
     """Read the flags of a message. courses is CourseStore.courses()."""
-    flags = [match.group(1).upper() for match in _CODE_FLAG.finditer(message)]
-    if not flags and not _COURSE_FLAG.search(message):
+    ending = _FLAGS.search(message)
+    if not ending:
         return Scope(message)
-    text = " ".join(_COURSE_FLAG.sub(" ", _CODE_FLAG.sub(" ", message)).split())
+    # A flag anywhere else is part of what they wrote, like "gcc -c"
+    text = message[:ending.start()].strip()
+    flags = [flag[1:].upper() for flag in ending.group().split() if _CODE.fullmatch(flag[1:].upper())]
     by_code = {course["code"]: course["code"] for course in courses}
     by_code.update({alias.upper(): course["code"] for course in courses for alias in course["aliases"]
                     if _CODE.fullmatch(alias.upper())})

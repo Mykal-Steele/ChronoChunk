@@ -55,7 +55,7 @@ class MessageHandler:
 
         # For command-like messages, store without the slash for more natural flow
         content_to_store = content
-        if is_command and content[:1] in ("/", "$") and not content.startswith('//'):
+        if is_command and content[:1] in ("/", "!") and not content.startswith('//'):
             content_to_store = content[1:].lstrip() if len(content) > 1 else content
 
         self.last_channel_messages[channel_id].append({
