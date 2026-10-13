@@ -152,7 +152,7 @@ Slash commands:
 - `/forget` - Delete everything the bot has stored about you. `/forget <text>` deletes one fact.
 - `/game <max>`, `/guess <number>`, `/end` - The number guessing game
 - `/usage` - What you have left today: messages, PDFs, files, web lookups, course searches and your AI limit. Only you see the answer.
-- `/courses` - The course material the bot can search: each course, how much it holds, and the day of the last sync
+- `/courses` - The course material the bot can search: each course, how much it holds, its newest slides and lecture recording, and the time of the last sync
 - `/model` - Which AI model the bot is running on
 - `/setup` - Where the bot runs and the settings it runs with, for developers
 - `/stats` - Everything the bot has used so far: AI calls, tokens and cost, by day, by job and by model
@@ -229,7 +229,7 @@ The bot can answer questions about your university courses from the slides and l
 - Ask in your own words, in any channel: `/what did the AI lecture say about heuristic search`. The bot searches the material, answers from what it finds, and ends with the deck and page or the lecture and time, plus the link.
 - When the material has no answer, the bot says it could not find one. It does not answer course facts from memory.
 - Ask for a file in the same message and the document is written from what it found: `/make a one page pdf on what CSC340 covered about agents`.
-- `/courses` lists the courses it holds and the day they were last synced.
+- `/courses` lists the courses it holds, the date of the newest slides and lecture recording of each, and when they were last synced. Ask the bot how up to date it is, or which lecture is the latest it has, and it answers from the same dates.
 - The material comes from the course sync in [`sync/`](sync/README.md). It runs on a PC, writes one file, `courses.db`, and uploads it to `data/state` on the server. The bot opens the new file on the next question, with no restart. With no file there, the bot has no course search.
 - The search runs in English. The bot writes the search words in English for a question in another language, and material in Thai is translated when it is synced.
 - A question is embedded with the `text-embedding-3-small` deployment, which is the model the sync embeds the material with. A file embedded with another model is not searched, and the log says so.

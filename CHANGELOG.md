@@ -10,6 +10,19 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.18.0 (2026-10-13)
+
+### Added
+
+- The bot knows how new its course material is. For each course it has the date of the newest slides and the newest lecture recording, so it can say which lecture is the latest one it holds and whether this week's files are in yet.
+- It knows the material is its copy of the classes' Microsoft Teams, so a question about its "Teams data" gets the sync time as the answer.
+- `/courses` shows the newest slides and lecture recording under each course.
+- Asked which teams or courses it has, the bot names them from its own list without running a search. Asked about channels, it names the teams and says it does not hold their channels or posts.
+
+### Changed
+
+- The sync time has the hour and minute and is told in Bangkok time: "13 Oct 2026 at 14:06 Bangkok time". It was the day only, counted in UTC, which gave the day before for a sync between midnight and 7 in the morning.
+
 ## 3.17.1 (2026-10-13)
 
 ### Changed
