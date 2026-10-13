@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from src.course_store import DIMENSIONS, CourseStore
-from sync.assignments import assignment_text, due_day
+from sync.assignments import assignment_text, due_day, due_time, facts_meta
 from sync.cache import Cache
 from sync.material import (
     CHUNK_MIN_CHARS,
@@ -171,7 +171,7 @@ def _add_course(store: CourseStore, material: CourseMaterial, models: Models, ca
     store.add_course(course.code, course.name, (*course.aliases, *NICKNAMES.get(course.code, ())), group_id=group,
                      site_url=material.sites[0]["url"])
 
-    # (kind, title, section, url, date, hash, [(locator, text, original)])
+    # (kind, title, section, url, date, hash, [(locator, text, original)], due, meta)
     sources: List[tuple] = []
     seen_content = set()
     pages = described = duplicates = 0
@@ -195,7 +195,7 @@ def _add_course(store: CourseStore, material: CourseMaterial, models: Models, ca
         described += reading.described
         if chunks:
             sources.append(("slide", file["name"], file["folder"].strip("/"), file["url"], local_day(file["modified"]),
-                            file["sha"], chunks))
+                            file["sha"], chunks, "", {}))
 
     spoken = 0
     transcripts = [(file, transcript_chunks(entries))
@@ -211,7 +211,8 @@ def _add_course(store: CourseStore, material: CourseMaterial, models: Models, ca
                   if len(text) >= CHUNK_MIN_CHARS]
         spoken += len(chunks)
         if chunks:
-            sources.append(("transcript", recording_title(file["name"]), "", file["url"], local_day(file["created"]), "", chunks))
+            sources.append(("transcript", recording_title(file["name"]), "", file["url"], local_day(file["created"]), "", chunks,
+                            "", {}))
 
     # One chunk per assignment, dated by the day it is due
     for item in sorted(material.assignments, key=lambda item: (due_day(item), str(item.get("displayName") or ""))):
@@ -220,14 +221,15 @@ def _add_course(store: CourseStore, material: CourseMaterial, models: Models, ca
             continue
         chunk = ("", models.translate([text])[0], text) if has_thai(text) else ("", text, None)
         sources.append(("assignment", str(item.get("displayName") or "").strip(), "", str(item.get("webUrl") or ""),
-                        due_day(item), "", [chunk]))
+                        due_day(item), "", [chunk], due_time(item), facts_meta(item)))
     assigned = sum(1 for source in sources if source[0] == "assignment")
 
     texts = [embedded_text(course, kind, title, section, locator, text)
-             for kind, title, section, _, _, _, chunks in sources for locator, text, _ in chunks]
+             for kind, title, section, _, _, _, chunks, _, _ in sources for locator, text, _ in chunks]
     vectors = iter(models.embed(texts))
-    for kind, title, section, url, date, content_hash, chunks in sources:
-        source_id = store.add_source(course.code, kind, title, section=section, url=url, date=date, content_hash=content_hash)
+    for kind, title, section, url, date, content_hash, chunks, due, meta in sources:
+        source_id = store.add_source(course.code, kind, title, section=section, url=url, date=date, content_hash=content_hash,
+                                     due=due, meta=meta)
         for position, (locator, text, original) in enumerate(chunks):
             store.add_chunk(source_id, position, locator, text, next(vectors), original=original)
     store.save()

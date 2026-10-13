@@ -71,6 +71,33 @@ def test_a_file_from_another_version_of_the_sync_is_refused(path):
         CourseStore.open(path)
 
 
+def test_a_file_written_before_due_times_were_stored_can_still_be_read(path):
+    store = CourseStore.create(path)
+    store.add_course("CSC340", "Artificial Intelligence")
+    source = store.add_source("CSC340", "assignment", "Mini project", date="2026-11-16")
+    store.add_chunk(source, 0, "", "Mini project\nDue 2026-11-16 23:59 Bangkok time", direction(agents=1))
+    # Version 1 had neither column
+    store._connection.executescript(
+        "CREATE TABLE old AS SELECT id, course, kind, title, section, url, date, content_hash FROM sources;"
+        "DROP TABLE sources; ALTER TABLE old RENAME TO sources; PRAGMA user_version = 1;")
+    store.save()
+    store.close()
+    reader = CourseStore.open(path)
+    assert reader.assignments() == [{"course": "CSC340", "title": "Mini project", "date": "2026-11-16", "url": "",
+                                     "text": "Mini project\nDue 2026-11-16 23:59 Bangkok time", "due": "", "meta": {}}]
+    assert reader.search("x", direction(agents=1))[0].title == "Mini project"
+    reader.close()
+
+
+def test_a_source_keeps_its_due_time_and_what_else_is_known_about_it(store):
+    assert SCHEMA_VERSION == 2
+    source = store.add_source("CSC340", "assignment", "Lab 7", date="2026-10-13", due="2026-10-13T23:59:00+07:00",
+                              meta={"points": 5, "attached": ["Lab7.pptx"]})
+    store.add_chunk(source, 0, "", "Lab 7", direction(agents=1))
+    [kept] = store.assignments("CSC340")
+    assert kept["due"] == "2026-10-13T23:59:00+07:00" and kept["meta"] == {"points": 5, "attached": ["Lab7.pptx"]}
+
+
 def test_opening_a_missing_file_fails_and_creates_nothing(path):
     with pytest.raises(sqlite3.OperationalError):
         CourseStore.open(path)
@@ -107,7 +134,7 @@ def test_assignments_come_back_by_due_day_with_what_they_ask_for(store):
     assert [(item["course"], item["title"], item["date"]) for item in store.assignments()] == [
         ("CSC345", "Survey", ""), ("CSC340", "Assignment 5: Search", "2026-09-22"), ("CSC340", "Mini project", "2026-11-16")]
     first = store.assignments("CSC340")[0]
-    assert first == {"course": "CSC340", "title": "Assignment 5: Search", "date": "2026-09-22",
+    assert first == {"course": "CSC340", "title": "Assignment 5: Search", "date": "2026-09-22", "due": "", "meta": {},
                      "url": "https://example.test/a/1", "text": "Assignment 5: Search\nDue 2026-09-22 23:59 Bangkok time\n10 points"}
     assert [item["title"] for item in store.assignments("CSC345")] == ["Survey"]
     assert store.assignments("CSC999") == []

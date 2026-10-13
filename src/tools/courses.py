@@ -177,7 +177,7 @@ async def lookup_for(turn: Turn, scope: Scope) -> str:
     turn.course_searches += 1
     words = search_words(scope.text, store.courses(), scope.codes)
     try:
-        found = await retrieve(store, turn.embed, words, scope.codes, _today(), dated=about_dates(scope.text),
+        found = await retrieve(store, turn.embed, words, scope.codes, _now(), dated=about_dates(scope.text),
                                asked=scope.text)
     except BudgetExceededError:
         raise
@@ -191,9 +191,9 @@ async def lookup_for(turn: Turn, scope: Scope) -> str:
     return found.text
 
 
-def _today() -> date:
-    """Today in Bangkok, where the due times are told."""
-    return datetime.now(BANGKOK).date()
+def _now() -> datetime:
+    """Right now, in Bangkok time, where the due times are told."""
+    return datetime.now(BANGKOK)
 
 
 class SearchCourse(Tool):
@@ -299,7 +299,7 @@ class SearchCourse(Tool):
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", since):
             since = ""
         try:
-            found = await retrieve(store, turn.embed, query, codes, _today(), kind=kind, since=since or None,
+            found = await retrieve(store, turn.embed, query, codes, _now(), kind=kind, since=since or None,
                                    dated=about_dates(query), due=due)
         except BudgetExceededError:
             raise

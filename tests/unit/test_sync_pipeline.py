@@ -354,6 +354,9 @@ def test_assignments_are_stored_as_material_of_their_course(tmp_path, material, 
     assert store.counts()["CSC340"] == {"slide": 1, "transcript": 1, "assignment": 2}
     # The date of an assignment is the Bangkok day it is due
     assert store.newest()["CSC340"]["assignment"] == "2026-09-28"
+    stored = {item["title"]: item for item in store.assignments("CSC340")}
+    assert stored["Lab 7"]["due"] == "2026-09-28T01:30:00+07:00"
+    assert stored["Lab 7"]["meta"] == {"points": 5, "attached": ["Lab7.pptx"]}
     wording = ("CSC340 Artificial Intelligence | assignment | Lab 7\nLab 7\nDue 2026-09-28 01:30 Bangkok time\n5 points\n"
                "Train a classifier and report its confusion matrix.\nAttached: Lab7.pptx")
     hit = store.search("classifier confusion matrix", models.embed([wording])[0], kind="assignment")[0]

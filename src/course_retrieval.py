@@ -7,7 +7,7 @@ right answer from the closest thing it found.
 import asyncio
 import re
 from dataclasses import dataclass
-from datetime import date, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Awaitable, Callable, List, Optional, Sequence, Tuple
 
 from src.course_store import _STOP_WORDS, RESULTS, CourseStore, Hit
@@ -103,34 +103,66 @@ def _where(hit: Hit) -> str:
     return f"at {hit.locator}" if hit.kind == "transcript" else hit.locator
 
 
-def _due(day: str, today: date) -> str:
-    """How far off a due day is, like "due in 3 days (16 Oct 2026)"."""
+def _due_at(item: dict) -> Optional[datetime]:
+    """The moment an assignment is due, when the course file stores it."""
     try:
-        due = date.fromisoformat(day)
+        return datetime.fromisoformat(item.get("due") or "")
     except ValueError:
-        return "no due date"
-    days = (due - today).days
+        return None
+
+
+def _is_past(item: dict, now: datetime) -> bool:
+    due = _due_at(item)
+    if due is not None:
+        return due < now
+    return bool(item["date"]) and item["date"] < now.astimezone(BANGKOK).date().isoformat()
+
+
+def _span(minutes: float) -> str:
+    if minutes < 60:
+        count = max(1, round(minutes))
+        return f"{count} minute{'' if count == 1 else 's'}"
+    count = round(minutes / 60)
+    return f"{count} hour{'' if count == 1 else 's'}"
+
+
+def _row(item: dict, now: datetime) -> str:
+    """One assignment and how far off it is, like 'CSC345 "Lab 7", due today (13 Oct 2026) at 23:59, 9 hours left, 5 points'."""
+    head = f'{item["course"]} "{item["title"]}"'
+    try:
+        day = date.fromisoformat(item["date"])
+    except ValueError:
+        return f"{head}, no due date"
+    due = _due_at(item)
+    days = (day - now.astimezone(BANGKOK).date()).days
     if days > 1:
-        left = f"due in {days} days"
+        when = f"due in {days} days"
     elif days < -1:
-        left = f"was due {-days} days ago"
+        when = f"was due {-days} days ago"
+    elif days == 0:
+        when = "was due today" if due is not None and due < now else "due today"
     else:
-        left = {1: "due tomorrow", 0: "due today", -1: "was due yesterday"}[days]
-    return f"{left} ({due.day} {due:%b %Y})"
-
-
-def _row(item: dict, today: date) -> str:
-    line = f'{item["course"]} "{item["title"]}", {_due(item["date"], today)}'
-    time_due = re.search(r"^Due \d{4}-\d{2}-\d{2} (\d{2}:\d{2})", item["text"], re.MULTILINE)
-    points = re.search(r"^([\d.]+ points)$", item["text"], re.MULTILINE)
-    if item["date"] and time_due:
-        line += f" at {time_due.group(1)}"
-    if points:
-        line += f", {points.group(1)}"
+        when = {1: "due tomorrow", -1: "was due yesterday"}[days]
+    line = f"{head}, {when} ({day.day} {day:%b %Y})"
+    # A course file from before due times were stored has the time in the assignment's text
+    written = re.search(r"^Due \d{4}-\d{2}-\d{2} (\d{2}:\d{2})", item["text"], re.MULTILINE)
+    if due is not None:
+        line += f" at {due.astimezone(BANGKOK):%H:%M}"
+        if days == 0:
+            minutes = (due - now).total_seconds() / 60
+            line += f", {_span(abs(minutes))} {'left' if minutes >= 0 else 'ago'}"
+    elif written:
+        line += f" at {written.group(1)}"
+    points = (item.get("meta") or {}).get("points")
+    in_text = re.search(r"^([\d.]+ points)$", item["text"], re.MULTILINE)
+    if isinstance(points, (int, float)):
+        line += f", {points:g} points"
+    elif in_text:
+        line += f", {in_text.group(1)}"
     return line
 
 
-def assignment_rows(items: List[dict], today: date, due: Optional[str] = None,
+def assignment_rows(items: List[dict], now: datetime, due: Optional[str] = None,
                     window: Optional[Tuple[date, date]] = None, everything: bool = False) -> Tuple[List[str], int]:
     """
     Assignments as one line each, and how many of them. Only the ones the question is
@@ -138,19 +170,18 @@ def assignment_rows(items: List[dict], today: date, due: Optional[str] = None,
     them for everything. Otherwise only what is still to come, with a count of the past
     ones. Still to come is first, the soonest on top, then what has passed, the latest on top.
     """
-    day = today.isoformat()
-    upcoming = [item for item in items if item["date"] >= day]
     undated = [item for item in items if not item["date"]]
-    past = [item for item in reversed(items) if item["date"] and item["date"] < day]
+    upcoming = [item for item in items if item["date"] and not _is_past(item, now)]
+    past = [item for item in reversed(items) if _is_past(item, now)]
     if window:
         first, last = window
         within = [item for item in items if first.isoformat() <= item["date"] <= last.isoformat()]
         days = f"from {first.day} {first:%b} to {last.day} {last:%b %Y}"
-        lines = ([f"due {days}:"] + [f"- {_row(item, today)}" for item in within] if within
+        lines = ([f"due {days}:"] + [f"- {_row(item, now)}" for item in within] if within
                  else [f"nothing in the teams assignments is due {days}"])
         later = [item for item in items if item["date"] > last.isoformat()]
         if later:
-            lines.append(f"next after that: {_row(later[0], today)}")
+            lines.append(f"next after that: {_row(later[0], now)}")
         return lines, len(within)
     if due:
         chosen, left_out = {"upcoming": upcoming + undated, "past": past}[due], 0
@@ -160,7 +191,7 @@ def assignment_rows(items: List[dict], today: date, due: Optional[str] = None,
         # A question about homework is about what is still to do
         chosen, left_out = upcoming + undated, len(past)
     chosen = chosen[:MAX_ROWS]
-    lines = [f"- {_row(item, today)}" for item in chosen]
+    lines = [f"- {_row(item, now)}" for item in chosen]
     if not chosen and left_out:
         lines.append("nothing in the teams assignments is due from now on")
     if left_out:
@@ -211,17 +242,18 @@ def format_hits(query: str, hits: List[Hit], names: dict, label: Optional[str] =
 
 
 async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[float]]], words: str, codes: Sequence[str],
-                   today: date, kind: Optional[str] = None, since: Optional[str] = None, dated: bool = False,
+                   now: datetime, kind: Optional[str] = None, since: Optional[str] = None, dated: bool = False,
                    due: Optional[str] = None, asked: Optional[str] = None) -> Found:
     """
     Look words up in the courses in codes, or in every course when codes is empty.
     kind puts results of that kind first without leaving the others out. dated adds
-    the list of assignments, and due narrows that list to "upcoming" or "past". asked
+    the list of assignments, counted from now, and due narrows that list to "upcoming" or "past". asked
     is the message as it was written, which says which days and which assignments
     the list is wanted for.
     """
     asked = asked or words
     dated = dated or bool(due)
+    today = now.astimezone(BANGKOK).date()
     items: List[dict] = []
     if dated:
         items = [item for code in codes or [None] for item in await asyncio.to_thread(store.assignments, code)]
@@ -254,7 +286,7 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
     rows: List[str] = []
     count = 0
     if dated and items:
-        rows, count = assignment_rows(items, today, due, window_of(asked, today), bool(_PAST_WORDS.search(asked)))
+        rows, count = assignment_rows(items, now, due, window_of(asked, today), bool(_PAST_WORDS.search(asked)))
     elif dated:
         rows = [f"- none posted{' for ' + ', '.join(codes) if codes else ''}"]
     names = {course["code"]: course["name"] for course in store.courses()}

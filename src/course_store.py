@@ -8,6 +8,7 @@ touch what the bot knows about people. This module is all both sides share: the
 schema, the writing calls the sync uses, and the search the bot uses. It imports
 nothing else from the bot.
 """
+import json
 import logging
 import os
 import re
@@ -23,8 +24,10 @@ import sqlite_vec
 logger = logging.getLogger(__name__)
 
 COURSES_FILE = "courses.db"
+# The version the sync writes. Version 2 added a due time and a meta column to sources.
+SCHEMA_VERSION = 2
 # A file written with another number is not read. The sync and the bot must agree on it.
-SCHEMA_VERSION = 1
+READABLE_VERSIONS = (1, 2)
 # How many numbers the embedding of a chunk has
 DIMENSIONS = 512
 KINDS = ("slide", "transcript", "post", "assignment")
@@ -62,7 +65,11 @@ CREATE TABLE sources (
     url          TEXT NOT NULL DEFAULT '',
     -- The day of the lecture or post, as YYYY-MM-DD
     date         TEXT NOT NULL DEFAULT '',
-    content_hash TEXT NOT NULL DEFAULT ''
+    content_hash TEXT NOT NULL DEFAULT '',
+    -- When an assignment is due, with its time zone: 2026-11-16T23:59:00+07:00
+    due          TEXT NOT NULL DEFAULT '',
+    -- What else is known about the source, as JSON: points, attached file names, pictures
+    meta         TEXT NOT NULL DEFAULT '{{}}'
 );
 CREATE INDEX sources_by_course ON sources(course, kind);
 CREATE TABLE chunks (
@@ -147,6 +154,7 @@ class CourseStore:
 
     def __init__(self, path: str, writable: bool = False):
         self.path = path
+        self.version = SCHEMA_VERSION
         self._lock = threading.RLock()
         if writable:
             self._connection = sqlite3.connect(path, check_same_thread=False)
@@ -175,9 +183,11 @@ class CourseStore:
         """An existing file, read-only. Raises ValueError when another version of the sync wrote it."""
         store = cls(path)
         version = store._connection.execute("PRAGMA user_version").fetchone()[0]
-        if version != SCHEMA_VERSION:
+        if version not in READABLE_VERSIONS:
             store.close()
-            raise ValueError(f"{path} has schema version {version}, this bot reads version {SCHEMA_VERSION}")
+            raise ValueError(f"{path} has schema version {version}, this bot reads versions "
+                             f"{' and '.join(map(str, READABLE_VERSIONS))}")
+        store.version = version
         return store
 
     def close(self) -> None:
@@ -193,13 +203,14 @@ class CourseStore:
                 (code, name, "\n".join(aliases), group_id, site_url))
 
     def add_source(self, course: str, kind: str, title: str, section: str = "", url: str = "", date: str = "",
-                   content_hash: str = "") -> int:
+                   content_hash: str = "", due: str = "", meta: Optional[dict] = None) -> int:
         if kind not in KINDS:
             raise ValueError(f"unknown kind {kind!r}")
         with self._lock:
             cursor = self._connection.execute(
-                "INSERT INTO sources(course, kind, title, section, url, date, content_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (course, kind, title, section, url, date, content_hash))
+                "INSERT INTO sources(course, kind, title, section, url, date, content_hash, due, meta) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (course, kind, title, section, url, date, content_hash, due, json.dumps(meta or {}, ensure_ascii=False)))
             return int(cursor.lastrowid or 0)
 
     def add_chunk(self, source_id: int, position: int, locator: str, text: str, vector: Sequence[float],
@@ -270,15 +281,17 @@ class CourseStore:
     def assignments(self, course: Optional[str] = None) -> List[dict]:
         """
         Every assignment, of one course or of all, by the day it is due, with the text that
-        says what it asks for. Those with no due date come first.
+        says what it asks for. Those with no due date come first. due and meta are empty
+        for a file written before they were stored.
         """
+        extra = "sources.due, sources.meta" if self.version >= 2 else "'' AS due, '{}' AS meta"
         with self._lock:
             rows = self._connection.execute(
-                "SELECT sources.course, sources.title, sources.date, sources.url, chunks.text FROM sources "
+                f"SELECT sources.course, sources.title, sources.date, sources.url, chunks.text, {extra} FROM sources "
                 "JOIN chunks ON chunks.source_id = sources.id AND chunks.position = 0 "
                 "WHERE sources.kind = 'assignment'" + ("" if course is None else " AND sources.course = ?")
                 + " ORDER BY sources.date, sources.title", () if course is None else (course,)).fetchall()
-        return [dict(row) for row in rows]
+        return [{**dict(row), "meta": json.loads(row["meta"] or "{}")} for row in rows]
 
     def chunk_counts(self) -> Dict[str, int]:
         """How many chunks every course has."""

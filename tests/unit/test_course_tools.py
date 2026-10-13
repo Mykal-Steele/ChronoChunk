@@ -1,5 +1,5 @@
 """The course tools: what the model is offered, what a search and the assignment list hand back, and /courses."""
-from datetime import date
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -46,7 +46,9 @@ def _fill(path, model="text-embedding-3-small", dimensions=DIMENSIONS, synced_at
                 ("CSC345", "Lab 7", "2026-10-13", "5 points\nTrain a classifier."),
                 ("CSC345", "Lab 8", "2026-10-14", "Evaluate the model."),
                 ("CSC345", "Survey", "", "Tell us your background.")):
-            source = store.add_source(course, "assignment", title, url=f"https://example.test/{title[-1]}", date=due)
+            source = store.add_source(course, "assignment", title, url=f"https://example.test/{title[-1]}", date=due,
+                                      due=f"{due}T23:59:00+07:00" if due else "",
+                                      meta={"points": int(text.split()[0])} if "points" in text else {})
             head = f"{title}\nDue {due} 23:59 Bangkok time\n" if due else f"{title}\n"
             store.add_chunk(source, 0, "", head + text, direction(other=1))
     store.set_meta("synced_at", synced_at)
@@ -64,10 +66,14 @@ def material(course_file):
 
 @pytest.fixture
 def assigned(course_file, monkeypatch):
-    """The course file with five assignments, on 13 Oct 2026 in Bangkok."""
+    """The course file with five assignments, on 13 Oct 2026 at three in the afternoon in Bangkok."""
     _fill(course_file, assignments=True)
-    monkeypatch.setattr(courses, "_today", lambda: date(2026, 10, 13))
+    monkeypatch.setattr(courses, "_now", lambda: _bangkok(2026, 10, 13))
     return course_file
+
+
+def _bangkok(year, month, day, hour=15, minute=0):
+    return datetime(year, month, day, hour, minute, tzinfo=courses.BANGKOK)
 
 
 def _turn(vector, gate=None, codes=None):
@@ -362,7 +368,7 @@ async def test_asked_for_every_assignment_the_list_has_them_all_with_the_days_le
     turn = _turn(direction(filler=1))
     text = await lookup_for(turn, Scope("list all the assignments so far", True, []))
     assert "today is Tuesday 13 Oct 2026 in Bangkok" in text
-    assert '- CSC345 "Lab 7", due today (13 Oct 2026) at 23:59, 5 points' in text
+    assert '- CSC345 "Lab 7", due today (13 Oct 2026) at 23:59, 9 hours left, 5 points' in text
     assert '- CSC345 "Lab 8", due tomorrow (14 Oct 2026) at 23:59' in text
     assert '- CSC340 "Mini project", due in 34 days (16 Nov 2026) at 23:59' in text
     assert '- CSC340 "Assignment 5: Search", was due 21 days ago (22 Sep 2026) at 23:59, 10 points' in text
@@ -390,7 +396,7 @@ async def test_a_question_about_this_week_gets_this_week_only(assigned):
 
 
 async def test_a_week_with_nothing_due_says_so_and_names_what_is_next(assigned, monkeypatch):
-    monkeypatch.setattr(courses, "_today", lambda: date(2026, 10, 19))
+    monkeypatch.setattr(courses, "_now", lambda: _bangkok(2026, 10, 19))
     text = await lookup_for(_turn(direction(pca=1)), Scope("anything due this week", True, []))
     assert "nothing in the teams assignments is due from 19 Oct to 25 Oct 2026" in text
     assert 'next after that: CSC340 "Mini project", due in 28 days (16 Nov 2026)' in text
@@ -413,7 +419,7 @@ async def test_a_plain_homework_question_gets_what_is_coming_and_the_latest_past
 
 async def test_a_course_with_nothing_in_teams_says_so_and_looks_in_the_slides_and_lectures(material, monkeypatch):
     # The material fixture has no assignments at all
-    monkeypatch.setattr(courses, "_today", lambda: date(2026, 10, 13))
+    monkeypatch.setattr(courses, "_now", lambda: _bangkok(2026, 10, 13))
     turn = _turn(direction(bayes=1))
     text = await lookup_for(turn, Scope("do we have any homework", True, ["CSC345"]))
     assert "ASSIGNMENTS posted in teams, today is Tuesday 13 Oct 2026 in Bangkok:" in text
@@ -427,7 +433,7 @@ async def test_a_date_question_with_a_topic_gets_the_passages_and_the_list(assig
     turn = _turn(direction(other=1))
     text = await lookup_for(turn, Scope("when is lab 7 due", True, ["CSC345"]))
     assert 'assignment "Lab 7"' in text and "Train a classifier." in text
-    assert '- CSC345 "Lab 7", due today (13 Oct 2026) at 23:59, 5 points' in text
+    assert '- CSC345 "Lab 7", due today (13 Oct 2026) at 23:59, 9 hours left, 5 points' in text
     turn.embed.assert_awaited_once()
 
 
@@ -445,7 +451,7 @@ async def test_the_list_looks_forward_unless_the_past_is_asked_for(assigned):
 
 
 async def test_a_course_whose_work_is_all_past_says_nothing_is_coming(assigned, monkeypatch):
-    monkeypatch.setattr(courses, "_today", lambda: date(2026, 12, 1))
+    monkeypatch.setattr(courses, "_now", lambda: _bangkok(2026, 12, 1))
     text = await lookup_for(_turn(direction(filler=1)), Scope("any homework", True, ["CSC340"]))
     assert "nothing in the teams assignments is due from now on" in text and "2 past ones are not listed" in text
     assert "Mini project" not in text

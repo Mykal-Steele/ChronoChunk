@@ -148,6 +148,27 @@ def due_day(item: Dict) -> str:
     return due.date().isoformat() if due else ""
 
 
+def due_time(item: Dict) -> str:
+    """The moment an assignment is due, in Bangkok time with its zone: 2026-11-16T23:59:00+07:00. '' when it has none."""
+    due = _bangkok(item.get("dueDateTime"))
+    return due.isoformat(timespec="seconds") if due else ""
+
+
+def facts_meta(item: Dict) -> Dict:
+    """What a list of assignments shows beside the title and the due time: points, when it closes, attached files."""
+    meta: Dict = {}
+    grading = item.get("grading")
+    if isinstance(grading, dict) and isinstance(grading.get("maxPoints"), (int, float)):
+        meta["points"] = grading["maxPoints"]
+    closes = _bangkok(item.get("closeDateTime"))
+    if closes:
+        meta["closes"] = closes.isoformat(timespec="seconds")
+    attached = _resource_names(item.get("resources"))
+    if attached:
+        meta["attached"] = attached
+    return meta
+
+
 def assignment_text(item: Dict) -> str:
     """One assignment as a single chunk of text: facts only, no personal fields."""
     lines = [str(item.get("displayName") or "").strip()]
