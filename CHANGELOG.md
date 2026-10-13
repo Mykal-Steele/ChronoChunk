@@ -10,14 +10,23 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
-## 3.19.0 (2026-10-13)
+## 4.0.0 (2026-10-13)
+
+This version changes how course questions are asked, which is why the first number moved.
+
+### Changed
+
+- Course material is asked for with a flag at the end of the message. `-course` means the message is about a course, named in your own words ("the ai class", typos forgiven), and a code such as `-csc340` names it directly. Without a flag the bot looks nothing up and knows nothing about the courses in that reply. Before, the model decided on its own, so it sometimes skipped the search for a course question and sometimes said "i dont see it in the course material" in a chat that had nothing to do with class.
+- A flagged message is looked up before the model is asked, so the lookup always happens and most course answers take one model call instead of two. The search uses the message without the course's name and without words like "lecture" or "teacher".
+- Asking for one kind of material (`kind`) puts that kind first and still returns the rest. As a hard filter it hid the answer when someone said "lecture" and the fact was on a slide.
+- Results that are only near the topic are marked as loosely related, and the bot is told to say it could not find exactly that and give the closest thing.
 
 ### Added
 
-- The bot knows each course's assignments: the title, the due time in Bangkok time, how many days are left, the points, the instructions and the names of the attached files. Ask `/when is lab 7 due` or `/what is due this week`. Past assignments stay in the list, so the bot can also say what kind of work a course has given.
-- A due date question is answered from a dated list with no search and no embedding call, through the new `course_assignments` tool. Assignments are also part of the normal course search.
+- The bot knows each course's assignments: the title, the due time in Bangkok time, the days left, the points, the instructions and the names of the attached files. A question about dates or work to hand in gets the dated list, and what one assignment asks for is found by the same search as slides and lectures. Past assignments are kept.
 - The sync reads every class's Assignments tab in Teams and opens each assignment of the semester for its instructions.
-- `/courses` counts the assignments of each course.
+- `/courses` counts the assignments of each course and says how to ask with the flags.
+- `run.md` lists every run that spends money on models, with its estimated and actual cost.
 
 ### Privacy
 

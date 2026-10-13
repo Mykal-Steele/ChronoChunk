@@ -226,17 +226,20 @@ The bot can open links and search the web.
 
 The bot can answer questions about your university courses from the slides, lecture recordings and assignments of the semester.
 
-- Ask in your own words, in any channel: `/what did the AI lecture say about heuristic search`. The bot searches the material, answers from what it finds, and ends with the deck and page or the lecture and time, plus the link.
-- When the material has no answer, the bot says it could not find one. It does not answer course facts from memory.
-- Ask for a file in the same message and the document is written from what it found: `/make a one page pdf on what CSC340 covered about agents`.
-- Ask when something is due, what is due this week, or what an assignment asks for: `/when is lab 7 due`. The bot reads the course's assignment list, which has the due time in Bangkok time, the days left, the points, the instructions and the names of the attached files. Past assignments stay in the list. This takes no search, so it is quicker and cheaper than a question about a topic.
+- Course material only comes into a reply when you ask for it with a flag at the end of the message. `-course` says the message is about a course, and you name the class in your own words: `/what did the lecture say about heuristic search in the ai class -course`. A course code names it directly: `/what is a heuristic -csc340`. Small typos in a course name are fine.
+- With `-course` and no class named, every course is searched: `/whats due this week -course`.
+- Without a flag the bot does not look anything up and does not talk about course material. Asked a class question without one, it tells you to add the flag instead of guessing.
+- The bot looks the material up before it answers, answers from what it found, and ends with the deck and page, the lecture and time, or the assignment, plus the link.
+- When the material has no answer, the bot says it could not find one. When it only found something near the topic, it says so and gives the closest thing. It does not answer course facts from memory.
+- Ask for a file in the same message and the document is written from what it found: `/make a one page pdf on what the class covered about agents -csc340`.
+- Ask when something is due or what was assigned and the answer comes with the list of the course's assignments: the due time in Bangkok time, the days left and the points. Past assignments stay in the list. What one assignment asks for is found by the same search as slides and lectures.
 - An assignment is stored as material of its course. The bot does not know who has done, handed in or been graded on anything, and it never says so.
-- The list holds what was posted in the Assignments tab of each class team. Work a teacher only gave in class is not in it.
+- The assignment list holds what was posted in the Assignments tab of each class team. Work a teacher only gave in class is not in it.
 - `/courses` lists the courses it holds, the date of the newest slides and lecture recording of each, and when they were last synced. Ask the bot how up to date it is, or which lecture is the latest it has, and it answers from the same dates.
 - The material comes from the course sync in [`sync/`](sync/README.md). It runs on a PC, writes one file, `courses.db`, and uploads it to `data/state` on the server. The bot opens the new file on the next question, with no restart. With no file there, the bot has no course search.
-- The search runs in English. The bot writes the search words in English for a question in another language, and material in Thai is translated when it is synced.
+- The search runs in English, and material in Thai is translated when it is synced. For a question in another language the bot searches again with the topic in English.
 - A question is embedded with the `text-embedding-3-small` deployment, which is the model the sync embeds the material with. A file embedded with another model is not searched, and the log says so.
-- One reply makes at most 3 searches. Each returns up to 6 passages, at most 2 from one deck or recording. The numbers are at the top of `src/tools/courses.py` and `src/course_store.py`.
+- One reply looks the material up at most 3 times, the lookup for the message included. Each returns up to 6 passages, at most 2 from one deck or recording. The numbers are at the top of `src/tools/courses.py` and `src/course_store.py`.
 
 ## Privacy
 
@@ -327,10 +330,12 @@ ChronoChunk/
 │   │   ├── base.py            # The interface every tool implements
 │   │   ├── documents.py       # create_document and create_diagram
 │   │   ├── web.py             # open_url and web_search
-│   │   └── courses.py         # search_course, course_assignments and /courses
+│   │   └── courses.py         # search_course, the lookup for a flagged message, and /courses
 │   ├── document_builder.py    # Turns Markdown into PDF, DOCX and diagram images
 │   ├── web_tools.py           # Fetches pages and calls the search service
 │   ├── course_store.py        # The course material file and its search
+│   ├── course_scope.py        # The -course and -csc340 flags: is a message about a course, and which
+│   ├── course_retrieval.py    # One lookup: passages, the dated assignment list, and how good the match is
 │   ├── slash_commands.py      # Slash commands
 │   ├── command_handler.py     # Typed /tldr, /usage, /courses and /help
 │   ├── database.py            # The SQLite database and its schema

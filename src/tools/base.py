@@ -42,6 +42,8 @@ class Turn:
     findings: List[str] = field(default_factory=list)
     lookups: int = 0
     course_searches: int = 0
+    # The courses the message's flag is about. None for a message with no course flag, empty for every course.
+    course_codes: Optional[List[str]] = None
     calls: int = 0
     cost: float = 0.0
     started: float = field(default_factory=time.monotonic)
@@ -68,6 +70,8 @@ class Tool:
     priority = 1
     # Sent to the user when the model kept being told to call this tool again and never got it right
     gave_up = ""
+    # True for a tool that is only offered when the message carries a course flag
+    course_only = False
 
     def available(self) -> bool:
         """False hides the tool from the model, for example when its API key is not configured."""

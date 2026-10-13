@@ -16,6 +16,7 @@ from src.document_builder import BuiltFile, strip_filler
 from src.usage_guard import BudgetExceededError, UsageGuard, get_usage_guard, guard_client
 from src.tools import Tool, ToolResult, Turn, default_tools
 from src.tools.base import user_content
+from src.tools.courses import NO_FLAG_PROMPT, lookup_for, read_scope, unknown_course_reply
 from src.pdf_notes import NOTES_MAX_TOKENS
 
 logger = logging.getLogger(__name__)
@@ -440,20 +441,34 @@ class AIResponseHandler:
                 user_parts.append(attached_context)
             user_parts.append(f'[{username}]: "{clean_query}"')
 
+            # Course material only comes into a reply when the message asks for it with a flag
+            scope = read_scope(clean_query) if allow_files else None
+            flagged = bool(scope and scope.flagged)
+            if scope and flagged:
+                if scope.unknown and not scope.codes:
+                    return Reply(unknown_course_reply(scope))
+                clean_query = scope.text
+                user_parts[-1] = f'[{username}]: "{clean_query}"'
+
             # Reading a file or image, or writing a tool call, needs more room than a chat reply
             max_tokens = 4000 if (attached_context or images or allow_files) else 2000
 
             # The tools on offer for this reply, and the state they share
-            offered = [tool for tool in self.tools if tool.available()] if allow_files else []
+            offered = [tool for tool in self.tools if tool.available() and (flagged or not tool.course_only)] if allow_files else []
             by_name = {tool.name: tool for tool in offered}
             request = Turn(clean_query, username, conversation_history or "", attached_context, images,
-                           file_gate=file_gate, web_gate=web_gate, course_gate=course_gate)
+                           file_gate=file_gate, web_gate=web_gate, course_gate=course_gate,
+                           course_codes=scope.codes if scope and flagged else None)
             request.ask_model = lambda model_messages, limit: self._chat(model_messages, limit, request=request)
             request.embed = lambda text: self._embed(text, request)
             files = request.files
+            if scope and flagged:
+                # Looked up here, before the model is asked, so the lookup does not hang on the model's choice
+                user_parts.insert(-1, await lookup_for(request, scope))
             messages = [
                 {"role": "system",
-                 "content": _SYSTEM_PROMPT + "".join(tool.prompt() for tool in offered) + emoji_prompt},
+                 "content": _SYSTEM_PROMPT + "".join(tool.prompt() for tool in offered)
+                            + (NO_FLAG_PROMPT if scope and not flagged else "") + emoji_prompt},
                 {"role": "user",   "content": user_content("\n\n".join(user_parts), images)}
             ]
             definitions = [tool.definition for tool in offered]

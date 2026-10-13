@@ -10,7 +10,8 @@ from src.course_store import DIMENSIONS, CourseStore
 from src.exceptions import RateLimitError
 from src.tools import courses
 from src.tools.base import Turn
-from src.tools.courses import CourseAssignments, SearchCourse, courses_summary
+from src.course_scope import Scope
+from src.tools.courses import SearchCourse, courses_summary, lookup_for
 from tests.unit.test_ai_response_handler import _message, _tool_call
 from tests.unit.test_course_store import direction
 
@@ -69,8 +70,8 @@ def assigned(course_file, monkeypatch):
     return course_file
 
 
-def _turn(vector, gate=None):
-    turn = Turn("what is pca", "Kruskal", "", "", [], course_gate=gate)
+def _turn(vector, gate=None, codes=None):
+    turn = Turn("what is pca", "Kruskal", "", "", [], course_gate=gate, course_codes=codes)
     turn.embed = AsyncMock(return_value=vector)
     return turn
 
@@ -157,9 +158,35 @@ async def test_nothing_found_says_so_and_adds_no_findings(material):
 async def test_course_kind_and_since_narrow_the_search(material):
     tool = SearchCourse()
     assert "Naive Bayes" in (await tool.run({"query": "bayes"}, _turn(direction(bayes=1)))).text
-    for narrowing in ({"course": "CSC340"}, {"course": "bif651"}, {"kind": "slide"}, {"since": "2026-10-07"}):
+    for narrowing in ({"course": "CSC340"}, {"course": "bif651"}, {"since": "2026-10-07"}):
         result = (await tool.run({"query": "bayes", **narrowing}, _turn(direction(bayes=1)))).text
         assert "nothing in the course material matches" in result, narrowing
+
+
+async def test_kind_puts_that_kind_first_and_still_returns_the_rest(material):
+    # Asked for slides, and the only thing on the topic is a lecture: it must still come back
+    assert "Naive Bayes" in (await SearchCourse().run({"query": "bayes", "kind": "slide"}, _turn(direction(bayes=1)))).text
+    both = (await SearchCourse().run({"query": "x", "kind": "transcript"}, _turn(direction(pca=0.75, bayes=0.66)))).text
+    assert both.index("Naive Bayes") < both.index("Principal component analysis")
+    plain = (await SearchCourse().run({"query": "x"}, _turn(direction(pca=0.75, bayes=0.66)))).text
+    assert plain.index("Principal component analysis") < plain.index("Naive Bayes")
+
+
+async def test_the_flag_s_courses_bound_a_search(material):
+    # The message was flagged for CSC340, so a search cannot wander into another course
+    turn = _turn(direction(bayes=1), codes=["CSC340"])
+    assert "nothing in the course material matches" in (await SearchCourse().run({"query": "bayes"}, turn)).text
+    assert "nothing in the course material matches" in (await SearchCourse().run({"query": "bayes", "course": "CSC345"}, turn)).text
+    both = _turn(direction(bayes=1), codes=["CSC340", "CSC345"])
+    assert "Naive Bayes" in (await SearchCourse().run({"query": "bayes"}, both)).text
+
+
+async def test_loosely_related_results_are_marked(material):
+    # 0.45 alike: over the floor, under what a right passage scores
+    loose = (await SearchCourse().run({"query": "pca"}, _turn(direction(pca=0.45, filler=0.893)))).text
+    assert "only loosely related" in loose and "Principal component analysis" in loose
+    strong = (await SearchCourse().run({"query": "pca"}, _turn(direction(pca=1)))).text
+    assert "loosely related" not in strong
 
 
 async def test_a_course_or_date_the_model_made_up_is_ignored(material):
@@ -225,6 +252,8 @@ def test_courses_lists_what_each_course_holds(material):
     assert "newest: slides 1 Sep 2026" in text
     assert "newest: lecture recording 6 Oct 2026" in text
     assert "last synced 12 Oct 2026 at 23:43 Bangkok time" in text
+    # How to ask is part of the answer, since nothing is looked up without a flag
+    assert "-course" in text and "-csc340" in text
 
 
 # ── through the reply loop ────────────────────────────────────────────────────
@@ -248,25 +277,29 @@ async def test_a_course_question_is_embedded_searched_and_answered(handler, mock
         _message(content="pca squashes the dimensions, week 5 deck page 35"),
     ]
     gate_calls = []
-    reply = await handler.generate_reply("/what is pca in the ai class", "", "Kruskal", "1", allow_files=True,
+    reply = await handler.generate_reply("/what is pca -csc340", "", "Kruskal", "1", allow_files=True,
                                          course_gate=lambda: gate_calls.append(1))
     assert reply.text == "pca squashes the dimensions, week 5 deck page 35"
-    assert gate_calls == [1]
-    embedded = mock_openai_client.embeddings.create.call_args[1]
-    assert embedded == {"model": "text-embedding-3-small", "input": ["principal component analysis"], "dimensions": DIMENSIONS}
+    # The lookup for the message and the search the model asked for each count once
+    assert gate_calls == [1, 1]
+    embedded = [call[1]["input"] for call in mock_openai_client.embeddings.create.call_args_list]
+    assert embedded == [["what is pca"], ["principal component analysis"]]
     first, second = mock_openai_client.chat.completions.create.call_args_list
     assert "search_course" in [tool["function"]["name"] for tool in first[1]["tools"]]
     assert "COURSE MATERIAL:" in first[1]["messages"][0]["content"]
+    asked = first[1]["messages"][1]["content"]
+    # The material was looked up before the model was asked, and the flag is not part of the message
+    assert "Principal component analysis reduces the dimensions" in asked
+    assert asked.rstrip().endswith('[Kruskal]: "what is pca"') and "-csc340" not in asked
     assert "Principal component analysis reduces the dimensions" in second[1]["messages"][-1]["content"]
 
 
 async def test_an_answer_from_course_material_is_not_kept_for_next_time(handler, mock_openai_client, material):
     mock_openai_client.chat.completions.create.side_effect = [
-        _message(tool_calls=[_tool_call("search_course", {"query": "pca"})]), _message(content="first"),
-        _message(tool_calls=[_tool_call("search_course", {"query": "pca"})]), _message(content="second"),
+        _message(content="first"), _message(content="second"),
     ]
-    assert (await handler.generate_reply("/what is pca", "", "Kruskal", "1", allow_files=True)).text == "first"
-    assert (await handler.generate_reply("/what is pca", "", "Kruskal", "1", allow_files=True)).text == "second"
+    assert (await handler.generate_reply("/what is pca -course", "", "Kruskal", "1", allow_files=True)).text == "first"
+    assert (await handler.generate_reply("/what is pca -course", "", "Kruskal", "1", allow_files=True)).text == "second"
 
 
 async def test_without_a_course_file_the_model_hears_nothing_about_courses(handler, mock_openai_client, course_file):
@@ -274,83 +307,89 @@ async def test_without_a_course_file_the_model_hears_nothing_about_courses(handl
     call = mock_openai_client.chat.completions.create.call_args[1]
     assert "search_course" not in [tool["function"]["name"] for tool in call["tools"]]
     assert "COURSE MATERIAL" not in call["messages"][0]["content"]
+    # With nothing to look up, there is no flag to tell them about either
+    assert "-course" not in call["messages"][0]["content"]
 
 
-# ── the assignment list ───────────────────────────────────────────────────────
+# ── the flag ──────────────────────────────────────────────────────────────────
 
-def test_the_assignment_list_is_only_offered_when_the_file_holds_assignments(material):
-    assert SearchCourse().available()
-    assert not CourseAssignments().available()
-    assert CourseAssignments().prompt() == ""
+async def test_without_a_flag_nothing_about_courses_reaches_the_model(handler, mock_openai_client, material):
+    mock_openai_client.chat.completions.create.side_effect = [_message(content="not much, u?")]
+    reply = await handler.generate_reply("/what did csc340 say about pca", "", "Kruskal", "1", allow_files=True)
+    assert reply.text == "not much, u?"
+    call = mock_openai_client.chat.completions.create.call_args[1]
+    assert "search_course" not in [tool["function"]["name"] for tool in call["tools"]]
+    system = call["messages"][0]["content"]
+    assert "COURSE MATERIAL" not in system and "CSC340 Artificial Intelligence" not in system
+    # It is told how they can ask, so a class question is not answered from general knowledge
+    assert "-course" in system and "-csc340" in system
+    mock_openai_client.embeddings.create.assert_not_awaited()
 
 
-async def test_assignments_are_listed_with_the_days_left_in_bangkok_time(assigned):
-    turn = _turn(direction(pca=1))
-    text = (await CourseAssignments().run({}, turn)).text
-    assert text.startswith("=== ASSIGNMENTS, today is Tuesday 13 Oct 2026 in Bangkok ===")
-    assert text.endswith("=== END ===")
-    assert 'CSC345 Data Science, "Lab 7", due today (13 Oct 2026)' in text
-    assert 'CSC345 Data Science, "Lab 8", due tomorrow (14 Oct 2026)' in text
-    assert 'CSC340 Artificial Intelligence, "Mini project", due in 34 days (16 Nov 2026)' in text
-    assert 'CSC340 Artificial Intelligence, "Assignment 5: Search", was due 21 days ago (22 Sep 2026)' in text
-    assert 'CSC345 Data Science, "Survey", no due date' in text
-    assert "Due 2026-11-16 23:59 Bangkok time" in text and "Solve the maze with A* search." in text
-    assert "link: https://example.test/8" in text
-    # What is still to come is listed first, the soonest on top, then what has passed, the latest on top
+async def test_the_course_flag_looks_up_before_the_model_is_asked(handler, mock_openai_client, material):
+    mock_openai_client.chat.completions.create.side_effect = [_message(content="pca cuts the dimensions down")]
+    reply = await handler.generate_reply("/what did the teacher say about pca in artificial intelligence -course", "",
+                                         "Kruskal", "1", allow_files=True)
+    assert reply.text == "pca cuts the dimensions down"
+    assert mock_openai_client.chat.completions.create.await_count == 1
+    # Searched with the topic, not with the course's name or the words about asking
+    assert mock_openai_client.embeddings.create.call_args[1]["input"] == ["what did the about pca in"]
+    asked = mock_openai_client.chat.completions.create.call_args[1]["messages"][1]["content"]
+    assert "CSC340 Artificial Intelligence, slides" in asked and "Naive Bayes" not in asked
+
+
+async def test_a_code_the_bot_does_not_hold_is_answered_without_the_model(handler, mock_openai_client, material):
+    reply = await handler.generate_reply("/when is the exam -csc999", "", "Kruskal", "1", allow_files=True)
+    assert "CSC999" in reply.text and "CSC340" in reply.text and "CSC345" in reply.text
+    mock_openai_client.chat.completions.create.assert_not_awaited()
+    mock_openai_client.embeddings.create.assert_not_awaited()
+
+
+async def test_the_daily_limit_is_told_to_the_model_instead_of_a_lookup(handler, mock_openai_client, material):
+    def gate():
+        raise RateLimitError(retry_after=5 * 3600)
+    mock_openai_client.chat.completions.create.side_effect = [_message(content="u used ur lookups, back in 5h")]
+    reply = await handler.generate_reply("/what is pca -course", "", "Kruskal", "1", allow_files=True, course_gate=gate)
+    assert reply.text == "u used ur lookups, back in 5h"
+    asked = mock_openai_client.chat.completions.create.call_args[1]["messages"][1]["content"]
+    assert "used all their course lookups for today" in asked and "about 5 hours" in asked
+    mock_openai_client.embeddings.create.assert_not_awaited()
+
+
+# ── assignments through the same lookup ───────────────────────────────────────
+
+async def test_a_due_question_gets_the_dated_list_with_the_days_left(assigned):
+    turn = _turn(direction(filler=1))
+    text = await lookup_for(turn, Scope("whats due this week", True, []))
+    assert "today is Tuesday 13 Oct 2026 in Bangkok" in text
+    assert '- CSC345 "Lab 7", due today (13 Oct 2026) at 23:59, 5 points' in text
+    assert '- CSC345 "Lab 8", due tomorrow (14 Oct 2026) at 23:59' in text
+    assert '- CSC340 "Mini project", due in 34 days (16 Nov 2026) at 23:59' in text
+    assert '- CSC340 "Assignment 5: Search", was due 21 days ago (22 Sep 2026) at 23:59, 10 points' in text
+    assert '- CSC345 "Survey", no due date' in text
+    # What is still to come is first, the soonest on top, then what has passed, the latest on top
     order = [text.index(title) for title in ('"Lab 7"', '"Lab 8"', '"Mini project"', '"Survey"', '"Assignment 5: Search"')]
     assert order == sorted(order)
+    # Rows only: what each one asks for comes from the passages, when the question is about it
+    assert "Solve the maze" not in text and "Train a classifier" not in text
+    assert turn.findings == [text] and turn.course_searches == 1
 
 
-async def test_the_list_takes_no_search_and_no_embedding(assigned):
-    gate_calls = []
-    turn = _turn(direction(pca=1), gate=lambda: gate_calls.append(1))
-    result = await CourseAssignments().run({"when": "upcoming"}, turn)
-    turn.embed.assert_not_awaited()
-    assert gate_calls == []
-    # It still counts as an answer from course material, which is looked up again next time
-    assert turn.course_searches == 1
-    assert turn.findings == [result.text]
+async def test_the_list_keeps_to_the_flag_s_course(assigned):
+    text = await lookup_for(_turn(direction(filler=1)), Scope("any homework", True, ["CSC340"]))
+    assert "Mini project" in text and "Assignment 5" in text and "Lab 7" not in text
 
 
-async def test_when_and_course_narrow_the_list(assigned):
-    upcoming = (await CourseAssignments().run({"when": "upcoming"}, _turn(direction(pca=1)))).text
-    assert "Lab 7" in upcoming and "Mini project" in upcoming and "Survey" in upcoming and "Assignment 5" not in upcoming
-    past = (await CourseAssignments().run({"when": "past"}, _turn(direction(pca=1)))).text
-    assert "Assignment 5" in past and "Lab 7" not in past and "Survey" not in past
-    one = (await CourseAssignments().run({"course": "bif651"}, _turn(direction(pca=1)))).text
-    assert "Mini project" in one and "Assignment 5" in one and "Lab 7" not in one
-    made_up = (await CourseAssignments().run({"course": "CSC999", "when": "sometime"}, _turn(direction(pca=1)))).text
-    assert "Lab 7" in made_up and "Assignment 5" in made_up
+async def test_a_question_about_one_assignment_gets_that_assignment(assigned):
+    # direction(other=1) is where the assignment chunks sit
+    text = await lookup_for(_turn(direction(other=1)), Scope("what does lab 7 ask for", True, ["CSC345"]))
+    assert 'assignment "Lab 7"' in text and "Train a classifier." in text
+    assert "Solve the maze" not in text
 
 
-async def test_an_empty_list_says_what_that_means(assigned):
-    text = (await CourseAssignments().run({"course": "CSC340", "when": "past"}, _turn(direction(pca=1)))).text
-    assert "Assignment 5" in text
-    with patch.object(courses, "_today", lambda: date(2026, 7, 1)):
-        text = (await CourseAssignments().run({"course": "CSC340", "when": "past"}, _turn(direction(pca=1)))).text
-    assert "no past assignments for CSC340" in text and "teams" in text.lower()
-
-
-async def test_long_instructions_are_cut_in_the_list(course_file, monkeypatch):
-    store = CourseStore.create(course_file)
-    store.add_course("CSC340", "Artificial Intelligence")
-    source = store.add_source("CSC340", "assignment", "Essay", date="2026-11-01")
-    store.add_chunk(source, 0, "", "Essay\n" + "x" * 5000, direction(other=1))
-    store.set_meta("embedding_model", "text-embedding-3-small")
-    store.set_meta("embedding_dimensions", str(DIMENSIONS))
-    store.save()
-    store.close()
-    text = (await CourseAssignments().run({}, _turn(direction(pca=1)))).text
-    assert "x" * (courses.MAX_ASSIGNMENT_CHARS + 1) not in text and "x" * 200 in text
-
-
-def test_the_assignment_prompt_says_the_list_is_the_same_for_everyone(assigned):
-    prompt = CourseAssignments().prompt()
-    assert "course_assignments" in prompt
-    assert "who has done" in prompt
-    properties = CourseAssignments().definition["function"]["parameters"]["properties"]
-    assert properties["course"]["enum"] == ["CSC340", "CSC345"]
-    assert properties["when"]["enum"] == ["upcoming", "past", "all"]
+async def test_a_topic_question_gets_no_assignment_list(assigned):
+    text = await lookup_for(_turn(direction(pca=1)), Scope("what is pca", True, ["CSC340"]))
+    assert "Principal component analysis" in text and "ASSIGNMENTS" not in text
 
 
 def test_courses_counts_assignments_and_keeps_their_due_dates_out_of_newest(assigned):
@@ -362,14 +401,5 @@ def test_courses_counts_assignments_and_keeps_their_due_dates_out_of_newest(assi
     assert "slide decks, lecture recordings, assignments." in SearchCourse().prompt()
 
 
-async def test_a_due_date_question_is_answered_from_the_list(handler, mock_openai_client, assigned):
-    mock_openai_client.chat.completions.create.side_effect = [
-        _message(tool_calls=[_tool_call("course_assignments", {"course": "CSC345", "when": "upcoming"})]),
-        _message(content="lab 7 is due today"),
-    ]
-    reply = await handler.generate_reply("/when is lab 7 due", "", "Kruskal", "1", allow_files=True)
-    assert reply.text == "lab 7 is due today"
-    mock_openai_client.embeddings.create.assert_not_awaited()
-    first, second = mock_openai_client.chat.completions.create.call_args_list
-    assert "course_assignments" in [tool["function"]["name"] for tool in first[1]["tools"]]
-    assert '"Lab 7", due today' in second[1]["messages"][-1]["content"]
+def test_the_prompt_says_the_assignment_list_is_the_same_for_everyone(assigned):
+    assert "who has done" in SearchCourse().prompt()
