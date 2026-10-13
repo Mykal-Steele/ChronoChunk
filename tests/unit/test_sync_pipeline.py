@@ -282,6 +282,19 @@ def material(tmp_path):
         recordings_without_transcript=["CSC340_week3.mp4"])
 
 
+def test_names_said_in_a_lecture_do_not_reach_the_course_file(tmp_path, material, cache):
+    import sqlite3
+    recording, _ = material.transcripts[0]
+    material.transcripts = [(recording, [_entry(second, f"OK SOMCHAI JAIDEE, the agent perceives its environment {second}")
+                                         for second in range(0, 300, 10)])]
+    out = tmp_path / "out" / "courses.db"
+    build([material], Models(cache, client=FakeClient(describe=lambda prompt, images: "## Page 2\nRows.")), cache, out, Report())
+    spoken = " ".join(row[0] for row in sqlite3.connect(out).execute(
+        "SELECT text FROM chunks JOIN sources ON sources.id = source_id WHERE kind = 'transcript'"))
+    assert "OK [name], the agent perceives" in spoken
+    assert "SOMCHAI" not in spoken and "JAIDEE" not in spoken
+
+
 def test_a_run_writes_a_course_file_the_bot_can_search(tmp_path, material, cache):
     client = FakeClient(describe=lambda prompt, images: "## Page 2\nRows: 120 true positives.")
     models = Models(cache, client=client)

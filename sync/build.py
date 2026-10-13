@@ -28,8 +28,10 @@ from sync.material import (
     extension,
     has_thai,
     local_day,
+    known_words,
     recording_title,
     transcript_chunks,
+    without_names,
     wanted,
 )
 from sync.models import Models
@@ -177,8 +179,13 @@ def _add_course(store: CourseStore, material: CourseMaterial, models: Models, ca
                             file["sha"], chunks))
 
     spoken = 0
-    for file, entries in sorted(material.transcripts, key=lambda pair: pair[0]["created"]):
-        cut = transcript_chunks(entries)
+    transcripts = [(file, transcript_chunks(entries))
+                   for file, entries in sorted(material.transcripts, key=lambda pair: pair[0]["created"])]
+    # People's names are taken out of what was said. The documents keep theirs.
+    known = known_words((text for source in sources for _, text, _ in source[6]),
+                        (text for _, cut in transcripts for _, text in cut))
+    for file, cut in transcripts:
+        cut = [(start, without_names(text, known)) for start, text in cut]
         thai = [text for _, text in cut if has_thai(text)]
         english = dict(zip(thai, models.translate(thai), strict=True))
         chunks = [(start, english.get(text, text), text if text in english else None) for start, text in cut

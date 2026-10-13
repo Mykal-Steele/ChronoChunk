@@ -5,10 +5,12 @@ from sync.material import (
     course_from_title,
     embedded_text,
     has_thai,
+    known_words,
     local_day,
     recording_title,
     transcript_chunks,
     wanted,
+    without_names,
 )
 
 
@@ -104,3 +106,22 @@ def test_the_embedded_text_names_where_the_chunk_is_from():
         "CSC340 Artificial Intelligence | slide | 4th--Pattern Recog.pdf | Week 4 | page 18\nGini Index")
     assert embedded_text(course, "transcript", "CSC340_20260804", "", "0:11:21", "hello").startswith(
         "CSC340 Artificial Intelligence | transcript | CSC340_20260804 | 0:11:21\n")
+
+
+def test_a_name_teams_wrote_in_capitals_is_taken_out_of_a_transcript():
+    known = known_words(["Naive Bayes with MATLAB"], ["so the classifier is simple"])
+    assert without_names("OK, SOMCHAI, what is the answer?", known) == "OK, [name], what is the answer?"
+    assert without_names("SOMCHAI JAIDEE said yes", known) == "[name] said yes"
+    assert without_names("thank you SOMCHAI, JAIDEE and MALEE", known) == "thank you [name] and [name]"
+
+
+def test_capitals_the_course_uses_as_a_word_stay():
+    known = known_words(["Naive Bayes with MATLAB", "the ascii table"], ["so the classifier is simple"])
+    said = "MATLAB and ASCII, a SIMPLE CLASSIFIER, and JSON and AI"
+    assert without_names(said, known) == said
+
+
+def test_a_name_the_documents_only_write_as_a_name_is_still_taken_out():
+    # A presenter's own slide has their name on it, which does not make it a word of the course
+    known = known_words(["Presented by Somchai Jaidee"], [])
+    assert without_names("next is SOMCHAI", known) == "next is [name]"

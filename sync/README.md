@@ -7,6 +7,8 @@ What it collects per course:
 - Documents from the class site's libraries (PDF, PowerPoint, Word, Excel, CSV, text).
 - The transcript of every lecture recording. The recordings themselves are never downloaded.
 
+People's names are taken out of the transcripts. Teams writes a name it knows from the meeting in capitals, so a word in capitals that the course never uses as a word becomes `[name]`. This misses a name written like any other word and a name shorter than five letters. Names in the documents, such as a presenter's name on a slide, are kept.
+
 It leaves out the `Student Work` library, files last changed before the semester, photos, archives, and the Classwork and Class Notebook tabs.
 
 ## Before the first run

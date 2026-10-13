@@ -6,7 +6,7 @@ functions with no network and no model, so they can be tested on their own.
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Set, Tuple
 
 DOCUMENTS = (".pdf", ".pptx", ".ppt", ".docx", ".doc", ".xlsx", ".xls", ".csv", ".txt")
 OFFICE = (".pptx", ".ppt", ".docx", ".doc", ".xlsx", ".xls")
@@ -91,6 +91,14 @@ def recording_title(name: str) -> str:
     return re.sub(r"-Meeting (Recording|Transcript)$", "", title)
 
 
+# What stands in a transcript where a person's name was said
+NAME_MARK = "[name]"
+_CAPITAL_WORD = re.compile(r"\b[A-Z]{5,}\b")
+_PLAIN_WORD = re.compile(r"\b(?:[a-z]{5,}|[A-Z]{5,})\b")
+_SMALL_WORD = re.compile(r"\b[a-z]{5,}\b")
+_MARKS_IN_A_ROW = re.compile(re.escape(NAME_MARK) + r"(?:[ ,]+" + re.escape(NAME_MARK) + r")+")
+
+
 def _seconds(offset: str) -> float:
     hours, minutes, rest = offset.split(":")
     return int(hours) * 3600 + int(minutes) * 60 + float(rest)
@@ -103,7 +111,8 @@ def clock(total: float) -> str:
 def transcript_chunks(entries: List[dict]) -> List[Tuple[str, str]]:
     """
     A transcript as (start time, text) chunks of about CHUNK_SECONDS each. Speaker names
-    are left out: they are often a room's account, and sometimes a student.
+    are left out: they are often a room's account, and sometimes a student. Names
+    said aloud are taken out later, by without_names.
     """
     spoken = [entry for entry in entries if (entry.get("text") or "").strip()]
     groups: List[List[dict]] = []
@@ -118,6 +127,29 @@ def transcript_chunks(entries: List[dict]) -> List[Tuple[str, str]]:
         groups.append(group)
     return [(clock(_seconds(group[0]["startOffset"])), " ".join(entry["text"].strip() for entry in group)[:CHUNK_MAX_CHARS])
             for group in groups]
+
+
+def known_words(written: Iterable[str], spoken: Iterable[str]) -> Set[str]:
+    """
+    The words of a course that are not people's names, in lowercase: every word its
+    documents write in small letters or in capitals, and every word its transcripts
+    write in small letters. A word the documents only write like Somchai is left out.
+    """
+    known = {word.lower() for text in written for word in _PLAIN_WORD.findall(text)}
+    known.update(word for text in spoken for word in _SMALL_WORD.findall(text))
+    return known
+
+
+def without_names(text: str, known: Set[str]) -> str:
+    """
+    Transcript text with the names of people taken out. Teams writes a name it knows
+    from the meeting in capitals, so a word in capitals that the course never uses as
+    a word is a name. It misses names written like any other word, and names shorter
+    than five letters, which cannot be told from short forms such as JSON.
+    """
+    marked = _CAPITAL_WORD.sub(lambda word: word.group(0) if word.group(0).lower() in known else NAME_MARK, text)
+    # A first name and a family name leave one mark, not two
+    return _MARKS_IN_A_ROW.sub(NAME_MARK, marked)
 
 
 def has_thai(text: str) -> bool:
