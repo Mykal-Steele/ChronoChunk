@@ -40,14 +40,21 @@ verdict is exactly one of:
 - "wrong_right_place": the material has the answer, the reply used that passage and still states it wrongly.
 - "wrong_place": the reply answers from material that is not about what was asked, while the answer is elsewhere or nowhere.
 - "not_found": the reply says it could not find it. Offering the closest thing, clearly called that, still counts as this.
-- "made_up": the reply states something about the course that no passage or list it was shown supports.
+- "made_up": the reply states, as a fact of this course, something no passage or list it was shown supports: what a \
+slide, a teacher or an assignment said, a date, a number of points, a requirement, a name.
 
 REFERENCE lists what a right answer contains, when that is known. If it is empty, go by the material alone. If the \
 reply contradicts the reference, it is not correct.
 
-Judge what the reply says about the course in answer to the message. A joke, a side remark or naming what the course \
-is called is not a claim to check. Before you say "made_up", read the material again for the exact thing you think is \
-missing: a table, a schedule or a list in a passage counts.
+Judge what the reply says about the course in answer to the message. These are not claims to check, and never make \
+a reply "made_up": a joke or a side remark, what a course is called (see COURSES), and a general explanation of the \
+subject or an everyday example that agrees with the material. Where a slide and a lecture recording differ, the slide \
+is what the course says, since recordings are transcribed by machine. Before you say "made_up", read the material \
+again for the exact thing you think is missing: a line of an assignment, a table, a schedule or a list in a passage \
+counts. When you do say it, "why" has to quote the unsupported claim.
+
+COURSES:
+{courses}
 
 passages has one entry for every numbered passage in the material: "answers" when it answers the message, "related" \
 when it is on the topic without answering it, "unrelated" otherwise.
@@ -140,6 +147,9 @@ async def run(cases: List[Dict], courses_file: str, label: str, deployment: str)
     logging.getLogger().addHandler(Watch())
 
     handler = AIResponseHandler(os.environ["AZURE_OPENAI_ENDPOINT"], os.environ["AZURE_OPENAI_KEY"], deployment)
+    held = courses.course_store()
+    course_list = "\n".join(f"- {course['code']} {course['name']}, also called: {', '.join(course['aliases']) or 'nothing else'}"
+                            for course in (held.courses() if held else []))
 
     async def ask(message: str, history: str, key: str) -> str:
         for _ in range(4):
@@ -154,13 +164,13 @@ async def run(cases: List[Dict], courses_file: str, label: str, deployment: str)
 
     async def judge(case: Dict, material: str, reply: str, again: bool = False) -> Dict:
         reference = "\n".join(f"- {fact}" for fact in case.get("facts") or case.get("expect_source") or []) or "(none)"
-        prompt = JUDGE_PROMPT.format(message=case["messages"][-1], reference=reference,
+        prompt = JUDGE_PROMPT.format(message=case["messages"][-1], reference=reference, courses=course_list,
                                      material=material[:JUDGE_MATERIAL_CHARS] or "(nothing was looked up)", reply=reply)
         for _ in range(4):
             try:
                 answer = await handler.ai_client.chat.completions.create(
-                    model=deployment, messages=[{"role": "user", "content": prompt}], max_completion_tokens=1200,
-                    reasoning_effort="low")
+                    model=deployment, messages=[{"role": "user", "content": prompt}], max_completion_tokens=3000,
+                    reasoning_effort="medium")
             except Exception as error:
                 if "429" not in str(error):
                     return {"verdict": "unreadable", "why": str(error)[:200], "passages": {}}
@@ -191,17 +201,18 @@ async def run(cases: List[Dict], courses_file: str, label: str, deployment: str)
         seconds = time.monotonic() - asked_at
         session = handler.course_sessions.get(key)
         material = "\n\n".join(session.material) if session else ""
-        outcome = {"reply": reply, "lookups": len(seen["lookups"]), "searches": len(seen["searches"]), "sources": [material]}
+        outcome: Dict = {"reply": reply, "lookups": len(seen["lookups"]), "searches": len(seen["searches"]),
+                         "sources": [material]}
         verdict = {"verdict": None, "why": "", "passages": {}}
         if case["group"] in FLAGGED:
             verdict = await judge(case, material, reply)
-            outcome["verdict"] = verdict["verdict"]
+            outcome["verdict"], outcome["passages"] = verdict["verdict"], verdict["passages"]
         graded = grade(case, outcome)
         graded["why"] = graded["why"] or verdict["why"]
         results.append({**graded, "id": case["id"], "group": case["group"], "messages": case["messages"], "reply": reply,
                         "lookups": outcome["lookups"], "searches": list(seen["searches"]), "scopes": list(seen["lookups"]),
                         "scores": list(seen["scores"]), "passages": verdict["passages"], "model_calls": costs["calls"],
-                        "cost": costs["last"], "seconds": round(seconds, 1)})
+                        "cost": costs["last"], "seconds": round(seconds, 1), "material": material})
         mark = "pass" if graded["ok"] else "MISS"
         print(f"{mark} [{case['group']}] {case['messages'][-1][:60]!r} {graded['verdict'] or ''} "
               f"{'' if graded['right_place'] else 'WRONG PLACE '}{graded['why'][:110]}", flush=True)

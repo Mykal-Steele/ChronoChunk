@@ -29,6 +29,13 @@ _COURSE_TALK = re.compile(
     r"teams assignments", re.IGNORECASE)
 
 
+# A reply that says the material does not have it, or that the bot cannot know
+_SAYS_MISSING = re.compile(
+    r"could ?n.?t find|can.?t (see|tell|know|find|check)|cannot (see|tell|know|find)|didn.?t find|(doesn|does not|don|do not).?t? "
+    r"(list|say|show|include|mention|have|cover|give)|no way (to|of)|not (in|listed|shown|covered)|nothing (in|on|about)|"
+    r"\bidk\b|dont know|don.?t know", re.IGNORECASE)
+
+
 def parse_verdict(answer: str) -> Dict:
     """The judge's answer as a verdict, a reason and what it thought of each passage. "unreadable" when it is not one."""
     found = re.search(r"\{.*\}", answer or "", re.DOTALL)
@@ -67,10 +74,17 @@ def grade(case: Dict, outcome: Dict) -> Dict:
     # A follow-up may be answered from what the session already holds
     looked_up = bool(touched) or group == "followup"
     wanted = case.get("expect_source") or []
-    right_place = not wanted or any(name.lower() in source.lower() for name in wanted for source in outcome["sources"])
+    # An expected phrase is one way to know the right passage was there. The judge reading a passage as
+    # the answer is the other, for when the material says it in other words.
+    right_place = (not wanted or any(name.lower() in source.lower() for name in wanted for source in outcome["sources"])
+                   or "answers" in (outcome.get("passages") or {}).values())
     verdict = outcome.get("verdict")
-    good = ("not_found",) if group in UNANSWERABLE else ("correct", "incomplete")
-    return {"ok": looked_up and right_place and verdict in good, "looked_up": looked_up, "right_place": right_place,
+    if group in UNANSWERABLE:
+        # The judge sometimes calls "i cant see who submitted" correct, which it is
+        good = verdict == "not_found" or (verdict in ("correct", "incomplete") and bool(_SAYS_MISSING.search(reply)))
+    else:
+        good = verdict in ("correct", "incomplete")
+    return {"ok": looked_up and right_place and good, "looked_up": looked_up, "right_place": right_place,
             "verdict": verdict, "why": ""}
 
 

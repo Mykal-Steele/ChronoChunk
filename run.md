@@ -20,7 +20,7 @@ Rules:
 
 | Date | Run | Why | Calls | Estimate |
 |---|---|---|---|---|
-| 2026-10-14 | Third check with the judge, same 104 messages, on `gpt-6-luna-checks` | After a source line written mid-sentence is filled in, and two prompt rules about the closest thing and the bot's own knowledge | about 110 chat calls, 73 judge calls, 75 embedding calls | about $0.08 |
+| 2026-10-14 | Fourth check with the judge, same 104 messages, on `gpt-6-luna-checks` | The judge called 4 supported claims made up in run three (checked by hand against the course file). It now thinks longer, knows the course names, treats a slide as the word over a machine transcript, and has to quote what it calls made up | about 110 chat calls, 73 judge calls with more reasoning, 75 embedding calls | about $0.12 |
 
 ## Done
 
@@ -41,5 +41,6 @@ Rules:
 | 2026-10-13 | Full sync into a scratch file, 6 runs | Fill the new assignment cache and run the privacy guard on real data | 0 model calls | under $0.01 | $0 | The first 4 runs were stopped by the guard, on a false alarm: Microsoft's own id for the Assignments app sits in every submission link. After the guard learned those two ids, run 5 opened 15 assignments and run 6 opened none. The course file is version 2 with due times |
 | 2026-10-14 | Baseline check with the judge, question set `release1`, 104 messages, on `gpt-6-luna-checks` | The first judged measure of flags, sessions, sources by number and assignments | 116 replies, 73 judged | about $0.12 | $0.083 | 98 of 104 passed. Lookup on 73 of 73 flagged messages, right passage 58 of 59, answers judged right 57 of 59, session small talk clean 6 of 6, flag pointed to 5 of 5. Gate held on 6 misses: 1 real bug (passage numbers stripped out of code), 2 wrong "made up" verdicts by the judge (both claims are in the material), 2 false alarms of the course-talk rule, 1 expected phrase that was too strict. Also seen: 15 of 42 replies searched a second time for the same thing. Median reply 5.3 seconds |
 | 2026-10-14 | Second check with the judge, same 104 messages | After the fixes from the baseline | 116 replies, 73 judged | about $0.09 | $0.074 | Right passage 59 of 59, plain chat clean 20 of 20, session small talk clean 6 of 6, median reply 3.8 seconds (5.3 before), second searches down from 36 to 24. Gate held: 2 small made-up statements (a general Java claim added from the model's own knowledge, and a sloppy retelling of "the closest thing"), one source line left as numbers because it was written mid-sentence, 3 questions that were graded as answerable though the material cannot answer them, and 1 judge verdict I do not agree with |
+| 2026-10-14 | Third check with the judge, same 104 messages | After the mid-sentence source line and two prompt rules | 116 replies, 73 judged | about $0.08 | $0.078 | Bot behaviour steady: lookup 73 of 73, plain chat clean 20 of 20, session small talk clean 6 of 6, median 3.9 seconds. Gate held on 4 "made up" verdicts. Checked by hand: 3 are in the material (Lab 7 is 5 points, the slide says f(n) = g(n) + h(n), LNG320 is the English class) and 1 is the bot adding vacuum-cleaner examples of its own. The judge was the weak part of this run |
 
-Total so far: about $0.28.
+Total so far: about $0.36.

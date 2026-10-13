@@ -85,3 +85,24 @@ def test_the_gate_holds_a_release_until_every_line_is_met():
     # Under 90% in the right place fails too
     low = gate([result("fact") for _ in range(8)] + [result("fact", ok=False, right_place=False) for _ in range(2)])
     assert not low["passed"] and "right place" in low["failed"]
+
+
+def test_the_right_place_is_also_what_the_judge_says_answers_it():
+    # The expected phrase was "close the scanner". The lecture said it in other words, and the judge saw that.
+    case = {"group": "fact", "expect_source": ["close the scanner"]}
+    outcome = dict(_outcome("close it", lookups=1, sources=["...remember to shut the scanner object..."], verdict="correct"),
+                   passages={"1": "related", "2": "answers"})
+    assert grade(case, outcome)["right_place"] and grade(case, outcome)["ok"]
+    assert not grade(case, dict(outcome, passages={"1": "related", "2": "unrelated"}))["right_place"]
+
+
+def test_saying_it_cannot_be_known_passes_whatever_the_judge_calls_it():
+    # "i cant see whether you submitted it" is the right answer, and the judge called it correct, not not_found
+    for group in ("absent", "partial"):
+        case = {"group": group}
+        assert grade(case, _outcome("i cant see whether you personally submitted it", lookups=1, verdict="correct"))["ok"]
+        assert grade(case, _outcome("the course material doesn’t list the exact questions", lookups=1, verdict="correct"))["ok"]
+        assert grade(case, _outcome("couldn't find that anywhere", lookups=1, verdict="incomplete"))["ok"]
+        # Called correct while stating an answer is not a pass
+        assert not grade(case, _outcome("the average was 71", lookups=1, verdict="correct"))["ok"]
+        assert not grade(case, _outcome("i cant see it but it was probably 71", lookups=1, verdict="made_up"))["ok"]
