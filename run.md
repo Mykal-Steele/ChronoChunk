@@ -16,6 +16,13 @@ Rules:
 | Answer check with a judge, about 60 questions, per run | The gate for every change to retrieval or the prompt | about $0.06 a run, about 6 runs |
 | Full sync, twice | The course file with assignments, for the check and for the server | about $0.01 |
 
+## Running
+
+| Date | Run | Why | Calls | Estimate |
+|---|---|---|---|---|
+| 2026-10-13 | Full sync, 9 courses, into a scratch file | A course file with the nicknames in it, and a rerun of the assignment collection after its type fix | a few embedding calls, the rest is cached | under $0.01 |
+| 2026-10-13 | First check of the flag on the real model: 51 V12 questions with `-course`, 12 assignment questions, 9 unflagged messages, one at a time on `gpt-6-luna-checks` | Nothing built today for the flag has met the real model yet | about 90 chat calls, 75 embedding calls | about $0.05 |
+
 ## Done
 
 | Date | Run | Why | Calls | Estimate | Actual | Result |
