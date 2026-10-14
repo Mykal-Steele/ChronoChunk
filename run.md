@@ -16,12 +16,6 @@ Rules:
 | Answer check with a judge, about 60 questions, per run | The gate for every change to retrieval or the prompt | about $0.06 a run, about 6 runs |
 | Full sync for the server, after the remaining sync work | The course file the live bot will read | about $0.01 |
 
-## Running
-
-| Date | Run | Why | Calls | Estimate |
-|---|---|---|---|---|
-| 2026-10-14 | Live test of 3.19.0 in `#chrono-test`, about 25 messages from the test bot, one at a time | The release had only been checked off Discord. Plain chat, typed commands and the call rules first, then course questions on the newest material of each course | about 35 calls on the live `gpt-6-luna` deployment, spread over several minutes, plus one small PDF | about $0.03 |
-
 ## Done
 
 | Date | Run | Why | Calls | Estimate | Actual | Result |
@@ -50,5 +44,6 @@ Rules:
 | 2026-10-14 | Sixth check with the judge, same 104 messages | The gate again, after the fixes from the review of pull request 32, on the course file with picture instructions | 116 replies, 73 judged | about $0.10 | $0.092 | Gate passed, 103 of 104. Lookup 73 of 73, right place 56 of 56, answers judged right 55 of 56, made up 0, says so when it is not there 17 of 17, plain chat clean 20 of 20, session small talk clean 6 of 6, flag pointed to 5 of 5. Median reply 3.7 seconds. The one miss: a reply added a general Java alternative that the lecture's instruction disagrees with |
 | 2026-10-14 | Full sync into the real local `courses.db` | So the local file has the picture instructions too | 0 model calls, all cached | under $0.01 | $0 | 16 assignments, 4 with pictures read. Not uploaded yet |
 | 2026-10-14 | Full sync with `--upload` to the server, after 3.19.0 was deployed | The live bot gets the course file with assignments, nicknames, due times and picture instructions | 0 model calls, all cached | under $0.01 | $0 | Uploaded. The live bot's `/courses` lists the assignments and nicknames, last synced 14 Oct 2026 at 17:01 Bangkok time |
+| 2026-10-14 | Live test of 3.19.0 in `#chrono-test`, 26 messages from the test bot | The release had only been checked off Discord | 21 replies on the live deployment | about $0.03 | $0.028 | Plain chat, typed commands, ping, join-in, PDF, unknown code and small talk inside course mode all followed the rules. Course answers on the newest material averaged 3.3 of 5 for usefulness. Found: "latest lecture" questions miss on the first lookup (course name and "lecture" are stripped, and no date filter is used), one follow-up came out garbled and repeated, and a web answer's source line was written inline |
 
-Total so far: about $0.63.
+Total so far: about $0.66.
