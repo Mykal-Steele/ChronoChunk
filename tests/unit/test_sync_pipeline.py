@@ -30,6 +30,7 @@ class FakeClient:
     def __init__(self, describe=None):
         self.embedded = []
         self.chats = []
+        self.chat_contents = []
         self.describe = describe or (lambda prompt, images: "")
         self.embeddings = SimpleNamespace(create=self._embed)
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._chat))
@@ -53,6 +54,7 @@ class FakeClient:
         else:
             images = [part["image_url"]["url"] for part in content if part["type"] == "image_url"]
             self.chats.append(("describe", content[0]["text"], len(images)))
+            self.chat_contents.append(content)
             answer = self.describe(content[0]["text"], images)
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=answer))],
                                usage=SimpleNamespace(prompt_tokens=10_000, completion_tokens=2_000))
@@ -393,6 +395,24 @@ def test_a_picture_in_an_assignment_is_described_once_and_kept_as_a_reference(tm
 
     asked = len(client.chats)
     build([material], Models(cache, client=client), cache, out, Report())
+    assert len(client.chats) == asked
+
+
+def test_a_picture_is_sent_as_the_kind_of_image_it_is(tmp_path, cache):
+    client = FakeClient(describe=lambda prompt, images: "Find the path.")
+    models = Models(cache, client=client)
+    for name, kind in (("maze.webp", "image/webp"), ("maze.gif", "image/gif"), ("maze.JPG", "image/jpeg"), ("maze.png", "image/png")):
+        path = tmp_path / name
+        path.write_bytes(b"picture " + name.encode())
+        assert models.read_picture(str(path), file_sha(path)) == "Find the path."
+        sent = client.chat_contents[-1]
+        assert sent[1]["image_url"]["url"].startswith(f"data:{kind};base64,"), name
+    # A kind the model cannot read is refused before anything is paid for
+    odd = tmp_path / "scan.tiff"
+    odd.write_bytes(b"tiff")
+    asked = len(client.chats)
+    with pytest.raises(ValueError, match="tiff"):
+        models.read_picture(str(odd), file_sha(odd))
     assert len(client.chats) == asked
 
 

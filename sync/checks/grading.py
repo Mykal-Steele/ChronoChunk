@@ -82,8 +82,9 @@ def grade(case: Dict, outcome: Dict) -> Dict:
     # An expected phrase is one way to know the right passage was there. The judge reading a passage as
     # the answer is the other, for when the material says it in other words.
     verdict = outcome.get("verdict")
+    # Measured apart from the verdict, so the "right place" line can show a retrieval miss that the answer hid
     right_place = (not wanted or any(name.lower() in source.lower() for name in wanted for source in outcome["sources"])
-                   or "answers" in (outcome.get("passages") or {}).values() or verdict in ("correct", "incomplete"))
+                   or "answers" in (outcome.get("passages") or {}).values())
     if group in UNANSWERABLE:
         # The judge sometimes calls "i cant see who submitted" correct, which it is
         good = verdict == "not_found" or (verdict in ("correct", "incomplete") and bool(_SAYS_MISSING.search(reply)))

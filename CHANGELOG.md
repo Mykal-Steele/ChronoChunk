@@ -39,6 +39,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 ### Fixed
 
 - A reply the bot kept is served again for five minutes at most, and never inside course mode. Every prompt now carries the time of day, and a kept "add -c" could come back to someone who had since turned course mode on.
+- A picture in an assignment that cannot be fetched is named in the sync report instead of being dropped without a word, and a picture is sent to the model as the kind of image it is.
 - An error is only called a rate limit when it is one. The test was for the letters "rate", which are in "generate" too.
 
 ### Privacy

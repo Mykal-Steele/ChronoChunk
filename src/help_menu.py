@@ -101,7 +101,7 @@ def build_help_embed() -> discord.Embed:
 
     course_cmds = [
         "end a message with `-c` and i look it up in ur class slides, lecture recordings and assignments: `/what did the ai lecture say about search -c`. a course code works too: `-csc340`",
-        "after that u just keep chatting, course mode stays on for u here for an hour. without `-c` i dont look anything up",
+        "after that u just keep chatting: course mode stays on for u here for an hour, and i look things up when i need to. `-c` is what turns it on, so with no course mode on i dont look anything up",
         "`/whats due this week -c` - assignments with due dates and time left",
         "`/courses` - which courses i have, how much of each, and when they were last synced"
     ]

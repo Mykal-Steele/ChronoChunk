@@ -4,6 +4,7 @@ call is priced and added up, and the run stops before it passes its spending lim
 Results go into the cache, so the same text is never paid for twice.
 """
 import base64
+import mimetypes
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -28,6 +29,10 @@ TRANSLATE_PROMPT = (
 )
 
 
+# The picture kinds the chat model accepts
+PICTURE_KINDS = ("image/png", "image/jpeg", "image/gif", "image/webp")
+# Not every system's own table knows .webp, and the answer must not depend on the machine
+mimetypes.add_type("image/webp", ".webp")
 PICTURE_PROMPT = (
     "This picture is part of the instructions of a university assignment. Write out everything in it that a student "
     "needs to do the assignment: the task, the questions, numbers, tables, formulas, and what a diagram shows. "
@@ -117,10 +122,12 @@ class Models:
         cached: Optional[str] = self.cache.get("description", f"picture:{digest}")
         if cached is not None:
             return cached
+        kind = mimetypes.guess_type(path.lower())[0]
+        if kind not in PICTURE_KINDS:
+            raise ValueError(f"{os.path.basename(path)} is not a kind of picture the model reads ({kind or 'unknown'})")
         with open(path, "rb") as file:
             encoded = base64.b64encode(file.read()).decode("ascii")
-        kind = "jpeg" if path.lower().endswith((".jpg", ".jpeg")) else "png"
-        said = self.describe(PICTURE_PROMPT, [f"data:image/{kind};base64,{encoded}"])
+        said = self.describe(PICTURE_PROMPT, [f"data:{kind};base64,{encoded}"])
         if said:
             self.cache.put("description", f"picture:{digest}", said)
         return said

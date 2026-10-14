@@ -143,7 +143,7 @@ def collect(only: Sequence[str], cache: Cache, report: Report, headless: bool = 
             # The slides and lectures are still worth a course file when the Assignments app cannot be read
             facts, problems = [], [f"assignments: {str(error)[:200]}"]
         try:
-            sharepoint.fetch_pictures(context, facts, cache)
+            problems.extend(sharepoint.fetch_pictures(context, facts, cache))
         except Exception as error:
             problems.append(f"pictures in assignments: {str(error)[:200]}")
         for fact in facts:

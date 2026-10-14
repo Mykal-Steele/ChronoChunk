@@ -122,8 +122,10 @@ def test_a_verdict_is_still_read_when_the_judge_writes_broken_json():
     assert read["verdict"] == "correct" and read["passages"] == {"1": "answers", "2": "related"}
 
 
-def test_a_reply_the_judge_calls_right_was_read_in_the_right_place():
+def test_the_right_place_is_measured_apart_from_the_verdict():
+    # Retrieval and answer are two lines of the gate. A good verdict does not make the place right on its own.
     case = {"group": "fact", "expect_source": ["close the scanner"]}
     outcome = dict(_outcome("close it", lookups=1, sources=["shut the scanner object"], verdict="correct"), passages={"1": "related"})
-    assert grade(case, outcome)["right_place"] and grade(case, outcome)["ok"]
-    assert not grade(case, dict(outcome, verdict="wrong_place"))["right_place"]
+    assert not grade(case, outcome)["right_place"]
+    assert grade(case, dict(outcome, passages={"1": "answers"}))["right_place"]
+    assert grade(case, dict(outcome, sources=["remember to close the scanner"]))["right_place"]
