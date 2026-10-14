@@ -16,6 +16,12 @@ Rules:
 | Answer check with a judge, about 60 questions, per run | The gate for every change to retrieval or the prompt | about $0.06 a run, about 6 runs |
 | Full sync for the server, after the remaining sync work | The course file the live bot will read | about $0.01 |
 
+## Running
+
+| Date | Run | Why | Calls | Estimate |
+|---|---|---|---|---|
+| 2026-10-14 | Live test of 3.19.0 in `#chrono-test`, about 25 messages from the test bot, one at a time | The release had only been checked off Discord. Plain chat, typed commands and the call rules first, then course questions on the newest material of each course | about 35 calls on the live `gpt-6-luna` deployment, spread over several minutes, plus one small PDF | about $0.03 |
+
 ## Done
 
 | Date | Run | Why | Calls | Estimate | Actual | Result |
