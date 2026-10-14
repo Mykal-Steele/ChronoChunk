@@ -10,7 +10,7 @@ from src.ai_response_handler import AIResponseHandler, Reply
 from config.config import Config
 from src import usage_context
 from src.command_handler import CommandHandler
-from src.conversation import UNCALLED_NOTE, Conversation, stays_out
+from src.conversation import UNCALLED_NOTE, Conversation, is_call, stays_out
 from src.exceptions import RateLimitError
 from src.message_handler import MessageHandler
 from src.rate_limiter import RateLimiter
@@ -144,13 +144,13 @@ class MessageProcessor:
                 username=username,
                 content=history_text(message),
                 is_bot=False,
-                is_command=content.startswith('/'),
+                is_command=is_call(content),
                 timestamp=getattr(message, "created_at", None),
                 message_id=getattr(message, "id", None)
             )
 
             # Now handle command processing
-            if content.startswith('/'):
+            if is_call(content):
                 # Load user data
                 user_data = self.user_data_manager.load_user_data(user_id, username)
                 
@@ -247,7 +247,7 @@ class MessageProcessor:
                 "content": history_text(msg),
                 # Only our own messages count as the bot. Other bots show up under their own name.
                 "is_bot": msg.author.id == self.bot.user.id,
-                "is_command": isinstance(msg.content, str) and msg.content.startswith('/'),
+                "is_command": isinstance(msg.content, str) and is_call(msg.content),
                 "timestamp": msg.created_at,
                 "message_id": msg.id,
                 "reply_to": reply_to,
@@ -304,14 +304,15 @@ class MessageProcessor:
 is_correction: bool) -> None:
         """Handle messages that begin with a slash (potential commands)"""
         try:
+            content = message.content
             # Split into command and args
-            parts = message.content.split()
+            parts = content.split()
             command = parts[0][1:] if len(parts[0]) > 1 else ""  # Remove the slash
             args = parts[1:] if len(parts) > 1 else []
             
             # "/chat ..." is plain chat, so the word itself is dropped
             if command.lower() == "chat":
-                rest = message.content[len(parts[0]):].strip()
+                rest = content[len(parts[0]):].strip()
                 query = f"/{rest}" if rest else NO_TEXT
                 referenced = await self._get_referenced_message(message)
                 await self._respond(message, user_id, username, channel_id, query, user_data, referenced)
@@ -321,7 +322,7 @@ is_correction: bool) -> None:
             is_text_command = self.text_commands is None or command.lower() in self.text_commands
             if not self.command_handler or not is_text_command:
                 referenced = await self._get_referenced_message(message)
-                await self._respond(message, user_id, username, channel_id, message.content, user_data, referenced)
+                await self._respond(message, user_id, username, channel_id, content, user_data, referenced)
                 return
 
             # Pass to command handler. /tldr reads the channel and calls the AI, which takes a while.
@@ -341,7 +342,7 @@ is_correction: bool) -> None:
                 # Unrecognized slash: treat as chat, with the channel history and the
                 # message they replied to (if any)
                 referenced = await self._get_referenced_message(message)
-                await self._respond(message, user_id, username, channel_id, message.content, user_data, referenced)
+                await self._respond(message, user_id, username, channel_id, content, user_data, referenced)
                 
         except Exception as e:
             logger.error(f"Error handling command: {e}")
@@ -393,7 +394,7 @@ is_correction: bool) -> None:
                         enriched_query, conversation_history, username, user_id,
                         attached_context=attached.text, images=attached.images,
                         allow_files=True, file_gate=file_gate, web_gate=web_gate, course_gate=course_gate,
-                        emoji_prompt=emoji.prompt(reactions=may_react)
+                        emoji_prompt=emoji.prompt(reactions=may_react), session_key=f"{channel_id}:{user_id}"
                     )
 
             with watch.step("send"):

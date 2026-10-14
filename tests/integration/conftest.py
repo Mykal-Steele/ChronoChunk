@@ -4,8 +4,11 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 
 @pytest.fixture
-def pipeline(tmp_path, mock_genai_client, mock_bot_user):
+def pipeline(tmp_path, mock_genai_client, mock_bot_user, monkeypatch):
     """Build a fully wired MessageProcessor with mocked externals."""
+    from config.config import Config
+    # Joining in uncalled is a coin flip. Here the coin always lands on joining in.
+    monkeypatch.setattr(Config, "JOIN_IN_CHANCE", 1.0)
     from src.message_handler import MessageHandler
     from src.game_manager import GameManager
     from src.message_processor import MessageProcessor

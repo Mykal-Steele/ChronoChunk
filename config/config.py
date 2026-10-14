@@ -84,6 +84,8 @@ class Config:
     # For this many seconds after someone calls the bot in a channel, it may answer a message there
     # that nobody addressed to it, when the model thinks a person in the chat would. 0 turns that off.
     JOIN_IN_SECONDS = int(os.getenv("JOIN_IN_SECONDS", 30))
+    # How likely the bot is to take that chance at all, from 0 to 1. Decided once per call, before the model is asked.
+    JOIN_IN_CHANCE = float(os.getenv("JOIN_IN_CHANCE", 0.5))
 
     # Tavily key for web search. Without it the bot can still open links, it just cannot search.
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
@@ -91,6 +93,8 @@ class Config:
     # The course material the bot can search. The sync on a PC builds this file and uploads it.
     # With no file there, the bot has no course search and says nothing about courses.
     COURSES_FILE = os.getenv("COURSES_FILE", os.path.join(STATE_DIR, "courses.db"))
+    # How long a course flag keeps course mode on for the person who used it, in seconds
+    COURSE_SESSION_SECONDS = int(os.getenv("COURSE_SESSION_SECONDS", 3600))
     # The deployment that embeds a course question. It has to carry the name of the model the sync
     # embedded the material with, and the sync reads the same setting.
     EMBEDDING_DEPLOYMENT = os.getenv("EMBEDDING_DEPLOYMENT", "text-embedding-3-small").strip()

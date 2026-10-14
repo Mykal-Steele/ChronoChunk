@@ -55,8 +55,8 @@ class MessageHandler:
 
         # For command-like messages, store without the slash for more natural flow
         content_to_store = content
-        if is_command and content.startswith('/') and not content.startswith('//'):
-            content_to_store = content[1:] if len(content) > 1 else content
+        if is_command and content.startswith("/") and not content.startswith('//'):
+            content_to_store = content[1:].lstrip() if len(content) > 1 else content
 
         self.last_channel_messages[channel_id].append({
             "author_id": user_id,
@@ -133,6 +133,9 @@ class MessageHandler:
         "brain cells just went on strike",
         "my brain just glitched",
         "something broke on my end",
+        "rate limiting me",
+        "hit the rate limit",
+        "azure quota",
         "something went wrong",
         "something just broke",
     )

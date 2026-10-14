@@ -106,18 +106,36 @@ async def test_generate_response_cache_respects_history(handler, mock_openai_cli
     assert mock_openai_client.chat.completions.create.call_count == 2
 
 
-async def test_generate_response_429_returns_fallback(handler, mock_openai_client):
-    mock_openai_client.chat.completions.create.side_effect = Exception("429 quota exceeded")
-    result = await handler.generate_response("test", "", "TestUser", "12345")
-    assert isinstance(result, str)
-    assert len(result) > 0
+async def test_a_rate_limit_is_named_as_one_with_when_to_try_again(handler, mock_openai_client):
+    mock_openai_client.chat.completions.create.side_effect = Exception(
+        "Error code: 429 - {'error': {'message': 'Your requests to gpt-6-luna have exceeded token rate limit.', "
+        "'code': 'rate_limit_exceeded'}}")
+    replies = {await handler.generate_response(f"test {number}", "", "TestUser", "12345") for number in range(4)}
+    # Worded a few ways, and every one says what happened and that waiting fixes it
+    assert len(replies) > 1
+    for reply in replies:
+        assert "rate limit" in reply and ("sec" in reply or "min" in reply)
 
 
-async def test_generate_response_generic_error_returns_fallback(handler, mock_openai_client):
+async def test_a_spent_quota_is_not_called_a_rate_limit(handler, mock_openai_client):
+    mock_openai_client.chat.completions.create.side_effect = Exception(
+        "Error code: 429 - {'error': {'code': 'insufficient_quota', 'message': 'You exceeded your current quota'}}")
+    reply = await handler.generate_response("test", "", "TestUser", "12345")
+    assert "quota" in reply and "rate limit" not in reply
+
+
+async def test_any_other_failure_says_it_is_on_the_bots_side(handler, mock_openai_client):
     mock_openai_client.chat.completions.create.side_effect = Exception("connection refused")
-    result = await handler.generate_response("test", "", "TestUser", "12345")
-    assert isinstance(result, str)
-    assert "glitch" in result or "brain" in result or "try again" in result.lower()
+    reply = await handler.generate_response("test", "", "TestUser", "12345")
+    assert "something broke on my end" in reply and "try again" in reply
+
+
+async def test_error_replies_are_kept_out_of_later_context(handler, mock_openai_client):
+    from src.message_handler import MessageHandler
+    for error in ("429 rate limit", "429 insufficient_quota", "connection refused"):
+        mock_openai_client.chat.completions.create.side_effect = Exception(error)
+        reply = await handler.generate_response(f"test {error}", "", "TestUser", "12345")
+        assert any(marker in reply.lower() for marker in MessageHandler._EXCLUDED_BOT_PATTERNS), reply
 
 
 async def test_generate_response_short_followup_with_history(handler, mock_openai_client):
@@ -1010,3 +1028,39 @@ def test_a_link_to_another_page_of_the_same_site_is_not_swapped():
     sources = ["link: https://docs.python.org/3/library/re.html"]
     reply = "that one is in [the os docs](<https://docs.python.org/3/library/os.html>)"
     assert repair_links(reply, sources) == reply
+
+
+async def test_every_reply_is_told_the_current_date_and_time_in_bangkok(handler, mock_openai_client, monkeypatch):
+    from datetime import datetime, timezone
+    import src.ai_response_handler as module
+    # 14:05 UTC is 21:05 in Bangkok
+    monkeypatch.setattr(module, "_now", lambda: datetime(2026, 10, 13, 14, 5, tzinfo=timezone.utc))
+    await handler.generate_response("what day is it", "", "TestUser", "12345")
+    call = mock_openai_client.chat.completions.create.call_args[1]
+    asked = call["messages"][1]["content"]
+    assert "(right now it is Tuesday 13 Oct 2026, 21:05 Bangkok time)" in asked
+    # It goes with the message, so the system prompt stays the same from one minute to the next
+    assert "right now it is" not in call["messages"][0]["content"]
+    assert asked.rstrip().endswith('[TestUser]: "what day is it"')
+
+
+async def test_a_kept_reply_is_only_served_for_a_few_minutes(handler, mock_openai_client):
+    # Every prompt carries the time, so yesterday's answer to "what day is it" is wrong today
+    assert handler.cache_seconds == 300
+    await handler.generate_response("what day is it", "", "TestUser", "12345")
+    await handler.generate_response("what day is it", "", "TestUser", "12345")
+    assert mock_openai_client.chat.completions.create.call_count == 1
+    handler.cache_seconds = 0
+    await handler.generate_response("what day is it", "", "TestUser", "12345")
+    assert mock_openai_client.chat.completions.create.call_count == 2
+
+
+async def test_an_error_that_only_has_the_letters_rate_in_it_is_not_called_a_rate_limit(handler, mock_openai_client):
+    for error in ("Failed to generate a completion", "invalid separate tool_call arguments", "moderate load, connection reset"):
+        mock_openai_client.chat.completions.create.side_effect = Exception(error)
+        reply = await handler.generate_response(f"test {error}", "", "TestUser", "12345")
+        assert "something broke on my end" in reply and "rate limit" not in reply, error
+    for error in ("Error code: 429 - too many", "Rate limit reached for requests", "rate-limited, retry later", "Too Many Requests"):
+        mock_openai_client.chat.completions.create.side_effect = Exception(error)
+        reply = await handler.generate_response(f"test {error}", "", "TestUser", "12345")
+        assert "rate limit" in reply, error

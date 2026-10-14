@@ -30,6 +30,7 @@ class FakeClient:
     def __init__(self, describe=None):
         self.embedded = []
         self.chats = []
+        self.chat_contents = []
         self.describe = describe or (lambda prompt, images: "")
         self.embeddings = SimpleNamespace(create=self._embed)
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._chat))
@@ -53,9 +54,17 @@ class FakeClient:
         else:
             images = [part["image_url"]["url"] for part in content if part["type"] == "image_url"]
             self.chats.append(("describe", content[0]["text"], len(images)))
+            self.chat_contents.append(content)
             answer = self.describe(content[0]["text"], images)
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=answer))],
                                usage=SimpleNamespace(prompt_tokens=10_000, completion_tokens=2_000))
+
+
+@pytest.fixture(autouse=True)
+def no_nicknames(monkeypatch):
+    """The real list of course nicknames is a setting. A test that is about them sets its own."""
+    from sync import build as build_module
+    monkeypatch.setattr(build_module, "NICKNAMES", {})
 
 
 @pytest.fixture
@@ -326,6 +335,96 @@ def test_a_run_writes_a_course_file_the_bot_can_search(tmp_path, material, cache
     assert "1 copies of a file already read" in text and "no transcript: CSC340_week3.mp4" in text
     assert any("read broken.pdf" in problem for problem in report.problems)
     assert not (tmp_path / "out" / "courses.db.new").exists()
+
+
+def _assignment(number: int, due: str, instructions: str) -> dict:
+    return {"id": f"a{number}", "classId": "group-1", "displayName": f"Lab {number}", "dueDateTime": due,
+            "instructions": {"content": f"<div>{instructions}</div>", "contentType": "html"},
+            "grading": {"maxPoints": 5}, "resources": [{"resource": {"displayName": f"Lab{number}.pptx"}}],
+            "webUrl": f"https://example.test/assignment/{number}"}
+
+
+def test_assignments_are_stored_as_material_of_their_course(tmp_path, material, cache):
+    material.assignments = [_assignment(7, "2026-09-27T18:30:00Z", "Train a classifier and report its confusion matrix."),
+                            _assignment(2, "2026-08-13T16:59:00Z", f"{THAI} {THAI}")]
+    models = Models(cache, client=FakeClient(describe=lambda prompt, images: "## Page 2\nRows."))
+    out = tmp_path / "courses.db"
+    report = Report()
+    build([material], models, cache, out, report)
+
+    store = CourseStore.open(str(out))
+    assert store.counts()["CSC340"] == {"slide": 1, "transcript": 1, "assignment": 2}
+    # The date of an assignment is the Bangkok day it is due
+    assert store.newest()["CSC340"]["assignment"] == "2026-09-28"
+    stored = {item["title"]: item for item in store.assignments("CSC340")}
+    assert stored["Lab 7"]["due"] == "2026-09-28T01:30:00+07:00"
+    assert stored["Lab 7"]["meta"] == {"points": 5, "attached": ["Lab7.pptx"]}
+    wording = ("CSC340 Artificial Intelligence | assignment | Lab 7\nLab 7\nDue 2026-09-28 01:30 Bangkok time\n5 points\n"
+               "Train a classifier and report its confusion matrix.\nAttached: Lab7.pptx")
+    hit = store.search("classifier confusion matrix", models.embed([wording])[0], kind="assignment")[0]
+    assert (hit.kind, hit.title, hit.date, hit.url) == ("assignment", "Lab 7", "2026-09-28", "https://example.test/assignment/7")
+    assert hit.text == wording.split("\n", 1)[1]
+
+    import sqlite3
+    thai = sqlite3.connect(out).execute(
+        "SELECT text, original FROM chunks JOIN sources ON sources.id = source_id WHERE title = 'Lab 2'").fetchone()
+    # Thai instructions are searched in English and keep their own wording
+    assert thai[0].startswith("English: ") and THAI in thai[1]
+    store.close()
+    assert "2 assignments" in "\n".join(report.lines)
+
+
+def test_a_picture_in_an_assignment_is_described_once_and_kept_as_a_reference(tmp_path, material, cache):
+    picture = tmp_path / "maze.png"
+    Image.new("RGB", (120, 80), "white").save(picture, "PNG")
+    assignment = _assignment(5, "2026-09-22T16:59:00Z", "") | {
+        "instructions": {"content": '<img data-e="png" data-i="01ITEM" data-d="b!drive">', "contentType": "html"},
+        "pictures": [{"path": str(picture), "sha": file_sha(picture), "url": "https://example.test/maze.png"}]}
+    material.assignments = [assignment]
+
+    def describe(prompt, images):
+        return "Find the shortest path through the maze with A*." if "assignment" in prompt else "## Page 2\nRows."
+    client = FakeClient(describe=describe)
+    out = tmp_path / "courses.db"
+    build([material], Models(cache, client=client), cache, out, Report())
+    store = CourseStore.open(str(out))
+    [stored] = store.assignments("CSC340")
+    assert "Picture in the instructions: Find the shortest path through the maze with A*." in stored["text"]
+    assert stored["meta"]["pictures"] == ["https://example.test/maze.png"]
+    store.close()
+
+    asked = len(client.chats)
+    build([material], Models(cache, client=client), cache, out, Report())
+    assert len(client.chats) == asked
+
+
+def test_a_picture_is_sent_as_the_kind_of_image_it_is(tmp_path, cache):
+    client = FakeClient(describe=lambda prompt, images: "Find the path.")
+    models = Models(cache, client=client)
+    for name, kind in (("maze.webp", "image/webp"), ("maze.gif", "image/gif"), ("maze.JPG", "image/jpeg"), ("maze.png", "image/png")):
+        path = tmp_path / name
+        path.write_bytes(b"picture " + name.encode())
+        assert models.read_picture(str(path), file_sha(path)) == "Find the path."
+        sent = client.chat_contents[-1]
+        assert sent[1]["image_url"]["url"].startswith(f"data:{kind};base64,"), name
+    # A kind the model cannot read is refused before anything is paid for
+    odd = tmp_path / "scan.tiff"
+    odd.write_bytes(b"tiff")
+    asked = len(client.chats)
+    with pytest.raises(ValueError, match="tiff"):
+        models.read_picture(str(odd), file_sha(odd))
+    assert len(client.chats) == asked
+
+
+def test_the_nicknames_of_a_course_are_written_beside_its_codes(tmp_path, material, cache, monkeypatch):
+    from sync import build as build_module
+    monkeypatch.setattr(build_module, "NICKNAMES", {"CSC340": ("ai", "ai class"), "CSC999": ("not synced",)})
+    out = tmp_path / "courses.db"
+    build([material], Models(cache, client=FakeClient(describe=lambda prompt, images: "## Page 2\nRows.")), cache, out, Report())
+    store = CourseStore.open(str(out))
+    # The codes from the team's title first, then what people call the course
+    assert store.courses() == [{"code": "CSC340", "name": "Artificial Intelligence", "aliases": ["BIF651", "ai", "ai class"]}]
+    store.close()
 
 
 def test_a_second_run_with_nothing_new_calls_no_model(tmp_path, material, cache):

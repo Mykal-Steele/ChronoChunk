@@ -236,3 +236,29 @@ def test_a_retry_after_header_is_read_as_seconds_or_as_a_date():
     later = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=30), usegmt=True)
     assert 25 < retry_after(later, 2.0) <= 30
     assert retry_after("Wed, 21 Oct 2015 07:28:00 GMT", 2.0) == 0.0
+
+
+def test_a_picture_that_cannot_be_fetched_is_reported_not_dropped(cache, monkeypatch):
+    def details(context, url):
+        if "01BROKEN" in url:
+            raise RuntimeError("GET answered 404")
+        return {"id": url.split("/items/")[1].split("?")[0], "name": "image.png", "cTag": "c1", "webUrl": "https://example.test/p"}
+
+    def fetch(context, files, cache):
+        for file in files:
+            if file["id"] == "01GONE":
+                file["error"] = "download failed"
+            else:
+                file["path"], file["sha"] = "/tmp/p.png", "abc"
+        return 1, [file for file in files if "error" in file]
+    monkeypatch.setattr(sharepoint, "get_json", details)
+    monkeypatch.setattr(sharepoint, "download", fetch)
+    picture = '<img data-d="b!drive" data-i="{}">'
+    facts = [{"displayName": "Lab 2", "instructions": {"content": picture.format("01GOOD") + picture.format("01GONE")}},
+             {"displayName": "Lab 3", "instructions": {"content": picture.format("01BROKEN")}}]
+    problems = sharepoint.fetch_pictures(object(), facts, cache)
+    assert facts[0]["pictures"] == [{"path": "/tmp/p.png", "sha": "abc", "url": "https://example.test/p"}]
+    assert "pictures" not in facts[1]
+    assert len(problems) == 2
+    assert any("'Lab 2'" in problem and "download failed" in problem for problem in problems)
+    assert any("'Lab 3'" in problem and "404" in problem for problem in problems)

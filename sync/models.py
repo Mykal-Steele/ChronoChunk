@@ -3,6 +3,8 @@ The model calls the sync makes: embeddings, page descriptions and translations. 
 call is priced and added up, and the run stops before it passes its spending limit.
 Results go into the cache, so the same text is never paid for twice.
 """
+import base64
+import mimetypes
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -24,6 +26,17 @@ CALLS_AT_ONCE = 5
 TRANSLATE_PROMPT = (
     "Translate this course material into English. Keep technical terms, names, numbers and code as they are. "
     "Give only the translation.\n\n{text}"
+)
+
+
+# The picture kinds the chat model accepts
+PICTURE_KINDS = ("image/png", "image/jpeg", "image/gif", "image/webp")
+# Not every system's own table knows .webp, and the answer must not depend on the machine
+mimetypes.add_type("image/webp", ".webp")
+PICTURE_PROMPT = (
+    "This picture is part of the instructions of a university assignment. Write out everything in it that a student "
+    "needs to do the assignment: the task, the questions, numbers, tables, formulas, and what a diagram shows. "
+    "Plain text, in the picture's own words where it has words. No introduction and no comment of your own."
 )
 
 
@@ -100,6 +113,24 @@ class Models:
         content = [{"type": "text", "text": prompt}]
         content += [{"type": "image_url", "image_url": {"url": image}} for image in images]
         return self._chat(content, DESCRIBE_MAX_TOKENS)
+
+    def read_picture(self, path: str, digest: str) -> str:
+        """
+        What a picture set into an assignment's instructions says, as text. digest is the
+        hash of the file, which is what the answer is kept under, so it is paid for once.
+        """
+        cached: Optional[str] = self.cache.get("description", f"picture:{digest}")
+        if cached is not None:
+            return cached
+        kind = mimetypes.guess_type(path.lower())[0]
+        if kind not in PICTURE_KINDS:
+            raise ValueError(f"{os.path.basename(path)} is not a kind of picture the model reads ({kind or 'unknown'})")
+        with open(path, "rb") as file:
+            encoded = base64.b64encode(file.read()).decode("ascii")
+        said = self.describe(PICTURE_PROMPT, [f"data:{kind};base64,{encoded}"])
+        if said:
+            self.cache.put("description", f"picture:{digest}", said)
+        return said
 
     def translate(self, texts: Sequence[str]) -> List[str]:
         """Each text in English, in order. A text that cannot be translated comes back as it was."""

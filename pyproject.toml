@@ -22,6 +22,6 @@ ignore = [
 [tool.pyright]
 include = ["src", "config", "run.py", "sync"]
 # These need the browser package, which only the sync's own environment has
-exclude = ["sync/session.py", "sync/sharepoint.py", "sync/probes"]
+exclude = ["sync/session.py", "sync/sharepoint.py", "sync/probes", "sync/checks/store.py"]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"

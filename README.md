@@ -10,7 +10,7 @@ A Discord bot with a personality. It chats, remembers things about the people it
 - Reads images, PDFs, text and code files, and sums up a channel with `/tldr`
 - Writes PDFs, Word files and diagrams
 - Opens web links and searches the web
-- Answers questions about your university courses from the slides and lecture recordings
+- Answers questions about your university courses from the slides, lecture recordings and assignments
 - Plays music in a voice channel
 - A number guessing game
 - A spending cap on the AI, and limits per user
@@ -111,6 +111,7 @@ Everything else uses the default from `config/config.py` unless `.env` sets it:
 | `PDF_NOTES_KEEP_DAYS` | 7 | Days a PDF's page descriptions are kept |
 | `LOG_RETENTION_DAYS` | 30 | Days a log file is kept |
 | `JOIN_IN_SECONDS` | 30 | Seconds after a call in which the bot may answer a message nobody addressed to it. 0 turns it off. |
+| `JOIN_IN_CHANCE` | 0.5 | How likely the bot is to take that chance, from 0 to 1. It is decided once per call, before the model is asked. |
 | `COURSES_FILE` | `state/courses.db` | The course material the bot searches. See [Course material](#course-material). |
 | `TEST_BOT_ID`, `TEST_CHANNEL_ID` | empty | For testing the live bot: the one other bot it answers, and the one channel it answers it in. Both must be set. |
 
@@ -152,7 +153,7 @@ Slash commands:
 - `/forget` - Delete everything the bot has stored about you. `/forget <text>` deletes one fact.
 - `/game <max>`, `/guess <number>`, `/end` - The number guessing game
 - `/usage` - What you have left today: messages, PDFs, files, web lookups, course searches and your AI limit. Only you see the answer.
-- `/courses` - The course material the bot can search: each course, how much it holds, its newest slides and lecture recording, and the time of the last sync
+- `/courses` - The course material the bot can search: each course, how much it holds (slides, lecture recordings, assignments), its newest slides and lecture recording, and the time of the last sync
 - `/model` - Which AI model the bot is running on
 - `/setup` - Where the bot runs and the settings it runs with, for developers
 - `/stats` - Everything the bot has used so far: AI calls, tokens and cost, by day, by job and by model
@@ -164,7 +165,7 @@ Slash commands:
 
 For 30 seconds after someone calls the bot in a channel, it may also answer a message there that nobody addressed to it, when it fits the conversation. When several people talk to it at once, its answer pings the person it is for.
 
-You can also type to the bot without picking a slash command. A message that starts with `/`, a ping, or a reply to one of its messages is chat. `/tldr`, `/usage`, `/model`, `/setup`, `/stats`, `/courses` and `/help` work typed as well.
+You can also type to the bot without picking a slash command. A message that starts with `/`, a ping, or a reply to one of its messages is chat. After a call the bot may also answer the next message nobody sent to it, within 30 seconds, on a coin flip, and without any course lookup. `/tldr`, `/usage`, `/model`, `/setup`, `/stats`, `/courses` and `/help` work typed as well.
 
 ## Reading messages and files
 
@@ -224,16 +225,24 @@ The bot can open links and search the web.
 
 ## Course material
 
-The bot can answer questions about your university courses from the slides and lecture recordings of the semester.
+The bot can answer questions about your university courses from the slides, lecture recordings and assignments of the semester.
 
-- Ask in your own words, in any channel: `/what did the AI lecture say about heuristic search`. The bot searches the material, answers from what it finds, and ends with the deck and page or the lecture and time, plus the link.
-- When the material has no answer, the bot says it could not find one. It does not answer course facts from memory.
-- Ask for a file in the same message and the document is written from what it found: `/make a one page pdf on what CSC340 covered about agents`.
+- Course material only comes into a reply when you ask for it with a flag at the very end of the message. A `-c` anywhere else is just text. `-course`, or `-c` for short, says the message is about a course, and you name the class in your own words: `/what did the lecture say about heuristic search in the ai class -c`. A course code names it directly: `/what is a heuristic -csc340`. Small typos in a course name are fine.
+- With `-c` and no class named, every course is searched: `/whats due this week -c`.
+- A flag turns course mode on for you in that channel for an hour. After it you just keep chatting: `/and what about week 6`. The bot keeps what it looked up, answers from that when it can, and searches again only when it needs something new. A message that is not about class gets a normal answer.
+- Without a flag, and once the hour is over, the bot does not look anything up and does not talk about course material. Asked a class question then, it tells you to add the flag instead of guessing.
+- `COURSE_SESSION_SECONDS` sets how long course mode stays on (3600).
+- The bot looks the material up before it answers, answers from what it found, and ends with the deck and page, the lecture and time, or the assignment, plus the link.
+- When the material has no answer, the bot says it could not find one. When it only found something near the topic, it says so and gives the closest thing. It does not answer course facts from memory.
+- Ask for a file in the same message and the document is written from what it found: `/make a one page pdf on what the class covered about agents -csc340`.
+- Ask when something is due or what was assigned and the answer comes with the list of the course's assignments: the due time in Bangkok time, the days left and the points. Past assignments stay in the list. What one assignment asks for is found by the same search as slides and lectures.
+- An assignment is stored as material of its course. The bot does not know who has done, handed in or been graded on anything, and it never says so.
+- The assignment list holds what was posted in the Assignments tab of each class team. Work a teacher only gave in class is not in it.
 - `/courses` lists the courses it holds, the date of the newest slides and lecture recording of each, and when they were last synced. Ask the bot how up to date it is, or which lecture is the latest it has, and it answers from the same dates.
 - The material comes from the course sync in [`sync/`](sync/README.md). It runs on a PC, writes one file, `courses.db`, and uploads it to `data/state` on the server. The bot opens the new file on the next question, with no restart. With no file there, the bot has no course search.
-- The search runs in English. The bot writes the search words in English for a question in another language, and material in Thai is translated when it is synced.
+- The search runs in English, and material in Thai is translated when it is synced. For a question in another language the bot searches again with the topic in English.
 - A question is embedded with the `text-embedding-3-small` deployment, which is the model the sync embeds the material with. A file embedded with another model is not searched, and the log says so.
-- One reply makes at most 3 searches. Each returns up to 6 passages, at most 2 from one deck or recording. The numbers are at the top of `src/tools/courses.py` and `src/course_store.py`.
+- One reply looks the material up at most 3 times, the lookup for the message included. Each returns up to 6 passages, at most 2 from one deck or recording. The numbers are at the top of `src/tools/courses.py` and `src/course_store.py`.
 
 ## Privacy
 
@@ -324,10 +333,13 @@ ChronoChunk/
 │   │   ├── base.py            # The interface every tool implements
 │   │   ├── documents.py       # create_document and create_diagram
 │   │   ├── web.py             # open_url and web_search
-│   │   └── courses.py         # search_course and /courses
+│   │   └── courses.py         # search_course, the lookup for a flagged message, and /courses
 │   ├── document_builder.py    # Turns Markdown into PDF, DOCX and diagram images
 │   ├── web_tools.py           # Fetches pages and calls the search service
 │   ├── course_store.py        # The course material file and its search
+│   ├── course_scope.py        # The -c, -course and -csc340 flags: is a message about a course, and which
+│   ├── course_retrieval.py    # One lookup: passages, the dated assignment list, and how good the match is
+│   ├── course_session.py      # Course mode: what was looked up for a person, kept for an hour
 │   ├── slash_commands.py      # Slash commands
 │   ├── command_handler.py     # Typed /tldr, /usage, /courses and /help
 │   ├── database.py            # The SQLite database and its schema

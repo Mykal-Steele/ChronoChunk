@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 from sync.cache import Cache, file_sha
 from sync.material import SKIPPED_LIBRARIES, VIDEO, extension
-from sync.session import get, get_all
+from sync.session import get, get_all, get_json
 from sync.settings import DOWNLOADS_AT_ONCE, FILES_DIR, REQUESTS_AT_ONCE, SHAREPOINT
 
 logger = logging.getLogger(__name__)
@@ -220,3 +220,34 @@ def download(context: BrowserContext, files: List[dict], cache: Cache,
         if file not in failed:
             file.pop("error", None)
     return len(needed) - len(failed), failed
+
+
+def fetch_pictures(context: BrowserContext, facts: List[dict], cache: Cache) -> List[str]:
+    """
+    Download the pictures set into each assignment's instructions, and note them on the
+    assignment as "pictures": where the file is on disk, its hash and its link. A picture
+    that cannot be fetched is left out, the assignment keeps its text, and what went
+    wrong is returned for the run's report.
+    """
+    from sync.assignments import picture_refs
+
+    wanted: List[Tuple[dict, dict]] = []
+    problems: List[str] = []
+    for fact in facts:
+        for drive, item in picture_refs(fact.get("instructions")):
+            api = f"{SHAREPOINT}/_api/v2.1/drives/{drive}/items/{item}"
+            try:
+                found = get_json(context, api + "?$select=id,name,cTag,webUrl")
+            except Exception as error:
+                problems.append(f"a picture in assignment {fact.get('displayName')!r} could not be found: {str(error)[:150]}")
+                continue
+            wanted.append((fact, {"id": found.get("id") or item, "api": api, "name": found.get("name") or "picture.png",
+                                  "ctag": found.get("cTag") or "", "url": found.get("webUrl") or ""}))
+    download(context, [file for _, file in wanted], cache)
+    for fact, file in wanted:
+        if "path" in file:
+            fact.setdefault("pictures", []).append({"path": file["path"], "sha": file["sha"], "url": file["url"]})
+        else:
+            problems.append(f"a picture in assignment {fact.get('displayName')!r} could not be downloaded: "
+                            f"{str(file.get('error') or 'no reason given')[:150]}")
+    return problems

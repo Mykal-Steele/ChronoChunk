@@ -302,7 +302,7 @@ class SlashCommandManager:
                         enriched_message, conversation_history, username, user_id,
                         attached_context=attached.text, images=attached.images,
                         allow_files=True, file_gate=file_gate, web_gate=web_gate, course_gate=course_gate,
-                        emoji_prompt=emoji.prompt()
+                        emoji_prompt=emoji.prompt(), session_key=f"{channel_id}:{user_id}"
                     )
                 # The emoji are worked out here too, so the history keeps what is really sent
                 listing = asked_about_emoji(message)

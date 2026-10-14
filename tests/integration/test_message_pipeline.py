@@ -365,7 +365,28 @@ async def test_joining_in_stops_after_what_one_call_allows(pipeline):
     for number in range(5):
         await processor.process_message(_plain(_make_message(bot.user, content=f"message {number}")))
 
-    assert ai_handler.generate_reply.await_count == 2
+    # One uncalled answer per call
+    assert ai_handler.generate_reply.await_count == 1
+
+
+async def test_a_lost_coin_flip_keeps_the_bot_out_without_asking_the_model(pipeline, monkeypatch):
+    from config.config import Config
+    processor, _, _, _, ai_handler, bot = pipeline
+    monkeypatch.setattr(Config, "JOIN_IN_CHANCE", 0.0)
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("yo"))
+    await processor.process_message(_plain(_make_message(bot.user, content="/yo")))
+
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("lol"))
+    await processor.process_message(_plain(_make_message(bot.user, content="bro that exam was brutal")))
+    ai_handler.generate_reply.assert_not_called()
+
+
+async def test_another_bots_command_does_not_call_the_bot(pipeline):
+    processor, _, _, _, ai_handler, bot = pipeline
+    ai_handler.generate_reply = AsyncMock(return_value=Reply("yo"))
+    for content in ("!play some song", "!yo whats up", "$yo whats up", "$5 for lunch lol"):
+        await processor.process_message(_plain(_make_message(bot.user, content=content)))
+    ai_handler.generate_reply.assert_not_called()
 
 
 async def test_joining_in_can_be_switched_off_for_a_channel(pipeline):

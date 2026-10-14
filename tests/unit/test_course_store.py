@@ -71,6 +71,33 @@ def test_a_file_from_another_version_of_the_sync_is_refused(path):
         CourseStore.open(path)
 
 
+def test_a_file_written_before_due_times_were_stored_can_still_be_read(path):
+    store = CourseStore.create(path)
+    store.add_course("CSC340", "Artificial Intelligence")
+    source = store.add_source("CSC340", "assignment", "Mini project", date="2026-11-16")
+    store.add_chunk(source, 0, "", "Mini project\nDue 2026-11-16 23:59 Bangkok time", direction(agents=1))
+    # Version 1 had neither column
+    store._connection.executescript(
+        "CREATE TABLE old AS SELECT id, course, kind, title, section, url, date, content_hash FROM sources;"
+        "DROP TABLE sources; ALTER TABLE old RENAME TO sources; PRAGMA user_version = 1;")
+    store.save()
+    store.close()
+    reader = CourseStore.open(path)
+    assert reader.assignments() == [{"course": "CSC340", "title": "Mini project", "date": "2026-11-16", "url": "",
+                                     "text": "Mini project\nDue 2026-11-16 23:59 Bangkok time", "due": "", "meta": {}}]
+    assert reader.search("x", direction(agents=1))[0].title == "Mini project"
+    reader.close()
+
+
+def test_a_source_keeps_its_due_time_and_what_else_is_known_about_it(store):
+    assert SCHEMA_VERSION == 2
+    source = store.add_source("CSC340", "assignment", "Lab 7", date="2026-10-13", due="2026-10-13T23:59:00+07:00",
+                              meta={"points": 5, "attached": ["Lab7.pptx"]})
+    store.add_chunk(source, 0, "", "Lab 7", direction(agents=1))
+    [kept] = store.assignments("CSC340")
+    assert kept["due"] == "2026-10-13T23:59:00+07:00" and kept["meta"] == {"points": 5, "attached": ["Lab7.pptx"]}
+
+
 def test_opening_a_missing_file_fails_and_creates_nothing(path):
     with pytest.raises(sqlite3.OperationalError):
         CourseStore.open(path)
@@ -95,6 +122,22 @@ def test_newest_leaves_out_sources_with_no_date(store):
     store.add_source("CSC345", "slide", "Undated handout.pdf")
     store.add_source("CSC345", "post", "Welcome")
     assert store.newest()["CSC345"] == {"transcript": "2026-10-06"}
+
+
+def test_assignments_come_back_by_due_day_with_what_they_ask_for(store):
+    late = store.add_source("CSC340", "assignment", "Mini project", url="https://example.test/a/2", date="2026-11-16")
+    store.add_chunk(late, 0, "", "Mini project\nDue 2026-11-16 23:59 Bangkok time", direction(agents=1))
+    early = store.add_source("CSC340", "assignment", "Assignment 5: Search", url="https://example.test/a/1", date="2026-09-22")
+    store.add_chunk(early, 0, "", "Assignment 5: Search\nDue 2026-09-22 23:59 Bangkok time\n10 points", direction(agents=1))
+    undated = store.add_source("CSC345", "assignment", "Survey")
+    store.add_chunk(undated, 0, "", "Survey", direction(bayes=1))
+    assert [(item["course"], item["title"], item["date"]) for item in store.assignments()] == [
+        ("CSC345", "Survey", ""), ("CSC340", "Assignment 5: Search", "2026-09-22"), ("CSC340", "Mini project", "2026-11-16")]
+    first = store.assignments("CSC340")[0]
+    assert first == {"course": "CSC340", "title": "Assignment 5: Search", "date": "2026-09-22", "due": "", "meta": {},
+                     "url": "https://example.test/a/1", "text": "Assignment 5: Search\nDue 2026-09-22 23:59 Bangkok time\n10 points"}
+    assert [item["title"] for item in store.assignments("CSC345")] == ["Survey"]
+    assert store.assignments("CSC999") == []
 
 
 def test_search_returns_the_chunk_with_its_source_and_neighbours(store):
@@ -274,3 +317,19 @@ def test_the_library_reports_a_broken_file_once(path, caplog):
     assert library.store() is None
     assert library.store() is None
     assert len([record for record in caplog.records if "cannot be read" in record.message]) == 1
+
+
+def test_the_course_list_and_counts_are_read_from_the_file_once(store, path):
+    reader = CourseStore.open(path)
+    first = (reader.courses(), reader.counts(), reader.newest())
+
+    class Gone:
+        def execute(self, *args, **kwargs):
+            raise AssertionError("the file was read again")
+    real, reader._connection = reader._connection, Gone()
+    assert (reader.courses(), reader.counts(), reader.newest()) == first
+    # What a caller does to its copy does not reach the next caller
+    reader.courses()[0]["aliases"].append("changed")
+    assert reader.courses() == first[0]
+    reader._connection = real
+    reader.close()

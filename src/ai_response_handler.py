@@ -4,7 +4,7 @@ import json
 import re
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from openai import AsyncOpenAI
 from typing import Callable, List, Optional, Tuple
@@ -16,6 +16,17 @@ from src.document_builder import BuiltFile, strip_filler
 from src.usage_guard import BudgetExceededError, UsageGuard, get_usage_guard, guard_client
 from src.tools import Tool, ToolResult, Turn, default_tools
 from src.tools.base import user_content
+from src.course_session import CourseSessions
+from src.course_retrieval import render_sources
+from src.tools.courses import (
+    LOOKED_UP_NOTE,
+    NOT_LOOKED_UP,
+    NO_FLAG_PROMPT,
+    lookup_for,
+    read_scope,
+    saved_material,
+    unknown_course_reply,
+)
 from src.pdf_notes import NOTES_MAX_TOKENS
 
 logger = logging.getLogger(__name__)
@@ -24,6 +35,20 @@ logger = logging.getLogger(__name__)
 _clean_personality = re.sub(
     r'\{conversation_history\}.*$', '', PERSONALITY_PROMPT, flags=re.DOTALL
 ).strip()
+
+# The friend group lives in Bangkok, so "now" is told in its time
+_BANGKOK = timezone(timedelta(hours=7))
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _right_now() -> str:
+    """The moment a reply is written, for the model: "(right now it is Tuesday 13 Oct 2026, 21:05 Bangkok time)"."""
+    now = _now().astimezone(_BANGKOK)
+    return f"(right now it is {now:%A} {now.day} {now:%b %Y}, {now:%H:%M} Bangkok time)"
+
 
 _SYSTEM_PROMPT = _clean_personality + voice_examples_prompt(load_voice_examples()) + """
 
@@ -269,6 +294,12 @@ class AIResponseHandler:
     def __init__(self, endpoint: str, api_key: str, deployment: str):
         self.response_cache = {}
         self.cache_size = 50
+        # A kept reply is served again for this many seconds. Every prompt carries the time of day,
+        # so an answer cannot be kept for long.
+        self.cache_seconds = 300
+        self._cached_at: dict = {}
+        # Who is in a course session, and what was looked up for them
+        self.course_sessions = CourseSessions()
 
         # Every call goes through the budget guard
         self.ai_client = guard_client(AsyncOpenAI(base_url=endpoint, api_key=api_key))
@@ -277,17 +308,11 @@ class AIResponseHandler:
         # What the model can do besides talk. Each tool lives in src/tools.
         self.tools: List[Tool] = default_tools()
 
+        # What is said when Azure turns a call down for coming too fast. It clears by itself within a minute.
         self.fallback_responses = deque([
-            "yo my neural nets are fried rn, gimme a sec",
-            "bruh i think im gettin rate limited, one sec",
-            "quota issues again? my dev needs to pay up fr",
-            "ngl my brain just glitched for a sec, try again?",
-            "lmao my processor just overheated, brb",
-            "yo whoever coded me forgot to pay the brain bill 😭",
-            "i think my dev's api quota just got clapped lol",
-            "cant think straight rn, try again in a bit?",
-            "bruh im lagging so hard rn, gimme a min",
-            "my brain cells just went on strike fr fr"
+            "azure is rate limiting me rn, too many msgs this minute. try again in like 30 sec",
+            "hit the rate limit on my model, too much going on this minute. gimme 30 sec and send it again",
+            "im getting rate limited rn (too many requests at once). wait a min and try again",
         ], maxlen=10)
 
     def _format_ai_response(self, raw_response: str) -> str:
@@ -405,7 +430,8 @@ class AIResponseHandler:
                              file_gate: Optional[Callable[[], None]] = None,
                              web_gate: Optional[Callable[[], None]] = None,
                              emoji_prompt: str = "",
-                             course_gate: Optional[Callable[[], None]] = None) -> Reply:
+                             course_gate: Optional[Callable[[], None]] = None,
+                             session_key: Optional[str] = None) -> Reply:
         """
         Generate the bot's reply using Azure OpenAI chat completions.
 
@@ -416,7 +442,9 @@ class AIResponseHandler:
         RateLimitError when this user has made too many. web_gate does the same for
         web searches and opened links, and course_gate for searches of the course
         material. emoji_prompt names the server emoji this reply may use
-        (EmojiSet.prompt()), empty for none.
+        (EmojiSet.prompt()), empty for none. session_key says who is talking and where
+        ("channel:user"), so a course flag keeps course mode on for their next messages.
+        With none, a flag only counts for the message it is on.
         """
         images = images or []
 
@@ -425,7 +453,14 @@ class AIResponseHandler:
         if attached_context or images:
             attached_digest = hashlib.sha1((attached_context + "".join(images)).encode("utf-8")).hexdigest()
             cache_key += f"|{attached_digest}"
-        if cache_key in self.response_cache:
+        # Inside course mode the same words can mean a lookup that plain chat did not get, so nothing
+        # kept from before is served there
+        called = query[1:].strip() if query.startswith('/') and len(query) > 1 else query
+        flags = read_scope(called) if allow_files else None
+        course_mode = bool(flags and (flags.flagged or self.course_sessions.get(session_key) is not None))
+        kept_at = self._cached_at.get(cache_key)
+        fresh = kept_at is not None and time.monotonic() - kept_at < self.cache_seconds
+        if cache_key in self.response_cache and fresh and not course_mode:
             return Reply(self.response_cache[cache_key])
 
         try:
@@ -438,24 +473,73 @@ class AIResponseHandler:
                 user_parts.append(conversation_history)
             if attached_context:
                 user_parts.append(attached_context)
+            # With the message and not in the system prompt, which stays the same from one minute to the next
+            user_parts.append(_right_now())
             user_parts.append(f'[{username}]: "{clean_query}"')
+
+            # Course material comes into a reply when the message asks for it with a flag, and for
+            # an hour after that for the same person in the same place
+            scope = read_scope(clean_query) if allow_files else None
+            flagged = bool(scope and scope.flagged)
+            material: List[str] = []
+            if scope and flagged:
+                if scope.unknown and not scope.codes:
+                    return Reply(unknown_course_reply(scope))
+                clean_query = scope.text
+                user_parts[-1] = f'[{username}]: "{clean_query}"'
+                if scope.unknown:
+                    user_parts.insert(-1, f"(they also asked for {', '.join(scope.unknown)}, which is not a course u hold. "
+                                          "say so in the answer)")
+                if session_key:
+                    self.course_sessions.open(session_key, scope.codes)
+            session = self.course_sessions.get(session_key) if scope else None
+            in_course = flagged or session is not None
+            if session is not None:
+                material = session.material
+            codes = scope.codes if scope and flagged else (session.codes if session else None)
 
             # Reading a file or image, or writing a tool call, needs more room than a chat reply
             max_tokens = 4000 if (attached_context or images or allow_files) else 2000
 
             # The tools on offer for this reply, and the state they share
-            offered = [tool for tool in self.tools if tool.available()] if allow_files else []
+            offered = [tool for tool in self.tools if tool.available() and (in_course or not tool.course_only)] if allow_files else []
             by_name = {tool.name: tool for tool in offered}
             request = Turn(clean_query, username, conversation_history or "", attached_context, images,
-                           file_gate=file_gate, web_gate=web_gate, course_gate=course_gate)
+                           file_gate=file_gate, web_gate=web_gate, course_gate=course_gate, course_codes=codes)
             request.ask_model = lambda model_messages, limit: self._chat(model_messages, limit, request=request)
             request.embed = lambda text: self._embed(text, request)
+
+            def keep(block: str) -> None:
+                if session is not None:
+                    self.course_sessions.add(session_key, block)
+                elif block not in material:
+                    material.append(block)
+            request.keep_material = keep
+            if session is not None:
+                request.course_sources = session.sources
+                request.course_seen = session.seen
             files = request.files
-            messages = [
+            # The material is searched in English. A message in another language is no use as the
+            # search itself, so the model has to write the search instead, and is made to.
+            # Another script, that is. An accent in an English message ("naïve") is still English.
+            must_search = flagged and any(letter.isalpha() and ord(letter) > 0x024F for letter in clean_query)
+            if scope and flagged and not must_search:
+                # Looked up here, before the model is asked, so the first answer does not hang on the model's choice
+                looked_up = await lookup_for(request, scope)
+                if looked_up.startswith(NOT_LOOKED_UP):
+                    user_parts.insert(-1, looked_up)
+                else:
+                    keep(looked_up)
+                    user_parts.insert(-1, LOOKED_UP_NOTE)
+            messages: List[dict] = [
                 {"role": "system",
-                 "content": _SYSTEM_PROMPT + "".join(tool.prompt() for tool in offered) + emoji_prompt},
-                {"role": "user",   "content": user_content("\n\n".join(user_parts), images)}
+                 "content": _SYSTEM_PROMPT + "".join(tool.prompt() for tool in offered)
+                            + (NO_FLAG_PROMPT if scope and not in_course else "") + emoji_prompt},
             ]
+            if material:
+                # In a message of its own ahead of the conversation, so it is the same text from one turn to the next
+                messages.append({"role": "user", "content": saved_material(material)})
+            messages.append({"role": "user", "content": user_content("\n\n".join(user_parts), images)})
             definitions = [tool.definition for tool in offered]
             effort = Config.AI_CHAT_REASONING_EFFORT
             raw = ""
@@ -472,7 +556,7 @@ class AIResponseHandler:
                     break
                 # After a diagram that did not parse, the model has to draw it again. Left to
                 # choose, it pastes the source into chat and tells them to render it themselves.
-                force_tool = redo
+                force_tool = redo or ("search_course" if must_search and round_number == 0 else None)
                 redo = None
                 try:
                     message = await self._chat(messages, max_tokens, tools, effort, force_tool, request)
@@ -484,7 +568,7 @@ class AIResponseHandler:
                         raise
                     logger.warning(f"Request with images failed, retrying without them: {e}")
                     user_parts.insert(-1, "(the attached images failed to load, tell them u couldnt open the image)")
-                    messages[1] = {"role": "user", "content": "\n\n".join(user_parts)}
+                    messages[-1] = {"role": "user", "content": "\n\n".join(user_parts)}
                     message = await self._chat(messages, max_tokens, tools, effort, force_tool, request)
 
                 raw = message.content if isinstance(message.content, str) else ""
@@ -521,13 +605,19 @@ class AIResponseHandler:
                     reply = Reply("here u go", files)
                 else:
                     # A long link does not always survive being typed out again by the model
-                    reply = Reply(repair_links(self._format_ai_response(raw), request.findings), files)
+                    shown = self._format_ai_response(raw)
+                    if in_course:
+                        # The model names passages by number. Their names, dates and links are written here.
+                        shown = render_sources(shown, request.course_sources)
+                    reply = Reply(repair_links(shown, request.findings), files)
                 # An answer from the web or the course material goes stale, so it is looked up again next time
-                if not files and not request.lookups and not request.course_searches:
+                if not files and not request.lookups and not request.course_searches and not in_course:
                     self.response_cache[cache_key] = reply.text
+                    self._cached_at[cache_key] = time.monotonic()
                     if len(self.response_cache) > self.cache_size:
                         for k in list(self.response_cache.keys())[:-self.cache_size]:
                             self.response_cache.pop(k, None)
+                            self._cached_at.pop(k, None)
 
             self._log_reply(request, reply)
             if user_id and get_usage_guard().take_daily_warning(user_id):
@@ -541,13 +631,18 @@ class AIResponseHandler:
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error generating AI response: {error_msg}")
-            if "429" in error_msg or "quota" in error_msg.lower() or "rate" in error_msg.lower():
+            lowered = error_msg.lower()
+            # A spent quota answers 429 too, and waiting a minute does not fix that one
+            if "insufficient_quota" in lowered or ("quota" in lowered and "rate limit" not in lowered):
+                return Reply("my azure quota ran out, so i cant answer till my dev sorts it. nothing wrong with ur msg", ok=False)
+            # Not just the letters "rate", which are in "generate" and "separate" too
+            if re.search(r"\b429\b|rate.?limit|too many requests", lowered):
                 fallback = self.fallback_responses[0]
                 self.fallback_responses.rotate(1)
                 return Reply(fallback, ok=False)
-            if "content_filter" in error_msg or "content management policy" in error_msg.lower():
+            if "content_filter" in error_msg or "content management policy" in lowered:
                 return Reply(self._content_filter_response(error_msg), ok=False)
-            return Reply("my brain just glitched fr, try again in a sec 💀", ok=False)
+            return Reply("something broke on my end, not ur msg. try again in a sec 💀", ok=False)
 
     @staticmethod
     def _log_reply(request: Turn, reply: Reply) -> None:

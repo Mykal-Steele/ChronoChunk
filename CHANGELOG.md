@@ -10,6 +10,44 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.19.0 (2026-10-13)
+
+### Changed
+
+- Course material is asked for with a flag at the very end of the message. `-course`, or `-c` for short, means the message is about a course, named in your own words ("the ai class", typos forgiven), and a code such as `-csc340` names it directly. Without a flag the bot looks nothing up and knows nothing about the courses in that reply. Before, the model decided on its own, so it sometimes skipped the search for a course question and sometimes said "i dont see it in the course material" in a chat that had nothing to do with class.
+- A flag turns course mode on for the person who used it, in that channel, for an hour. They keep chatting without it: the bot keeps what it looked up, answers from that, and decides for itself when a new search is needed. After the hour it asks for the flag again.
+- A flagged message is looked up before the model is asked, so the lookup always happens and most course answers take one model call instead of two. The search uses the message without the course's name and without words like "lecture" or "teacher".
+- Asking for one kind of material (`kind`) puts that kind first and still returns the rest. As a hard filter it hid the answer when someone said "lecture" and the fact was on a slide.
+- After a call the bot weighs exactly one message nobody sent to it (it was up to three, with two answers), and only half the time. The coin is flipped once per call, before the model is asked, so a lost flip costs nothing. `JOIN_IN_CHANCE` sets the odds.
+- A question about dates gets only the assignments it is about: the ones due today, tomorrow, this week or next week when it names those days, and otherwise only what is still to come. Past ones are listed when the question asks for them. "Whats due this week" is answered from that list alone, with no search. A course with nothing posted in Teams says so, and its slides and lectures are searched for homework given in class.
+- When Azure turns a call down, the reply says why: a rate limit ("try again in like 30 sec"), a spent quota, or a fault on the bot's side. It was one of ten jokes for all three.
+- An assignment's due time is stored on its own, so the list can say "due today at 23:59, 9 hours left" counted from the minute you ask. The course file is now version 2, and the bot still reads version 1.
+- Every reply is told the current date and time in Bangkok, so "today", "tonight" and "this week" mean what they should.
+- The source line of a course answer is written by the bot's code. The model names the passages it used by number, and the name, page or time, the date of the file or lecture, and the link are filled in. A link can no longer come out empty or mistyped, and replies are shorter to write.
+- Results that are only near the topic are marked as loosely related, and the bot is told to say it could not find exactly that and give the closest thing.
+
+### Added
+
+- The bot knows each course's assignments: the title, the due time in Bangkok time, the days left, the points, the instructions and the names of the attached files. A question about dates or work to hand in gets the dated list, and what one assignment asks for is found by the same search as slides and lectures. Past assignments are kept.
+- The sync reads every class's Assignments tab in Teams and opens each assignment of the semester for its instructions. A picture set into the instructions is read once and what it says becomes part of the assignment, so an assignment that is only a picture is no longer empty.
+- `/help` explains the `-c` flag and course mode.
+- `/courses` counts the assignments of each course and says how to ask with the flags.
+- `run.md` lists every run that spends money on models, with its estimated and actual cost.
+- A check for answers, in `sync/checks`: a set of real questions goes through the bot's reply path, a judge model reads every reply against the material the bot was shown, and a release ships only when the gate passes. This release passed it on 104 messages: a lookup on all 73 flagged ones, the right passage for all 56 that have an answer, 54 of those answers judged right, nothing made up, and no course talk in 26 messages that were not about class.
+- The sync opens an assignment once and again only after a teacher changed it.
+
+### Fixed
+
+- A reply the bot kept is served again for five minutes at most, and never inside course mode. Every prompt now carries the time of day, and a kept "add -c" could come back to someone who had since turned course mode on.
+- A picture in an assignment that cannot be fetched is named in the sync report instead of being dropped without a word, and a picture is sent to the model as the kind of image it is.
+- An error is only called a rate limit when it is one. The test was for the letters "rate", which are in "generate" too.
+
+### Privacy
+
+- An assignment is stored as material of its course. Nothing about who did it is kept: no submissions, no grades, no completion state, no class members. The bot is told it does not know who has done what.
+- A sync stops before writing anything if an id from the parts of an assignment that are about people shows up in what it is about to keep.
+- `PRIVACY.md` says what the bot holds of the courses and that course mode keeps a person's lookups in memory for an hour.
+
 ## 3.18.1 (2026-10-13)
 
 ### Fixed

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from src.course_store import DIMENSIONS, CourseStore
+from sync.assignments import assignment_text, due_day, due_time, facts_meta
 from sync.cache import Cache
 from sync.material import (
     CHUNK_MIN_CHARS,
@@ -34,9 +35,9 @@ from sync.material import (
     without_names,
     wanted,
 )
-from sync.models import Models
+from sync.models import Models, SpendCapReached
 from sync.reading import READER_VERSION, Page, ReadError, Reading, read_document
-from sync.settings import COURSE_PREFIX, EMBEDDING_MODEL, SEMESTER_START
+from sync.settings import COURSE_PREFIX, EMBEDDING_MODEL, NICKNAMES, SEMESTER_START
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,8 @@ class CourseMaterial:
     # (the recording's file, its transcript entries)
     transcripts: List[Tuple[dict, List[dict]]] = field(default_factory=list)
     recordings_without_transcript: List[str] = field(default_factory=list)
+    # Course facts of each assignment, as sync.assignments.collect returns them
+    assignments: List[dict] = field(default_factory=list)
     left_out: Counter = field(default_factory=Counter)
     failed: List[str] = field(default_factory=list)
 
@@ -80,7 +83,7 @@ class BadRun(RuntimeError):
 
 def collect(only: Sequence[str], cache: Cache, report: Report, headless: bool = True) -> List[CourseMaterial]:
     """Open the saved sign-in, list every class site, and download what changed."""
-    from sync import sharepoint
+    from sync import assignments, sharepoint
     from sync.session import SHAREPOINT, browser, open_site
 
     started = time.monotonic()
@@ -128,8 +131,35 @@ def collect(only: Sequence[str], cache: Cache, report: Report, headless: bool = 
             for file in [file for file in material.documents if "error" in file]:
                 material.failed.append(f"download {file['name']}: {file['error']}")
             material.documents = [file for file in material.documents if "path" in file]
+
+        # A class in the Assignments app goes by the id of its team's group
+        classes = {site["group"]: material for material in by_code.values() for site in material.sites if site["group"]}
+        try:
+            facts, problems = assignments.collect(context, list(classes), SEMESTER_START, cache)
+        except assignments.PrivacyError:
+            # Not a problem to note and move past: nothing is written until it is understood
+            raise
+        except Exception as error:
+            # The slides and lectures are still worth a course file when the Assignments app cannot be read
+            facts, problems = [], [f"assignments: {str(error)[:200]}"]
+        try:
+            problems.extend(sharepoint.fetch_pictures(context, facts, cache))
+        except Exception as error:
+            problems.append(f"pictures in assignments: {str(error)[:200]}")
+        for fact in facts:
+            target = classes.get(str(fact.get("classId") or ""))
+            if target is None:
+                # One assignment filed under a class that was not asked for must not cost the whole run
+                problems.append(f"assignment {fact.get('displayName')!r} belongs to a class that was not asked for, left out")
+                continue
+            target.assignments.append(fact)
+        for problem in problems:
+            for group, material in classes.items():
+                problem = problem.replace(group, material.course.code)
+            report.problem(problem)
     report.say(f"Collected {len(by_code)} courses in {time.monotonic() - started:.0f}s: {len(every)} documents "
-               f"({fresh} downloaded, {len(failed)} failed), {sum(len(m.transcripts) for m in by_code.values())} transcripts")
+               f"({fresh} downloaded, {len(failed)} failed), {sum(len(m.transcripts) for m in by_code.values())} transcripts, "
+               f"{sum(len(m.assignments) for m in by_code.values())} assignments")
     return [by_code[code] for code in sorted(by_code)]
 
 
@@ -150,9 +180,10 @@ def _read(file: dict, models: Models, cache: Cache) -> Reading:
 def _add_course(store: CourseStore, material: CourseMaterial, models: Models, cache: Cache, report: Report) -> None:
     course = material.course
     group = next((site["group"] for site in material.sites if site["group"]), "")
-    store.add_course(course.code, course.name, course.aliases, group_id=group, site_url=material.sites[0]["url"])
+    store.add_course(course.code, course.name, (*course.aliases, *NICKNAMES.get(course.code, ())), group_id=group,
+                     site_url=material.sites[0]["url"])
 
-    # (kind, title, section, url, date, hash, [(locator, text, original)])
+    # (kind, title, section, url, date, hash, [(locator, text, original)], due, meta)
     sources: List[tuple] = []
     seen_content = set()
     pages = described = duplicates = 0
@@ -176,7 +207,7 @@ def _add_course(store: CourseStore, material: CourseMaterial, models: Models, ca
         described += reading.described
         if chunks:
             sources.append(("slide", file["name"], file["folder"].strip("/"), file["url"], local_day(file["modified"]),
-                            file["sha"], chunks))
+                            file["sha"], chunks, "", {}))
 
     spoken = 0
     transcripts = [(file, transcript_chunks(entries))
@@ -192,20 +223,39 @@ def _add_course(store: CourseStore, material: CourseMaterial, models: Models, ca
                   if len(text) >= CHUNK_MIN_CHARS]
         spoken += len(chunks)
         if chunks:
-            sources.append(("transcript", recording_title(file["name"]), "", file["url"], local_day(file["created"]), "", chunks))
+            sources.append(("transcript", recording_title(file["name"]), "", file["url"], local_day(file["created"]), "", chunks,
+                            "", {}))
+
+    # One chunk per assignment, dated by the day it is due
+    for item in sorted(material.assignments, key=lambda item: (due_day(item), str(item.get("displayName") or ""))):
+        for picture in item.get("pictures") or []:
+            try:
+                picture["description"] = models.read_picture(picture["path"], picture["sha"])
+            except SpendCapReached:
+                raise
+            except Exception as error:
+                material.failed.append(f"picture in {item.get('displayName')!r}: {str(error)[:150]}")
+        text = assignment_text(item)
+        if len(text) < CHUNK_MIN_CHARS:
+            continue
+        chunk = ("", models.translate([text])[0], text) if has_thai(text) else ("", text, None)
+        sources.append(("assignment", str(item.get("displayName") or "").strip(), "", str(item.get("webUrl") or ""),
+                        due_day(item), "", [chunk], due_time(item), facts_meta(item)))
+    assigned = sum(1 for source in sources if source[0] == "assignment")
 
     texts = [embedded_text(course, kind, title, section, locator, text)
-             for kind, title, section, _, _, _, chunks in sources for locator, text, _ in chunks]
+             for kind, title, section, _, _, _, chunks, _, _ in sources for locator, text, _ in chunks]
     vectors = iter(models.embed(texts))
-    for kind, title, section, url, date, content_hash, chunks in sources:
-        source_id = store.add_source(course.code, kind, title, section=section, url=url, date=date, content_hash=content_hash)
+    for kind, title, section, url, date, content_hash, chunks, due, meta in sources:
+        source_id = store.add_source(course.code, kind, title, section=section, url=url, date=date, content_hash=content_hash,
+                                     due=due, meta=meta)
         for position, (locator, text, original) in enumerate(chunks):
             store.add_chunk(source_id, position, locator, text, next(vectors), original=original)
     store.save()
 
     left_out = ", ".join(f"{count} {why}" for why, count in material.left_out.most_common()) or "nothing"
     report.say(f"{course.code} {course.name}: {len(seen_content)} documents, {pages} pages ({described} described), "
-               f"{len(material.transcripts)} transcripts, {spoken} transcript chunks")
+               f"{len(material.transcripts)} transcripts, {spoken} transcript chunks, {assigned} assignments")
     report.say(f"  left out: {left_out}; {duplicates} copies of a file already read")
     for name in material.recordings_without_transcript:
         report.say(f"  no transcript: {name}")
