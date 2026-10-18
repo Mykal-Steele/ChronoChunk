@@ -328,6 +328,9 @@ class AIResponseHandler:
             '', ai_response, flags=re.IGNORECASE
         )
 
+        # A line that is only a token like ^(finish) is something the model let slip, never part of the answer
+        ai_response = re.sub(r'^[ \t]*\^\(\w+\)[ \t]*(?:\n|$)', '', ai_response, flags=re.MULTILINE).strip()
+
         ai_response = _without_repeat(ai_response)
 
         # Code blocks go out exactly as written, only the text around them is cleaned up
@@ -355,6 +358,9 @@ class AIResponseHandler:
 
         # Same story for stock openers like "I hope you are well."
         ai_response = strip_filler(ai_response)
+
+        # Discord only shows "-# " as small text at the start of a line. Put at the end of a sentence it shows as typed.
+        ai_response = re.sub(r'(?<=\S)[ \t]+(-# Source:)', r'\n\1', ai_response, flags=re.IGNORECASE)
 
         # Manage emojis — if model drops 3+ emojis, cull to 2 max
         emoji_pattern = re.compile(

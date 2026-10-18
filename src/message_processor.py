@@ -67,6 +67,8 @@ async def typing_in_background(channel) -> AsyncIterator[None]:
 
 # Given to a member the first time the bot answers them
 FIRST_USE_ROLE = "I Love Chrono <3"
+# Servers already warned that they have no such role. Without this the warning came with every answer.
+_warned_no_role: Set[int] = set()
 
 
 async def give_first_use_role(guild: Optional[discord.Guild], user_id: int) -> None:
@@ -75,7 +77,9 @@ async def give_first_use_role(guild: Optional[discord.Guild], user_id: int) -> N
         return
     role = discord.utils.get(guild.roles, name=FIRST_USE_ROLE)
     if not role:
-        logger.warning(f"'{FIRST_USE_ROLE}' role not found in guild, check the role name matches exactly")
+        if guild.id not in _warned_no_role:
+            _warned_no_role.add(guild.id)
+            logger.warning(f"'{FIRST_USE_ROLE}' role not found in {guild.name} ({guild.id}), check the role name matches exactly")
         return
     # A full Member object is needed so .roles is filled in
     member = guild.get_member(user_id)
@@ -92,6 +96,14 @@ async def give_first_use_role(guild: Optional[discord.Guild], user_id: int) -> N
     except Exception as e:
         # The role is a nicety. Failing to give it must never turn a sent reply into an error.
         logger.error(f"Error assigning '{FIRST_USE_ROLE}' role: {e}")
+
+
+class CannotPost(Exception):
+    """The bot may not post in the channel at all, so no other message there can get through either."""
+
+    def __init__(self, error: discord.Forbidden):
+        super().__init__(str(error))
+        self.error = error
 
 
 class MessageProcessor:
@@ -427,6 +439,9 @@ is_correction: bool) -> None:
             if self.user_data_manager:
                 await self.user_data_manager.add_conversation(user_id, original_query, ai_response, username)
 
+        except CannotPost as e:
+            # Saying so would need the very permission that is missing
+            logger.warning(f"Could not post the answer to {username} in channel {channel_id}: {e.error}")
         except discord.HTTPException as e:
             logger.error(f"Discord HTTP error sending response: {e} (code {e.code})")
             await self._discord_error_response(message.channel, e)
@@ -567,14 +582,24 @@ is_correction: bool) -> None:
             await message.reply(first, mention_author=ping, allowed_mentions=PING_AUTHOR if ping else NO_PINGS,
                                 **extras())
         except discord.HTTPException:
-            # Replying failed (message deleted, or no permission), so send it as a plain message
-            await message.channel.send(first, allowed_mentions=NO_PINGS, **extras())
+            # Replying failed (message deleted, or no permission to read the history), so send it as a plain message
+            try:
+                await message.channel.send(first, allowed_mentions=NO_PINGS, **extras())
+            except discord.Forbidden as e:
+                raise CannotPost(e) from e
         for chunk in chunks[1:]:
             await message.channel.send(chunk, allowed_mentions=NO_PINGS)
         return shown
 
     async def _discord_error_response(self, channel, error: discord.HTTPException) -> None:
         """Natural in-character response for specific Discord API errors."""
+        try:
+            await self._say_discord_error(channel, error)
+        except discord.HTTPException as e:
+            # The answer already failed. A failed apology for it is not worth a second error.
+            logger.warning(f"Could not tell the channel about Discord error {error.code}: {e}")
+
+    async def _say_discord_error(self, channel, error: discord.HTTPException) -> None:
         code = error.code
         if code == 50035:
             await channel.send("bro discord said my message was cooked, probably too long or smth weird in it — ask again n ill keep it shorter")

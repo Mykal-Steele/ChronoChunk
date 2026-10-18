@@ -485,3 +485,28 @@ def test_random_replies_never_carry_a_broken_emoji(seed):
         assert not re.search(r"(?<!:):(?:kekw|pog|fake):(?![\w:])", shown, re.I), (text, shown)
         assert "\x00" not in shown
         assert not re.search(r"\[\s*react[^\]\n]*\]", shown, re.I), (text, shown)
+
+
+# The model sometimes leaves off the closing colon, as in these replies from 15 Oct 2026
+@pytest.mark.parametrize("text, expected", [
+    ("its not that complicated :kekw", f"its not that complicated {KEKW}"),
+    ("lmao goonbot is crazy :KEKW", f"lmao goonbot is crazy {KEKW}"),
+    ("detective :kekw.", f"detective {KEKW}."),
+    ("nah :kekw lol", f"nah {KEKW} lol"),
+    ("that was funny :skull", "that was funny 💀"),
+])
+def test_a_known_name_without_its_closing_colon_still_becomes_the_emoji(text, expected):
+    assert render(text, EMOJI).text == expected
+
+
+def test_a_known_name_without_its_closing_colon_is_remembered_with_both_colons():
+    assert render("its not that complicated :kekw", EMOJI).plain == "its not that complicated :kekw:"
+
+
+def test_a_known_name_without_its_closing_colon_is_taken_out_when_custom_emoji_are_off():
+    assert render("its not that complicated :kekw", EMOJI, custom_allowed=False).text == "its not that complicated"
+
+
+@pytest.mark.parametrize("text", ["meet at 10:30", "a ratio of 3:2", "note:kekw", "see :unknown later", "Re :hello"])
+def test_a_colon_before_a_word_that_is_no_known_emoji_is_left_alone(text):
+    assert render(text, EMOJI).text == text

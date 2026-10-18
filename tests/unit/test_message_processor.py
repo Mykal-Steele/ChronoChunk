@@ -1,5 +1,13 @@
-"""Unit tests for how the message processor splits long answers."""
-from src.message_processor import MessageProcessor
+"""Unit tests for the message processor: splitting long answers, sending them and shutting down."""
+import asyncio
+import logging
+from unittest.mock import AsyncMock, MagicMock
+
+import discord
+
+from src.ai_response_handler import Reply
+from src.message_handler import MessageHandler
+from src.message_processor import MessageProcessor, give_first_use_role
 
 
 def test_short_text_is_one_chunk():
@@ -30,3 +38,57 @@ def test_split_keeps_code_blocks_closed_in_every_chunk():
     assert len(chunks) > 1
     assert all(chunk.count("```") % 2 == 0 for chunk in chunks)
     assert all(len(chunk) <= 2000 for chunk in chunks)
+
+
+def forbidden() -> discord.Forbidden:
+    response = MagicMock(status=403, reason="Forbidden")
+    return discord.Forbidden(response, {"code": 50013, "message": "Missing Permissions"})
+
+
+async def test_a_server_without_the_first_use_role_is_warned_about_once(caplog):
+    from src import message_processor
+    message_processor._warned_no_role.clear()
+    guild = MagicMock(id=77, roles=[])
+    with caplog.at_level(logging.WARNING):
+        for _ in range(5):
+            await give_first_use_role(guild, 1)
+    assert sum("role not found" in record.message for record in caplog.records) == 1
+
+
+async def test_a_channel_the_bot_cannot_post_in_gets_no_more_tries(caplog):
+    ai = MagicMock()
+    ai.generate_reply = AsyncMock(return_value=Reply("hello there"))
+    bot = MagicMock(guilds=[])
+    processor = MessageProcessor(bot=bot, message_handler=MessageHandler(), ai_response_handler=ai,
+                                 user_data_manager=MagicMock())
+    message = MagicMock()
+    message.guild = None
+    message.reply = AsyncMock(side_effect=forbidden())
+    message.channel.send = AsyncMock(side_effect=forbidden())
+    message.channel.typing = MagicMock()
+
+    with caplog.at_level(logging.WARNING):
+        await processor._handle_ai_response(message, "1", "someone", "c", "hi", "")
+
+    # The reply, then the same text as a plain message. Nothing after that can get through either.
+    assert message.reply.await_count == 1
+    assert message.channel.send.await_count == 1
+    assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+
+
+def test_a_stop_signal_closes_the_bot_instead_of_stopping_its_loop():
+    from src import bot as bot_module
+
+    async def scenario():
+        closed = asyncio.Event()
+        fake = MagicMock()
+        fake.close = AsyncMock(side_effect=lambda: closed.set())
+        bot_module._running_bot = fake
+        bot_module.shutdown_bot()
+        await asyncio.wait_for(closed.wait(), 1)
+
+    try:
+        # A stopped loop would make this raise "Event loop stopped before Future completed"
+        asyncio.run(scenario())
+    finally:
+        bot_module._running_bot = None

@@ -139,3 +139,16 @@ def test_a_source_line_written_at_the_end_of_a_sentence_is_still_filled_in():
     assert shown == "couldnt find the average.\n-# Source: [CBLL Week 9, page 47 (9 Oct 2026)](<https://example.test/w9.pdf>)"
     assert render_sources("couldnt find it. -# Source: [9]", SOURCES) == "couldnt find it."
     assert render_sources("x\n-# source: [2]", SOURCES).endswith("(<https://example.test/w9.pdf>)")
+
+
+def test_a_source_line_in_the_middle_of_a_reply_joins_the_last_one():
+    reply = "the first part\n-# Source: [3]\n\nmore of it\n-# Source: [2]"
+    assert render_sources(reply, SOURCES) == (
+        "the first part\n\nmore of it\n"
+        "-# Source: [LNG320 lecture 2 Oct 2026, 1:51:48](<https://example.test/w8.mp4>), "
+        "[CBLL Week 9, page 47 (9 Oct 2026)](<https://example.test/w9.pdf>)")
+
+
+def test_an_empty_source_line_in_the_middle_of_a_reply_goes():
+    assert render_sources("the first part -# Source: \n\nmore of it\n-# Source: [2]", SOURCES) == (
+        "the first part\n\nmore of it\n-# Source: [CBLL Week 9, page 47 (9 Oct 2026)](<https://example.test/w9.pdf>)")

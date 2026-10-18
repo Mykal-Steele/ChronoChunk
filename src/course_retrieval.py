@@ -87,6 +87,21 @@ def about_dates(message: str) -> bool:
     return bool(_DATE_WORDS.search(message))
 
 
+# "what did the latest lecture cover": the newest class is wanted, and its date is what picks it, not its words
+_LATEST = re.compile(r"\b(?:latest|newest|most recent|last|recent)\b.{0,30}?\b(?:lectures?|class|lessons?|sessions?|"
+                     r"slides?|decks?|talks?|seminars?|recordings?)\b", re.IGNORECASE)
+# A day they name themselves wins over "latest"
+_NAMED_DAY = re.compile(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? ?\d{1,2}\b|"
+                        r"\b\d{1,2} ?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|\b\d{1,2}/\d{1,2}\b", re.IGNORECASE)
+# How many passages of a "latest" lookup come from the search. The rest are spread through that day.
+LATEST_SEARCHED = 3
+
+
+def about_latest(message: str) -> bool:
+    """Whether a message asks about the newest lecture or slides of a course, without naming the day."""
+    return bool(_LATEST.search(message)) and not _NAMED_DAY.search(message)
+
+
 def label_of(hits: Sequence[Hit]) -> str:
     if not hits:
         return "nothing"
@@ -233,19 +248,26 @@ def render_sources(text: str, sources: Dict[str, Tuple[str, str]]) -> str:
     Write a reply's source line from the numbers the model put on it. The model never
     types a link: it names the passages it used, and their names, dates and links are
     filled in here. A number that stands for nothing is dropped, and a line left with
-    nothing goes.
+    nothing goes. A source line in the middle of the reply, where the model ended an answer
+    and went on, joins the last one.
     """
     lines = list(_SOURCE_LINE.finditer(text))
     if not lines:
         return text
     line = lines[-1]
-    named = [sources[key] for key in dict.fromkeys(_MARK.findall(line.group(1))) if key in sources]
+    marks = [key for found in lines for key in _MARK.findall(found.group(1))]
+    named = [sources[key] for key in dict.fromkeys(marks) if key in sources]
     # A number set in the answer itself says nothing to the person reading it. Code is left as it
     # is, and so is a number glued to a word, since "rows[2]" is an index and not a passage.
     def without_marks(prose: str) -> str:
         return re.sub(r" ?(?<![\w\]])((?:\[(?:\d+|A)\])+)(?![\w(\[])",
                       lambda marks: "" if all(key in sources for key in _MARK.findall(marks.group(1))) else marks.group(0), prose)
-    pieces = re.split(r"(```.*?```|`[^`\n]*`)", text[:line.start()], flags=re.DOTALL)
+    before = text[:line.start()]
+    if len(lines) > 1:
+        before = "".join(text[end:start] for end, start in
+                         zip([0] + [found.end() for found in lines[:-1]], [found.start() for found in lines], strict=True))
+        before = re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]+\n", "\n", before))
+    pieces = re.split(r"(```.*?```|`[^`\n]*`)", before, flags=re.DOTALL)
     body = "".join(piece if index % 2 else without_marks(piece) for index, piece in enumerate(pieces))
     rest = text[line.end():]
     if not named:
@@ -301,6 +323,21 @@ def format_hits(query: str, hits: List[Hit], names: dict, rows: Sequence[str] = 
     return "\n".join(lines)
 
 
+def _newest_day_hits(store: CourseStore, words: str, vector: List[float], codes: Sequence[str]) -> List[Hit]:
+    """The best passages of each course's newest lecture or slides, then passages spread through that day."""
+    newest = store.newest()
+    hits: List[Hit] = []
+    for code in codes:
+        day = max((newest.get(code, {}).get(kind, "") for kind in ("transcript", "slide")), default="")
+        if not day:
+            continue
+        found = [hit for hit in store.search(words, vector, code, None, day) if hit.date == day][:LATEST_SEARCHED]
+        keys = {_key(hit) for hit in found}
+        found += [hit for hit in store.spread(code, day) if _key(hit) not in keys][:RESULTS - len(found)]
+        hits += found
+    return hits
+
+
 def _key(hit: Hit) -> tuple:
     """What makes two results the same passage."""
     return (hit.course, hit.kind, hit.title, hit.locator)
@@ -309,7 +346,7 @@ def _key(hit: Hit) -> tuple:
 async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[float]]], words: str, codes: Sequence[str],
                    now: datetime, kind: Optional[str] = None, since: Optional[str] = None, dated: bool = False,
                    due: Optional[str] = None, asked: Optional[str] = None, first_number: int = 1,
-                   seen: Optional[Dict[tuple, str]] = None) -> Found:
+                   seen: Optional[Dict[tuple, str]] = None, latest: bool = False) -> Found:
     """
     Look words up in the courses in codes, or in every course when codes is empty.
     kind puts results of that kind first without leaving the others out. dated adds
@@ -317,6 +354,8 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
     is the message as it was written, which says which days and which assignments
     the list is wanted for. first_number is the number the first passage gets. seen
     holds the passages this conversation was already shown, by the number each has.
+    latest is for a question about the newest lecture or slides: each course in codes is
+    searched on its newest day only, and passages spread through that day fill the rest.
     """
     asked = asked or words
     dated = dated or bool(due)
@@ -348,6 +387,8 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
                 found_keys.add(_key(hit))
                 hits.append(hit)
         hits = sorted(hits, key=lambda hit: (bool(kind) and hit.kind != kind, -hit.similarity))[:RESULTS]
+        if latest and codes and not since:
+            hits = await asyncio.to_thread(_newest_day_hits, store, words, vector, codes)
 
     rows: List[str] = []
     count = 0

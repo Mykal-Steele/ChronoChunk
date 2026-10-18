@@ -12,6 +12,7 @@ from src.course_retrieval import (  # noqa: F401  (the limits are part of this m
     MAX_NEIGHBOUR_CHARS,
     MAX_ORIGINAL_CHARS,
     about_dates,
+    about_latest,
     format_hits,
     render_sources,
     retrieve,
@@ -192,7 +193,8 @@ async def lookup_for(turn: Turn, scope: Scope) -> str:
     words = search_words(scope.text, store.courses(), scope.codes)
     try:
         found = await retrieve(store, turn.embed, words, scope.codes, _now(), dated=about_dates(scope.text),
-                               asked=scope.text, first_number=_next_number(turn), seen=turn.course_seen)
+                               asked=scope.text, first_number=_next_number(turn), seen=turn.course_seen,
+                               latest=about_latest(scope.text))
     except BudgetExceededError:
         raise
     except Exception as e:
