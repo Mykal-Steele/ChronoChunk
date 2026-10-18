@@ -91,7 +91,7 @@ def about_dates(message: str) -> bool:
 _LATEST = re.compile(r"\b(?:latest|newest|most recent|last|recent)\b.{0,30}?\b(?:lectures?|class|lessons?|sessions?|"
                      r"slides?|decks?|talks?|seminars?|recordings?)\b", re.IGNORECASE)
 # A day they name themselves wins over "latest"
-_NAMED_DAY = re.compile(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? ?\d{1,2}\b|"
+_NAMED_DAY = re.compile(r"\b\d{4}-\d{2}-\d{2}\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? ?\d{1,2}\b|"
                         r"\b\d{1,2} ?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|\b\d{1,2}/\d{1,2}\b", re.IGNORECASE)
 # How many passages of a "latest" lookup come from the search. The rest are spread through that day.
 LATEST_SEARCHED = 3
@@ -251,7 +251,9 @@ def render_sources(text: str, sources: Dict[str, Tuple[str, str]]) -> str:
     nothing goes. A source line in the middle of the reply, where the model ended an answer
     and went on, joins the last one.
     """
-    lines = list(_SOURCE_LINE.finditer(text))
+    code = [(block.start(), block.end()) for block in re.finditer(r"```.*?```", text, flags=re.DOTALL)]
+    lines = [found for found in _SOURCE_LINE.finditer(text)
+             if not any(opened < found.start() < closed for opened, closed in code)]
     if not lines:
         return text
     line = lines[-1]

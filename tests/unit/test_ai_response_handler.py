@@ -1075,3 +1075,8 @@ def test_a_source_line_the_model_wrote_at_the_end_of_a_sentence_goes_on_a_line_o
 def test_a_line_that_is_only_a_stray_token_is_taken_out(handler):
     assert handler._format_ai_response("phase two is the first round of models\n^(finish)\nsee you") == (
         "phase two is the first round of models\nsee you")
+
+
+def test_a_stray_token_line_inside_code_is_kept(handler):
+    reply = "the pattern is\n```\n^(finish)\n```"
+    assert handler._format_ai_response(reply) == reply

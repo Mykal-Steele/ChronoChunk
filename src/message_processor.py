@@ -355,7 +355,9 @@ is_correction: bool) -> None:
                 # message they replied to (if any)
                 referenced = await self._get_referenced_message(message)
                 await self._respond(message, user_id, username, channel_id, content, user_data, referenced)
-                
+
+        except CannotPost as e:
+            logger.warning(f"Could not post the answer to {username}'s command in channel {channel_id}: {e.error}")
         except Exception as e:
             logger.error(f"Error handling command: {e}")
             await self._safe_send(message.channel, "yo something broke on my end, try again")

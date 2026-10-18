@@ -92,3 +92,22 @@ def test_a_stop_signal_closes_the_bot_instead_of_stopping_its_loop():
         asyncio.run(scenario())
     finally:
         bot_module._running_bot = None
+
+
+async def test_a_command_answer_in_a_channel_the_bot_cannot_post_in_gets_no_more_tries(caplog):
+    commands = MagicMock()
+    commands.handle_command = AsyncMock(return_value=Reply("the recap"))
+    processor = MessageProcessor(bot=MagicMock(guilds=[]), message_handler=MessageHandler(),
+                                 ai_response_handler=MagicMock(), user_data_manager=MagicMock(),
+                                 command_handler=commands)
+    message = MagicMock()
+    message.content = "/tldr 20"
+    message.reply = AsyncMock(side_effect=forbidden())
+    message.channel.send = AsyncMock(side_effect=forbidden())
+    message.channel.typing = MagicMock()
+
+    with caplog.at_level(logging.WARNING):
+        await processor._handle_command_message(message, "1", "someone", "c", {}, False)
+
+    assert message.channel.send.await_count == 1
+    assert not [record for record in caplog.records if record.levelno >= logging.ERROR]

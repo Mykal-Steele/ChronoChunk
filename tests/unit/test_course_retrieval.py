@@ -152,3 +152,17 @@ def test_a_source_line_in_the_middle_of_a_reply_joins_the_last_one():
 def test_an_empty_source_line_in_the_middle_of_a_reply_goes():
     assert render_sources("the first part -# Source: \n\nmore of it\n-# Source: [2]", SOURCES) == (
         "the first part\n\nmore of it\n-# Source: [CBLL Week 9, page 47 (9 Oct 2026)](<https://example.test/w9.pdf>)")
+
+
+def test_a_source_line_inside_code_is_part_of_the_code():
+    reply = "an example:\n```\n-# Source: [2]\n```\nthats it\n-# Source: [3]"
+    assert render_sources(reply, SOURCES) == (
+        "an example:\n```\n-# Source: [2]\n```\nthats it\n"
+        "-# Source: [LNG320 lecture 2 Oct 2026, 1:51:48](<https://example.test/w8.mp4>)")
+
+
+def test_a_question_that_names_its_day_is_not_about_the_latest():
+    from src.course_retrieval import about_latest
+    assert about_latest("what did the latest lecture cover")
+    assert not about_latest("what did the latest lecture on 2026-10-12 cover")
+    assert not about_latest("what did the last lecture on oct 6 cover")

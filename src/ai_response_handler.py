@@ -328,9 +328,6 @@ class AIResponseHandler:
             '', ai_response, flags=re.IGNORECASE
         )
 
-        # A line that is only a token like ^(finish) is something the model let slip, never part of the answer
-        ai_response = re.sub(r'^[ \t]*\^\(\w+\)[ \t]*(?:\n|$)', '', ai_response, flags=re.MULTILINE).strip()
-
         ai_response = _without_repeat(ai_response)
 
         # Code blocks go out exactly as written, only the text around them is cleaned up
@@ -343,6 +340,9 @@ class AIResponseHandler:
 
     def _format_text(self, ai_response: str, capitals: bool = True) -> str:
         """Clean up punctuation, dashes, emoji and sentence capitals in one stretch of chat text."""
+        # A line that is only a token like ^(finish) is something the model let slip, never part of the answer
+        ai_response = re.sub(r'^[ \t]*\^\(\w+\)[ \t]*(?:\n|$)', '', ai_response, flags=re.MULTILINE)
+
         # Fix excessive punctuation (3+ → 2)
         ai_response = re.sub(r'\?{3,}', '???', ai_response)
         ai_response = re.sub(r'!{3,}', '!!!', ai_response)
