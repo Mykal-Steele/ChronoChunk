@@ -27,7 +27,7 @@ def course_file(tmp_path, monkeypatch):
 
 
 def _fill(path, model="text-embedding-3-small", dimensions=DIMENSIONS, synced_at="2026-10-12T16:43:27+00:00",
-          deck_date="2026-09-01", assignments=False):
+          deck_date="2026-09-01", assignments=False, older_lecture=False):
     store = CourseStore.create(path)
     store.add_course("CSC340", "Artificial Intelligence", aliases=["BIF651"])
     store.add_course("CSC345", "Data Science")
@@ -39,6 +39,9 @@ def _fill(path, model="text-embedding-3-small", dimensions=DIMENSIONS, synced_at
     store.add_chunk(deck, 2, "page 36", "PC1 and PC2", direction(pca=0.7, other=0.7))
     lecture = store.add_source("CSC345", "transcript", "CSC345_20261006", date="2026-10-06")
     store.add_chunk(lecture, 0, "2:45:25", "Naive Bayes is simple and pretty good", direction(bayes=1))
+    if older_lecture:
+        older = store.add_source("CSC345", "transcript", "CSC345_20260922", date="2026-09-22")
+        store.add_chunk(older, 0, "0:10:00", "Today we cover what a lecture is about", direction(filler=1))
     if assignments:
         for course, title, due, text in (
                 ("CSC340", "Assignment 5: Search", "2026-09-22", "10 points\nSolve the maze with A* search."),
@@ -326,6 +329,21 @@ async def test_the_daily_limit_is_told_to_the_model_instead_of_a_lookup(handler,
     assert len(messages) == 2
     assert "used all their course lookups for today" in messages[1]["content"] and "about 5 hours" in messages[1]["content"]
     mock_openai_client.embeddings.create.assert_not_awaited()
+
+
+async def test_a_question_about_the_latest_lecture_only_reads_the_newest_one(course_file):
+    _fill(course_file, older_lecture=True)
+    turn = _turn(direction(filler=1))
+    text = await lookup_for(turn, Scope("what did the latest data science lecture cover", True, ["CSC345"]))
+    assert "Naive Bayes" in text
+    assert "what a lecture is about" not in text
+
+
+async def test_a_question_without_latest_still_reads_every_lecture(course_file):
+    _fill(course_file, older_lecture=True)
+    turn = _turn(direction(filler=1))
+    text = await lookup_for(turn, Scope("what did the data science lectures cover", True, ["CSC345"]))
+    assert "what a lecture is about" in text
 
 
 # ── assignments through the same lookup ───────────────────────────────────────

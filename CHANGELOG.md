@@ -10,6 +10,19 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.19.1 (2026-10-18)
+
+### Fixed
+
+- A server emoji the model wrote without its closing colon, like `:Bruh`, went out as plain text. 19 of the 25 replies with a server emoji between 11 and 17 Oct had it. A known name written that way now becomes the emoji, and the chat history keeps it as `:Bruh:`, so the model stops copying the broken form.
+- A server without the "I Love Chrono <3" role logged a warning after every answer, 114 times since 12 Oct. It is now logged once per server.
+- In a channel where the bot may not post, one answer led to four tries to send and four errors in the log. It now stops after the reply and the plain message both fail, and logs one warning.
+- Every restart logged "Bot crashed: Event loop stopped before Future completed". A stop signal now closes the bot, so it shuts down cleanly and runs its cleanup.
+- "What did the latest lecture cover" searched every lecture of the course. With the course named, it now reads the newest lecture or slides of that course, with passages from across that day.
+- A source line the model put in the middle of a reply was left there, sometimes empty. Its numbers now join the last source line.
+- A web answer's source line written at the end of a sentence showed `-# Source:` as typed. It now goes on its own line.
+- A line holding only a stray token like `^(finish)` is taken out.
+
 ## 3.19.0 (2026-10-13)
 
 ### Changed

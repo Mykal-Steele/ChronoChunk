@@ -1064,3 +1064,19 @@ async def test_an_error_that_only_has_the_letters_rate_in_it_is_not_called_a_rat
         mock_openai_client.chat.completions.create.side_effect = Exception(error)
         reply = await handler.generate_response(f"test {error}", "", "TestUser", "12345")
         assert "rate limit" in reply, error
+
+
+def test_a_source_line_the_model_wrote_at_the_end_of_a_sentence_goes_on_a_line_of_its_own(handler):
+    reply = "microsoft has not rewritten windows in rust. -# Source: [Windows Latest](<https://www.windowslatest.com/a>)"
+    assert handler._format_ai_response(reply) == (
+        "microsoft has not rewritten windows in rust.\n-# Source: [Windows Latest](<https://www.windowslatest.com/a>)")
+
+
+def test_a_line_that_is_only_a_stray_token_is_taken_out(handler):
+    assert handler._format_ai_response("phase two is the first round of models\n^(finish)\nsee you") == (
+        "phase two is the first round of models\nsee you")
+
+
+def test_a_stray_token_line_inside_code_is_kept(handler):
+    reply = "the pattern is\n```\n^(finish)\n```"
+    assert handler._format_ai_response(reply) == reply
