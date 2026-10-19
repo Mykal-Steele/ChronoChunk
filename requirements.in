@@ -4,11 +4,11 @@
 #     "pip install -q pip-tools && pip-compile -q --strip-extras requirements.in"
 aiohttp==3.14.5
 discord.py[voice]==2.7.1
-openai==3.28.0
+openai==3.31.0
 pillow==12.3.0
 # discord.py 2.7.1 only allows PyNaCl below 1.6, so this stays until discord.py moves
 PyNaCl==1.5.0
-pypdf==6.20.0
+pypdf==6.21.0
 # Turns PDF pages into pictures, so the model can describe slides, charts and tables
 pypdfium2==5.14.0
 python-dotenv==1.2.4
