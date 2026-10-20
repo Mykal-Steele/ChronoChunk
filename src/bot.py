@@ -275,34 +275,44 @@ class ChronoChunk(commands.Bot):
         # Call parent close method
         await super().close()
 
+# The bot that is running, so a stop signal can close it
+_running_bot = None
+# The close that a stop signal started, kept so it is not lost before it ends
+_closing = None
+
+
 def shutdown_bot():
-    """Gracefully shut down the bot and all its components"""
+    """
+    Close the bot after a stop signal. Closing ends bot.run() normally. Stopping the event
+    loop instead, as this used to, made every restart log "Bot crashed: Event loop stopped
+    before Future completed" and skipped the cleanup in close().
+    """
     logger.info("Initiating bot shutdown sequence")
-    
-    # Get active bot instances
-    from asyncio import all_tasks, current_task, get_event_loop
-    
+    bot = _running_bot
+    if bot is None:
+        logger.warning("No running bot to shut down")
+        return
     try:
-        # Try to close any bot instances
-        for task in all_tasks():
-            if task != current_task() and task.get_name() == "ChronoChunk Bot Task":
-                logger.info("Found bot task, scheduling shutdown")
-                task.cancel()
-                
-        # Signal event loop to stop
-        loop = get_event_loop()
-        if loop.is_running():
-            logger.info("Stopping event loop")
-            loop.stop()
-    except Exception as e:
-        logger.error(f"Error during shutdown sequence: {e}")
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.warning("The event loop is not running, nothing to shut down")
+        return
+
+    def close() -> None:
+        global _closing
+        _closing = loop.create_task(bot.close())
+
+    # The signal can land while the loop waits for network events. This wakes it.
+    loop.call_soon_threadsafe(close)
+
 
 def main() -> None: 
     """Start up the bot"""
+    global _running_bot
     try:
         if not DISCORD_TOKEN:
             raise ValueError("DISCORD_TOKEN is not set")
-        bot = ChronoChunk()
+        bot = _running_bot = ChronoChunk()
         bot.run(DISCORD_TOKEN, log_handler=None)  # logging is already set up in run.py
     except Exception as e:
         logger.error(f"Bot crashed: {e}")

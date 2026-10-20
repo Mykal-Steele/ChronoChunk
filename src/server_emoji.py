@@ -42,6 +42,8 @@ _SHORTCODE = re.compile(rf":({_NAME}):")
 _ALONE = re.compile(rf"(?<![\w:])(?::{_NAME}:)+(?![\w:])")
 # A name stuck to the end of a word, like "bruh:kekw:" or "lol2:kekw:". "note:todo:fix" and "10:30:45" do not match.
 _ATTACHED = re.compile(rf"(?<=[A-Za-z0-9_]):({_NAME}):(?![\w:])")
+# A name with its closing colon left off, like "lol :kekw". Only a name the bot knows counts, so "Re :hello" stays.
+_DANGLING = re.compile(r"(?<![\w:<]):([A-Za-z][A-Za-z0-9_]{1,31})(?![\w:])")
 # Text that is left exactly as written: code blocks, inline code and links
 _PROTECTED = re.compile(r"(```.*?```|`[^`\n]+`|https?://\S+)", re.DOTALL)
 # One standard emoji, in the ranges the reply formatter counts. A skin tone, a variation mark
@@ -250,6 +252,8 @@ def render(text: str, emoji: EmojiSet = NO_EMOJI, custom_allowed: bool = True,
         piece = _BROKEN_MARKUP.sub(lambda found: slot(), piece)
         piece = _ALONE.sub(lambda run: _SHORTCODE.sub(lambda found: named(found.group(1)), run.group(0)), piece)
         piece = _ATTACHED.sub(lambda found: named(found.group(1), found.group(0)), piece)
+        piece = _DANGLING.sub(lambda found: named(found.group(1)) if found.group(1).lower() in emoji.by_name
+                              or found.group(1).lower() in STANDARD else found.group(0), piece)
         pieces[index] = _STANDARD.sub(lambda found: slot(found.group(0), found.group(0)), piece)
 
     # They asked about the emoji and the reply names several: that is a list, not a reaction

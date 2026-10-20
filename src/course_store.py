@@ -400,6 +400,25 @@ class CourseStore:
                     break
             return hits
 
+    def spread(self, course: str, day: str, kinds: Sequence[str] = ("transcript", "slide"),
+               count: int = RESULTS) -> List[Hit]:
+        """
+        count chunks spread evenly through the sources of one course dated day (YYYY-MM-DD),
+        for a question about everything that day covered, which no search words pick out.
+        """
+        marks = ",".join("?" * len(kinds))
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT chunks.locator, chunks.text, chunks.original, sources.course, sources.kind, sources.title, "
+                "sources.section, sources.url, sources.date FROM chunks JOIN sources ON sources.id = chunks.source_id "
+                f"WHERE sources.course = ? AND sources.date = ? AND sources.kind IN ({marks}) "
+                "ORDER BY sources.kind DESC, sources.id, chunks.position", (course, day, *kinds)).fetchall()
+        taken = min(count, len(rows))
+        return [Hit(course=row["course"], kind=row["kind"], title=row["title"], section=row["section"],
+                    locator=row["locator"], url=row["url"], date=row["date"], text=row["text"],
+                    original=row["original"], before="", after="", similarity=0.0)
+                for row in (rows[index * len(rows) // taken] for index in range(taken))]
+
 
 class CourseLibrary:
     """

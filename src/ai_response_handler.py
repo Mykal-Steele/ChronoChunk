@@ -340,6 +340,9 @@ class AIResponseHandler:
 
     def _format_text(self, ai_response: str, capitals: bool = True) -> str:
         """Clean up punctuation, dashes, emoji and sentence capitals in one stretch of chat text."""
+        # A line that is only a token like ^(finish) is something the model let slip, never part of the answer
+        ai_response = re.sub(r'^[ \t]*\^\(\w+\)[ \t]*(?:\n|$)', '', ai_response, flags=re.MULTILINE)
+
         # Fix excessive punctuation (3+ → 2)
         ai_response = re.sub(r'\?{3,}', '???', ai_response)
         ai_response = re.sub(r'!{3,}', '!!!', ai_response)
@@ -355,6 +358,9 @@ class AIResponseHandler:
 
         # Same story for stock openers like "I hope you are well."
         ai_response = strip_filler(ai_response)
+
+        # Discord only shows "-# " as small text at the start of a line. Put at the end of a sentence it shows as typed.
+        ai_response = re.sub(r'(?<=\S)[ \t]+(-# Source:)', r'\n\1', ai_response, flags=re.IGNORECASE)
 
         # Manage emojis — if model drops 3+ emojis, cull to 2 max
         emoji_pattern = re.compile(
