@@ -21,15 +21,15 @@ logger = logging.getLogger(__name__)
 # Limits keep one message from blowing up memory, the prompt size or the bill
 MAX_FILE_BYTES = 15 * 1024 * 1024
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
-MAX_FILE_CHARS = 30000
-MAX_PDF_PAGES = 150
+MAX_FILE_CHARS = 120000
+MAX_PDF_PAGES = 400
 MAX_IMAGES = 3
 # Pictures taken out of PDFs have their own limit per request. They are shrunk before
 # they are sent, so ten of them are still a small upload.
 MAX_PDF_IMAGES = 10
 # A PDF that comes with page notes (see src/pdf_notes.py) gets more room for its own text,
 # because the notes replace its pictures
-NOTED_PDF_CHARS = 60000
+NOTED_PDF_CHARS = 180000
 # One request waits this long in total for page descriptions, however many PDFs it has.
 # A PDF that is not ready by then is read the old way, and its descriptions are there next time.
 NOTES_WAIT_SECONDS = 90
@@ -211,11 +211,12 @@ def _pdf_pictures(reader) -> list:
     return found
 
 
-def _read_pdf(data: bytes, image_budget: int = 0, max_chars: Optional[int] = None) -> Tuple[str, int, List[str], int]:
+def _read_pdf(data: bytes, image_budget: int = 0, max_chars: Optional[int] = None) -> Tuple[str, int, List[str], int, str]:
     """
     Pull the text and the pictures out of a PDF. Returns the text, the total page
-    count, up to image_budget pictures as data URLs, and how many pictures it has.
-    A scanned PDF has no text and one picture per page.
+    count, up to image_budget pictures as data URLs, how many pictures it has, and
+    a note when a limit cut the text short. A scanned PDF has no text and one
+    picture per page.
     """
     reader = PdfReader(io.BytesIO(data))
     if reader.is_encrypted and not reader.decrypt(""):
@@ -225,13 +226,25 @@ def _read_pdf(data: bytes, image_budget: int = 0, max_chars: Optional[int] = Non
     total_pages = len(reader.pages)
     parts = []
     chars = 0
+    last_page = 0
     for number in range(min(total_pages, MAX_PDF_PAGES)):
         page_text = (reader.pages[number].extract_text() or "").strip()
         if page_text:
             parts.append(f"[page {number + 1}]\n{page_text}")
             chars += len(page_text)
+            last_page = number + 1
         if chars >= max_chars:
             break
+    # Say which limit actually stopped the text. A char limit can stop on page 20
+    # long before the page limit, and the reader needs to know that page. The note
+    # goes in the header, because the text itself may be truncated below.
+    cutoff = ""
+    if last_page < total_pages and chars >= max_chars:
+        cutoff = (f"the text stops at page {last_page} of {total_pages} because the file is long; "
+                  "the rest is cut off")
+    elif total_pages > MAX_PDF_PAGES:
+        cutoff = (f"only the first {MAX_PDF_PAGES} of {total_pages} pages are read; "
+                  "ask for the rest in a smaller file if it matters")
 
     pictures = _pdf_pictures(reader)
     images = []
@@ -242,7 +255,7 @@ def _read_pdf(data: bytes, image_budget: int = 0, max_chars: Optional[int] = Non
             images.append(_jpeg_data_url(page.images[key].image))
         except Exception as e:
             logger.warning(f"Could not read a picture in a pdf: {e!r}")
-    return "\n\n".join(parts), total_pages, images, len(pictures)
+    return "\n\n".join(parts), total_pages, images, len(pictures), cutoff
 
 
 def _file_block(filename: str, text: str, detail: str = "", max_chars: Optional[int] = None) -> List[str]:
@@ -308,7 +321,7 @@ async def _read_attachment(attachment, budget: _ImageBudget,
         if notes:
             max_chars = NOTED_PDF_CHARS
         try:
-            text, pages, pictures, found = await asyncio.wait_for(
+            text, pages, pictures, found, cutoff = await asyncio.wait_for(
                 asyncio.to_thread(_read_pdf, data, 0 if notes else budget.pdf_images, max_chars), PDF_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
             return [f"file: {filename} (could not be read: the pdf took too long to open)"], []
@@ -318,8 +331,10 @@ async def _read_attachment(attachment, budget: _ImageBudget,
 
         if notes:
             # The notes cover every picture, table and chart, so no pictures are attached
-            lines = _file_block(filename, text or "(no selectable text)",
-                                f"pdf, {pages} pages, followed by what each page shows", max_chars)
+            note = f"pdf, {pages} pages, followed by what each page shows"
+            if cutoff:
+                note += f"; {cutoff}"
+            lines = _file_block(filename, text or "(no selectable text)", note, max_chars)
             lines.append(f"--- what the pages of {filename} show, written from the page images ---")
             lines.append(notes)
             lines.append(f"--- end of the page descriptions of {filename} ---")
@@ -327,6 +342,8 @@ async def _read_attachment(attachment, budget: _ImageBudget,
 
         budget.pdf_images -= len(pictures)
         detail = f"pdf, {pages} pages{over_limit}"
+        if cutoff:
+            detail += f"; {cutoff}"
         if found == 1 and pictures:
             detail += ", the picture in it is attached to this prompt as an image, look at it"
         elif pictures:

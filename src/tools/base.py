@@ -34,8 +34,8 @@ class Turn:
     web_gate: Optional[Callable[[], None]] = None
     # Called before each search of the course material. Raises RateLimitError when they have had their daily searches.
     course_gate: Optional[Callable[[], None]] = None
-    # Runs a model call that is counted against this reply: ask_model(messages, max_tokens)
-    ask_model: Optional[Callable[[list, int], Awaitable]] = None
+    # Runs a model call that is counted against this reply: ask_model(messages, max_tokens, effort)
+    ask_model: Optional[Callable[[list, int, Optional[str]], Awaitable]] = None
     # Embeds one text for a search, counted against this reply: embed(text)
     embed: Optional[Callable[[str], Awaitable[List[float]]]] = None
     # Search results and pages read for this reply, for tools that run later (the document writer)
@@ -44,6 +44,10 @@ class Turn:
     course_searches: int = 0
     # The courses the message's flag is about. None for a message with no course flag, empty for every course.
     course_codes: Optional[List[str]] = None
+    # True when the message asks for a quiz or study guide, which gets a shape and more room.
+    study: bool = False
+    # True when they asked for a full explanation, which gets more room but no fixed shape.
+    detail: bool = False
     # Keeps a lookup for the rest of the person's course session: keep_material(block)
     keep_material: Optional[Callable[[str], None]] = None
     # What each passage number the model was shown stands for: number -> (name, link)

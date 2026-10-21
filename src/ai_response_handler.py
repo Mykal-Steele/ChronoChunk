@@ -12,7 +12,8 @@ from config.ai_config import PERSONALITY_PROMPT, load_voice_examples, voice_exam
 from config.config import Config
 from collections import deque
 from src.course_store import DIMENSIONS
-from src.document_builder import BuiltFile, strip_filler
+from src.course_scope import Scope
+from src.document_builder import BuiltFile, plain_math, strip_filler
 from src.usage_guard import BudgetExceededError, UsageGuard, get_usage_guard, guard_client
 from src.tools import Tool, ToolResult, Turn, default_tools
 from src.tools.base import user_content
@@ -23,11 +24,15 @@ from src.tools.courses import (
     NOT_LOOKED_UP,
     NO_FLAG_PROMPT,
     lookup_for,
+    course_catalog,
+    course_codes,
     read_scope,
     saved_material,
     unknown_course_reply,
 )
 from src.pdf_notes import NOTES_MAX_TOKENS
+from src.course_need import COURSE_CHECK_TOOL, CourseNeed, check_prompt, check_tool, parse_check
+from src.study import DETAIL_PROMPT, REWRITE_PROMPT, StudyRequest, study_prompt, study_request, wants_detail
 
 logger = logging.getLogger(__name__)
 
@@ -113,8 +118,9 @@ MESSAGE LINKS:
 never bring up /game /music or other bot commands unless they ask.
 """
 
-# How many times the model may call tools before it has to answer in text
-MAX_TOOL_ROUNDS = 3
+# How many times the model may call tools before it has to answer in text. A course reply
+# gets more, and a study reply more again, so several topics can be searched in one answer.
+MAX_TOOL_ROUNDS = Config.AI_CHAT_MAX_TOOL_ROUNDS
 
 # Inline code, discord links and web addresses: text whose letters are never changed
 _VERBATIM = re.compile(r'`[^`\n]+`|\[[^\]\n]*\]\(<?[^)\s]+>?\)|<?https?://[^\s>]*[^\s>.,!?)]>?')
@@ -279,6 +285,123 @@ def _second_copy(text: str) -> int:
     return found
 
 
+# Study replies are checked after they are written: a model asked for 30 questions can stop at 12,
+# or leave gaps. A few continuations finish the set without paying for the whole reply again.
+STUDY_CONTINUATIONS = 8
+GUIDE_COMPLETE = "=== GUIDE COMPLETE ==="
+_QUESTION_LINE = re.compile(
+    r"^[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*)?(?:Q(?:uestion)?[ \t]*)?(\d{1,3})[.)\]:]",
+    re.MULTILINE | re.IGNORECASE,
+)
+_KEY_HEADING = re.compile(
+    r"^[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*)?(?:answer[ \t]+key|model[ \t]+answers?)\b",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def _study_numbers(text: str) -> set:
+    """The question numbers written before the answer key or model answers."""
+    questions = _KEY_HEADING.split(text, maxsplit=1)[0]
+    return {int(number) for number in _QUESTION_LINE.findall(questions)}
+
+
+def _study_key_numbers(text: str) -> set:
+    """The numbers in the answer key or model answers, after the heading."""
+    parts = _KEY_HEADING.split(text, maxsplit=1)
+    if len(parts) < 2:
+        return set()
+    return {int(number) for number in _QUESTION_LINE.findall(parts[1])}
+
+
+def _number_ranges(numbers) -> str:
+    """Write 1, 2, 3, 7, 9 as "1 to 3, 7, 9" without hiding a gap."""
+    ordered = sorted(set(numbers))
+    if not ordered:
+        return ""
+    runs = []
+    first = previous = ordered[0]
+    for number in ordered[1:]:
+        if number == previous + 1:
+            previous = number
+            continue
+        runs.append((first, previous))
+        first = previous = number
+    runs.append((first, previous))
+    return ", ".join(str(first) if first == last else f"{first} to {last}" for first, last in runs)
+
+
+def _study_gap(text: str, study: StudyRequest) -> str:
+    """
+    What a study reply still needs, as an instruction for the model, or '' when it is done.
+    Only the missing part is asked for, so the next call does not rewrite what was written.
+    The answer key is deliberately asked for last: a key written before a stopped set
+    would sit in the middle of the reply once the missing questions arrive.
+    """
+    if study.kind == "guide":
+        if GUIDE_COMPLETE in text:
+            return ""
+        return ("Continue the study guide from where it stopped. Cover the topics from the course material "
+                "that are not yet covered, without repeating a topic. When every topic is covered, end with "
+                f"a line containing only: {GUIDE_COMPLETE}")
+    wanted = study.items
+    numbers = _study_numbers(text)
+    missing = [number for number in range(1, wanted + 1) if number not in numbers]
+    if missing:
+        have = wanted - len(missing)
+        return (f"You wrote {have} of the {wanted} questions. Write only the missing questions: "
+                f"{_number_ranges(missing)}. Number each one with its number. Do not repeat a question, "
+                "do not start again, and do not write the answer section yet.")
+    short_answer = study.kind == "short"
+    key_name = "model answers" if short_answer else "answer key"
+    if not _KEY_HEADING.search(text):
+        detail = ("Each answer is two to five sentences and names the key points a marker would look for. "
+                  if short_answer else "For each number give the letter and one or two sentences on why. ")
+        return (f"The questions are there but the {key_name} is missing. Add the full {key_name} for questions "
+                f"1 to {wanted} now: {detail}Do not repeat the questions.")
+    missing = [number for number in range(1, wanted + 1) if number not in _study_key_numbers(text)]
+    if missing:
+        shown = _number_ranges(missing)
+        if short_answer:
+            return (f"The model answers are missing entries for questions {shown}. Add only those entries at the end "
+                    "of the model answers: the number and two to five sentences naming the key points. "
+                    "Do not repeat the heading or the questions.")
+        return (f"The answer key is missing entries for questions {shown}. Add only those entries at the end "
+                "of the key: the number, the letter and one or two sentences on why. Do not repeat the heading "
+                "or the questions.")
+    return ""
+
+
+def _read_routing(decision: Optional[CourseNeed], flagged: bool, study: Optional[StudyRequest],
+                  detail: bool, codes: Optional[List[str]]):
+    """Apply the routing call to what this reply needs. A flag always asks for the material,
+    except on a rewrite, where it only opens course mode."""
+    if decision is None:
+        return flagged, study, detail, codes
+    needs_course = decision.needs_course
+    if flagged and not decision.rewrite:
+        needs_course = True
+    if decision.study_kind == "none":
+        study = None
+    else:
+        count = decision.study_items or (study.count if study else 0)
+        study = StudyRequest(decision.study_kind, count)
+    if decision.detail:
+        detail = True
+    if needs_course and decision.codes:
+        codes = decision.codes
+    return needs_course, study, detail, codes
+
+
+def _join_continuation(written: str, more: str) -> str:
+    """The reply with the continuation after it, without a second copy of what was already written."""
+    more = more.strip()
+    if not more:
+        return written
+    if more[:300] and more[:300] in written:
+        return written
+    return written.rstrip() + "\n\n" + more
+
+
 @dataclass
 class Reply:
     """What the bot sends back: the chat text and any files it made along the way."""
@@ -356,6 +479,18 @@ class AIResponseHandler:
         # Strip em dashes and en dashes — model ignores the prompt rule, so enforce it here
         ai_response = re.sub(r'\s*[—–]\s*', ' ', ai_response)
 
+        # A formula the model wrote as LaTeX is unreadable in Discord. Turn it into plain text.
+        # Links and inline code are verbatim: paired dollar signs in a URL are not maths.
+        kept: List[str] = []
+
+        def hold_link(found) -> str:
+            kept.append(found.group(0))
+            return f"\x01{len(kept) - 1}\x01"
+
+        held = _VERBATIM.sub(hold_link, ai_response)
+        held = plain_math(held)
+        ai_response = re.sub(r"\x01(\d+)\x01", lambda found: kept[int(found.group(1))], held)
+
         # Same story for stock openers like "I hope you are well."
         ai_response = strip_filler(ai_response)
 
@@ -381,12 +516,12 @@ class AIResponseHandler:
 
     async def _chat(self, messages: list, max_tokens: int, tools: Optional[list] = None,
                     reasoning_effort: Optional[str] = None, force_tool: Optional[str] = None,
-                    request: Optional[Turn] = None):
+                    request: Optional[Turn] = None, model: Optional[str] = None):
         """
         Run one chat completion and return the model's message. force_tool makes it
         call that tool. The call and its cost are added to request.
         """
-        kwargs = {"model": self.deployment, "messages": messages, "max_completion_tokens": max_tokens}
+        kwargs = {"model": model or self.deployment, "messages": list(messages), "max_completion_tokens": max_tokens}
         if tools:
             kwargs["tools"] = tools
             if force_tool:
@@ -429,6 +564,99 @@ class AIResponseHandler:
         )
         return (message.content if isinstance(message.content, str) else ""), counter.cost
 
+    async def _course_need(self, query: str, conversation_history: str, attached_context: str,
+                           codes: List[str], in_course: bool,
+                           request: Turn) -> Optional[CourseNeed]:
+        """
+        One forced tool call that reads the message in context and says whether answering it
+        needs the course material. None means the call failed, and the explicit flag decides.
+        """
+        catalog = course_catalog()
+        if not catalog:
+            return None
+        allowed = course_codes()
+        if not allowed:
+            return None
+        context = conversation_history[-3000:] if conversation_history else ""
+        replied = ""
+        marker = "=== MESSAGE THEY REPLIED TO"
+        start = attached_context.find(marker)
+        if start >= 0:
+            end = attached_context.find("=== END OF REPLIED-TO MESSAGE ===", start)
+            replied = attached_context[start:end + len("=== END OF REPLIED-TO MESSAGE ===")] if end >= 0 else attached_context[start:]
+        if len(replied) > 6000:
+            replied = replied[:6000] + "\n(truncated)"
+        mode = f"on for {', '.join(codes)}" if in_course and codes else "on" if in_course else "off"
+        parts = []
+        if context:
+            parts.append("RECENT CONVERSATION:\n" + context)
+        if replied:
+            parts.append(replied)
+        parts.append(f'CURRENT MESSAGE:\n"{query}"')
+        messages = [
+            {"role": "system", "content": check_prompt(catalog, mode)},
+            {"role": "user", "content": "\n\n".join(parts)},
+        ]
+        try:
+            message = await self._chat(
+                messages, Config.AI_COURSE_CHECK_MAX_TOKENS, [check_tool(allowed)],
+                Config.AI_COURSE_CHECK_REASONING_EFFORT, COURSE_CHECK_TOOL, request,
+                model=Config.AI_COURSE_CHECK_DEPLOYMENT or None,
+            )
+        except BudgetExceededError:
+            raise
+        except Exception as e:
+            logger.warning(f"Course routing check failed, using the explicit flag: {e!r}")
+            return None
+        calls = message.tool_calls if isinstance(message.tool_calls, list) else []
+        for call in calls:
+            if call.function.name == COURSE_CHECK_TOOL:
+                return parse_check(call.function.arguments, allowed)
+        content = message.content if isinstance(message.content, str) else ""
+        if content.strip().startswith("{"):
+            return parse_check(content, allowed)
+        logger.warning("Course routing check returned no decision, using the explicit flag")
+        return None
+
+    async def _continue_study(self, messages: List[dict], raw: str, study: StudyRequest,
+                              max_tokens: int, effort: str, request: Turn) -> str:
+        """Ask for missing questions and then the key, keeping each assistant turn short."""
+        # Only the latest increment goes back as the assistant turn. Appending the whole
+        # joined reply again makes the context grow quadratically and invites the model
+        # to start the set over.
+        last_written = raw
+        for _ in range(STUDY_CONTINUATIONS):
+            gap = _study_gap(raw, study)
+            if not gap:
+                break
+            # Questions are still arriving. A key written early would end up above the
+            # questions that follow, so it is dropped and asked for at the end.
+            if gap.startswith("You wrote"):
+                raw = _KEY_HEADING.split(raw, maxsplit=1)[0].rstrip()
+                last_written = raw
+            messages.append({"role": "assistant", "content": last_written})
+            messages.append({"role": "user", "content": gap})
+            try:
+                message = await self._chat(messages, max_tokens, None, effort, None, request)
+            except BudgetExceededError:
+                raise
+            except Exception as e:
+                logger.warning(f"Study continuation failed: {e!r}")
+                break
+            more = message.content if isinstance(message.content, str) else ""
+            if gap.startswith("You wrote"):
+                more = _KEY_HEADING.split(more, maxsplit=1)[0].rstrip()
+            if not more.strip():
+                break
+            joined = _join_continuation(raw, more)
+            if joined == raw:
+                break
+            raw = joined
+            last_written = more
+        if _study_gap(raw, study):
+            logger.warning(f"Study reply for {request.username} is still incomplete after {STUDY_CONTINUATIONS} continuations")
+        return raw
+
     async def generate_reply(self, query: str, conversation_history: str,
                              username: str, user_id: Optional[str] = None,
                              attached_context: str = "", images: Optional[List[str]] = None,
@@ -462,12 +690,10 @@ class AIResponseHandler:
         # Inside course mode the same words can mean a lookup that plain chat did not get, so nothing
         # kept from before is served there
         called = query[1:].strip() if query.startswith('/') and len(query) > 1 else query
-        flags = read_scope(called) if allow_files else None
-        course_mode = bool(flags and (flags.flagged or self.course_sessions.get(session_key) is not None))
+        # A study reply is shaped and checked, so it is not served from the plain-chat cache
+        asked_study = study_request(called)
         kept_at = self._cached_at.get(cache_key)
         fresh = kept_at is not None and time.monotonic() - kept_at < self.cache_seconds
-        if cache_key in self.response_cache and fresh and not course_mode:
-            return Reply(self.response_cache[cache_key])
 
         try:
             clean_query = query[1:].strip() if query.startswith('/') and len(query) > 1 else query
@@ -503,17 +729,50 @@ class AIResponseHandler:
             if session is not None:
                 material = session.material
             codes = scope.codes if scope and flagged else (session.codes if session else None)
+            study = study_request(clean_query)
+            detail = wants_detail(clean_query)
+            # A kept plain answer costs nothing and needs no routing call. Course mode and
+            # study replies are never kept, so they always get a fresh decision.
+            if (cache_key in self.response_cache and fresh and not flagged and session is None
+                    and not asked_study):
+                return Reply(self.response_cache[cache_key])
 
-            # Reading a file or image, or writing a tool call, needs more room than a chat reply
-            max_tokens = 4000 if (attached_context or images or allow_files) else 2000
+            # The state every tool for this reply shares. It exists before the routing call,
+            # so that call's cost is counted against the same reply.
+            request = Turn(clean_query, username, conversation_history or "", attached_context, images,
+                           file_gate=file_gate, web_gate=web_gate, course_gate=course_gate, course_codes=codes,
+                           study=bool(study), detail=detail)
+            request.ask_model = lambda model_messages, limit, effort=None: self._chat(
+                model_messages, limit, reasoning_effort=effort, request=request)
+            request.embed = lambda text: self._embed(text, request)
+
+            # One call before the answer decides whether the course material is needed at all.
+            # It reads the message, the one it replies to and the recent chat, and says what
+            # they actually want, so a rewrite is not mistaken for an exam question.
+            decision = (await self._course_need(clean_query, conversation_history, attached_context,
+                                                codes or [], in_course, request)) if allow_files else None
+            rewrite = bool(decision and decision.rewrite)
+            needs_course, study, detail, codes = _read_routing(decision, flagged, study, detail, codes)
+            request.course_codes = codes if codes is not None else []
+            request.study = bool(study)
+            request.detail = detail or rewrite
+            in_course = bool(flagged or session is not None or needs_course)
+
+            # A study reply gets room for every question and its key. Files, images and tools
+            # need more room than a short chat reply, but less than a quiz. The ceiling is
+            # not what is billed: Azure bills the tokens the model actually writes.
+            if study:
+                max_tokens = Config.AI_STUDY_MAX_TOKENS
+            elif detail or rewrite:
+                max_tokens = Config.AI_DETAIL_MAX_TOKENS
+            elif attached_context or images or allow_files:
+                max_tokens = Config.AI_CHAT_TOOL_MAX_TOKENS
+            else:
+                max_tokens = Config.AI_CHAT_MAX_TOKENS
 
             # The tools on offer for this reply, and the state they share
             offered = [tool for tool in self.tools if tool.available() and (in_course or not tool.course_only)] if allow_files else []
             by_name = {tool.name: tool for tool in offered}
-            request = Turn(clean_query, username, conversation_history or "", attached_context, images,
-                           file_gate=file_gate, web_gate=web_gate, course_gate=course_gate, course_codes=codes)
-            request.ask_model = lambda model_messages, limit: self._chat(model_messages, limit, request=request)
-            request.embed = lambda text: self._embed(text, request)
 
             def keep(block: str) -> None:
                 if session is not None:
@@ -525,37 +784,55 @@ class AIResponseHandler:
                 request.course_sources = session.sources
                 request.course_seen = session.seen
             files = request.files
-            # The material is searched in English. A message in another language is no use as the
-            # search itself, so the model has to write the search instead, and is made to.
-            # Another script, that is. An accent in an English message ("naïve") is still English.
-            must_search = flagged and any(letter.isalpha() and ord(letter) > 0x024F for letter in clean_query)
-            if scope and flagged and not must_search:
+            # The material is searched in English. The routing call writes the search when it can.
+            # Without one, another script cannot be searched, so the model has to write the search.
+            written = decision.search_query if decision else ""
+            must_search = bool(needs_course and not written and any(
+                letter.isalpha() and ord(letter) > 0x024F for letter in clean_query))
+            if needs_course and not must_search:
                 # Looked up here, before the model is asked, so the first answer does not hang on the model's choice
-                looked_up = await lookup_for(request, scope)
+                lookup_scope = Scope(clean_query, True, list(codes or []), [])
+                looked_up = await lookup_for(request, lookup_scope, query=written)
                 if looked_up.startswith(NOT_LOOKED_UP):
                     user_parts.insert(-1, looked_up)
                 else:
                     keep(looked_up)
                     user_parts.insert(-1, LOOKED_UP_NOTE)
+            if decision and decision.context:
+                user_parts.insert(-1, f"(what they want, read from this message and the one it replies to: {decision.context})")
+            # The extra rules are for this reply only. The personality prompt is never changed,
+            # so a quiz reply sounds exactly like the bot does in every other message.
+            extra_rules = (study_prompt(study) if study
+                           else DETAIL_PROMPT if detail
+                           else REWRITE_PROMPT if rewrite
+                           else "")
             messages: List[dict] = [
                 {"role": "system",
                  "content": _SYSTEM_PROMPT + "".join(tool.prompt() for tool in offered)
-                            + (NO_FLAG_PROMPT if scope and not in_course else "") + emoji_prompt},
+                            + (NO_FLAG_PROMPT if scope and not in_course else "") + extra_rules + emoji_prompt},
             ]
             if material:
                 # In a message of its own ahead of the conversation, so it is the same text from one turn to the next
                 messages.append({"role": "user", "content": saved_material(material)})
             messages.append({"role": "user", "content": user_content("\n\n".join(user_parts), images)})
             definitions = [tool.definition for tool in offered]
-            effort = Config.AI_CHAT_REASONING_EFFORT
+            effort = Config.AI_STUDY_REASONING_EFFORT if study else Config.AI_CHAT_REASONING_EFFORT
+            # The live chat model only takes tool calls with reasoning switched off. The
+            # study prompt and its token ceiling still apply; only the extra think is skipped.
+            if (study or detail or rewrite) and offered and Config.AI_CHAT_REASONING_EFFORT == "none":
+                effort = "none"
+            deep = bool(study or detail or rewrite)
+            rounds = (Config.AI_STUDY_MAX_TOOL_ROUNDS if deep
+                      else Config.AI_COURSE_MAX_TOOL_ROUNDS if in_course
+                      else Config.AI_CHAT_MAX_TOOL_ROUNDS)
             raw = ""
             # Name of a tool the model has to call again, set when a diagram did not parse
             redo: Optional[str] = None
             gave_up = ""
 
-            for round_number in range(MAX_TOOL_ROUNDS + 1):
+            for round_number in range(rounds + 1):
                 # On the last round no tools are offered, so the model has to answer in text
-                tools = definitions if offered and round_number < MAX_TOOL_ROUNDS else None
+                tools = definitions if offered and round_number < rounds else None
                 if redo and not tools:
                     # Out of tries. Asked to answer now, the model claims the diagram was sent.
                     gave_up = by_name[redo].gave_up
@@ -600,6 +877,13 @@ class AIResponseHandler:
                 # Every round used a tool, and the last one still asked for another try
                 gave_up = by_name[redo].gave_up if redo else ""
 
+            # A model asked for 30 questions sometimes stops at 12. Ask only for what is
+            # missing, then for the key, so the set is complete without paying for it twice.
+            if study and not files and not gave_up and raw.strip():
+                raw = await self._continue_study(messages, raw, study, max_tokens, effort, request)
+            if study and study.kind == "guide":
+                raw = raw.replace(GUIDE_COMPLETE, "").strip()
+
             if gave_up and not files:
                 reply = Reply(gave_up)
             else:
@@ -617,7 +901,7 @@ class AIResponseHandler:
                         shown = render_sources(shown, request.course_sources)
                     reply = Reply(repair_links(shown, request.findings), files)
                 # An answer from the web or the course material goes stale, so it is looked up again next time
-                if not files and not request.lookups and not request.course_searches and not in_course:
+                if not files and not study and not request.lookups and not request.course_searches and not in_course:
                     self.response_cache[cache_key] = reply.text
                     self._cached_at[cache_key] = time.monotonic()
                     if len(self.response_cache) > self.cache_size:

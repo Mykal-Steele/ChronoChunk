@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
-from src.course_store import _STOP_WORDS, RESULTS, CourseStore, Hit
+from src.course_store import _STOP_WORDS, MANY_PER_SOURCE, MANY_RESULTS, RESULTS, CourseStore, Hit
 
 # The most characters of a result that reach the model: the chunk itself, each chunk
 # beside it, and the wording it was translated from
@@ -19,6 +19,9 @@ MAX_NEIGHBOUR_CHARS = 500
 MAX_ORIGINAL_CHARS = 800
 # The most assignments one list holds
 MAX_ROWS = 40
+# A study reply gets the whole topic, not only the closest handful of passages.
+STUDY_RESULTS = MANY_RESULTS
+STUDY_PER_SOURCE = MANY_PER_SOURCE
 
 # What each kind of source is called, for one of them and for a count of them
 KIND_NAMES = {
@@ -238,9 +241,35 @@ def source_label(hit: Hit) -> str:
     return f"{label} ({day})" if day else label
 
 
+def outline_text(store: CourseStore, codes: Sequence[str] = ()) -> str:
+    """
+    A course's sources as a list, for a study reply that has to cover the exam and not only
+    the passages closest to the request's words. It names the decks, lectures and assignments,
+    so the model can see what it has not searched for yet. Empty when there is nothing to list.
+    """
+    sources = store.outline(codes)
+    if not sources:
+        return ""
+    names = {course["code"]: course["name"] for course in store.courses()}
+    lines = ["=== COURSE OUTLINE: the material the quiz can cover ==="]
+    current = ""
+    for source in sources:
+        if source["course"] != current:
+            current = source["course"]
+            lines.append(f"{current} {names.get(current, '')}".rstrip() + ":")
+        kind = KIND_NAMES.get(source["kind"], (source["kind"],))[0]
+        where = ", ".join(part for part in (source["section"], source["date"]) if part)
+        lines.append(f"- {kind}: {source['title']}" + (f" ({where})" if where else ""))
+    lines.append("=== END OF THE COURSE OUTLINE ===")
+    return "\n".join(lines)
+
+
 # The model sometimes puts it at the end of its last sentence instead of on a line of its own
 _SOURCE_LINE = re.compile(r"(?:^|(?<=\s))-# Source:(.*)$", re.MULTILINE | re.IGNORECASE)
 _MARK = re.compile(r"\[(\d+|A)\]")
+
+# Under the chunk size, so even a full line plus the reply has room before Discord splits it.
+SOURCE_LINE_CHARS = 900
 
 
 def render_sources(text: str, sources: Dict[str, Tuple[str, str]]) -> str:
@@ -274,8 +303,20 @@ def render_sources(text: str, sources: Dict[str, Tuple[str, str]]) -> str:
     rest = text[line.end():]
     if not named:
         return (body.rstrip() + rest).rstrip()
-    shown = ", ".join(f"[{name}](<{link}>)" if link else name for name, link in named)
-    return f"{body.rstrip()}\n-# Source: {shown}{rest}"
+    # One source line can outgrow what Discord accepts in a single chunk. Wrapping it
+    # here keeps every link whole, since a split inside a link posts it as raw text.
+    lines, current = [], ""
+    for name, link in named:
+        piece = f"[{name}](<{link}>)" if link else name
+        joined = f"{current}, {piece}" if current else piece
+        if current and len(joined) + len("-# Source: ") > SOURCE_LINE_CHARS:
+            lines.append(f"-# Source: {current}")
+            current = piece
+        else:
+            current = joined
+    if current:
+        lines.append(f"-# Source: {current}")
+    return f"{body.rstrip()}\n" + "\n".join(lines) + rest
 
 
 def format_hits(query: str, hits: List[Hit], names: dict, rows: Sequence[str] = (), today: Optional[date] = None,
@@ -348,7 +389,7 @@ def _key(hit: Hit) -> tuple:
 async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[float]]], words: str, codes: Sequence[str],
                    now: datetime, kind: Optional[str] = None, since: Optional[str] = None, dated: bool = False,
                    due: Optional[str] = None, asked: Optional[str] = None, first_number: int = 1,
-                   seen: Optional[Dict[tuple, str]] = None, latest: bool = False) -> Found:
+                   seen: Optional[Dict[tuple, str]] = None, latest: bool = False, many: bool = False) -> Found:
     """
     Look words up in the courses in codes, or in every course when codes is empty.
     kind puts results of that kind first without leaving the others out. dated adds
@@ -358,6 +399,7 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
     holds the passages this conversation was already shown, by the number each has.
     latest is for a question about the newest lecture or slides: each course in codes is
     searched on its newest day only, and passages spread through that day fill the rest.
+    many is for a study request: wider results and more from each source.
     """
     asked = asked or words
     dated = dated or bool(due)
@@ -374,12 +416,17 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
     if searched:
         vector = await embed(words)
 
+        limit = STUDY_RESULTS if many else RESULTS
+        per_source = STUDY_PER_SOURCE if many else None
+
         def search() -> List[Hit]:
             found: List[Hit] = []
             for code in codes or [None]:
                 if kind:
-                    found += store.search(words, vector, code, kind, since)
-                found += store.search(words, vector, code, None, since)
+                    found += store.search(words, vector, code, kind, since, limit=limit,
+                                          per_source=per_source or 2)
+                found += store.search(words, vector, code, None, since, limit=limit,
+                                      per_source=per_source or 2)
             return found
 
         # The search is a few milliseconds of SQLite, kept off the event loop all the same
@@ -388,7 +435,7 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
             if _key(hit) not in found_keys:
                 found_keys.add(_key(hit))
                 hits.append(hit)
-        hits = sorted(hits, key=lambda hit: (bool(kind) and hit.kind != kind, -hit.similarity))[:RESULTS]
+        hits = sorted(hits, key=lambda hit: (bool(kind) and hit.kind != kind, -hit.similarity))[:limit]
         if latest and codes and not since:
             hits = await asyncio.to_thread(_newest_day_hits, store, words, vector, codes)
 

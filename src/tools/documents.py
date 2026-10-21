@@ -4,6 +4,7 @@ import re
 from typing import Callable, Optional
 
 from config.ai_config import WRITER_PROMPT
+from config.config import Config
 from src.document_builder import (
     DiagramSyntaxError, DocumentError, build_diagram, build_document, clean_document_text, clean_title, split_mermaid,
 )
@@ -14,13 +15,14 @@ from src.usage_guard import BudgetExceededError
 
 logger = logging.getLogger(__name__)
 
-# One reply carries at most this many generated files
-MAX_FILES_PER_REPLY = 2
+# One reply carries at most this many generated files. Someone may ask for a set of
+# three to five diagrams, so the ceiling is five; the daily file limit still applies.
+MAX_FILES_PER_REPLY = 5
 # Text this short beside pasted Mermaid source only introduces it ("paste this into mermaid.live")
 PASTED_DIAGRAM_INTRO_CHARS = 120
-# Room for a few pages plus the model's reasoning. Azure counts this ceiling against
-# the per-minute token limit, so it is not set higher than documents need.
-WRITER_MAX_TOKENS = 8000
+# Room for a complete study guide or a long report, not only a few pages. Azure bills
+# the tokens the writer actually produces, so a high ceiling does not cost anything by itself.
+WRITER_MAX_TOKENS = 32000
 
 # Added to the system prompt while the file tools are offered
 FILES_PROMPT = """
@@ -28,7 +30,7 @@ FILES AND DIAGRAMS:
 - u can make real files with the create_document and create_diagram tools. the file is attached to ur reply automatically.
 - create_document: use it when they ask for a pdf, docx, word doc, file, document or report, or when what they want is too long for a chat message (more than about 250 words). the brief says what to write: what it is, who its for, what it must cover, and every fact they gave. the writer already sees the conversation, the replied-to message and attached files, so dont paste those into the brief. format is pdf unless they asked for docx, word or markdown.
 - create_diagram: use it when they ask for a diagram, flowchart, sequence, timeline, org chart or mind map. write valid mermaid with short clean labels.
-- one request, one file. if they want a diagram inside a document, say so in the brief and the writer adds it. dont also call create_diagram for it.
+- make at most one document in a reply. make every diagram they asked for, each with its own create_diagram call, up to the reply's limit. if they want a diagram inside a document, say so in the brief and the writer adds it; dont also call create_diagram for that diagram.
 - dont use a tool for a normal chat answer or a short piece of text.
 - after a tool works, reply with one short line in ur normal voice. dont repeat whats in the file and never say u cant send files.
 - if a tool returns an error, tell them plainly what went wrong. if it is a mermaid syntax error, fix the diagram and call the tool again.
@@ -88,6 +90,12 @@ async def write_document(fmt: str, title: str, brief: str, turn: Turn, max_pages
     parts.append(f"BRIEF FOR THIS DOCUMENT\nworking title (reword it into a plain sentence-case title): {title}\n{brief}")
     if max_pages:
         parts.append(f"PAGE LIMIT: {max_pages}. Hard limit of {max_pages * 280} words in total, counting tables and lists.")
+    elif turn.study or turn.detail:
+        parts.append(
+            "LENGTH: match the brief and the request. A complete study guide, a chapter-by-chapter guide "
+            "or a long report gets as many pages as it needs; do not cut it short and do not pad it. "
+            "There is no fixed word limit for this request."
+        )
     else:
         parts.append(
             "LENGTH: about one page, roughly 300 words. Hard limit of 550 words, unless the request "
@@ -114,7 +122,7 @@ async def write_document(fmt: str, title: str, brief: str, turn: Turn, max_pages
                 {"role": "system", "content": WRITER_PROMPT},
                 {"role": "user",   "content": user_content("\n\n".join(parts), turn.images)}
             ],
-            WRITER_MAX_TOKENS,
+            WRITER_MAX_TOKENS, Config.AI_WRITER_REASONING_EFFORT,
         )
     markdown = (message.content if isinstance(message.content, str) else "").strip()
 

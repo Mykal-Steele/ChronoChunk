@@ -11,10 +11,10 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from config.config import Config
 
-# The most characters of looked-up material a session carries. A lookup is 10,000 to 12,000, so this
-# holds three. It was 16,000 at first, and the check showed the second lookup pushing the first out
-# while the bot was still being told the first one's passages were "already shown".
-MAX_MATERIAL_CHARS = 40000
+# The most characters of looked-up material a session carries. A study request can gather
+# a whole course outline and several topics, so this holds more than a normal chat session.
+# It is still a ceiling: the oldest lookup is dropped when a new one would go over it.
+MAX_MATERIAL_CHARS = 160000
 
 
 @dataclass

@@ -32,6 +32,28 @@ def test_split_prefers_line_breaks():
     assert all(chunk.splitlines()[-1].startswith("line ") for chunk in chunks)
 
 
+def test_split_does_not_break_a_masked_link():
+    prefix = "x " * 945
+    link = "[CSC535 lecture 13 Aug 2026, 0:21:15](<https://example.test/Meeting%20Recording.mp4>)"
+    chunks = MessageProcessor._split_text(prefix + link + " tail")
+    assert any(link in chunk for chunk in chunks)
+    assert all("](" not in chunk or "](<" in chunk for chunk in chunks)
+
+
+def test_split_does_not_break_a_bare_link():
+    prefix = "x " * 945
+    link = "https://example.test/a/long/path/Meeting%20Recording.mp4"
+    chunks = MessageProcessor._split_text(prefix + link + " tail")
+    assert any(link in chunk for chunk in chunks)
+
+
+def test_split_does_not_send_a_link_longer_than_the_limit():
+    link = "https://example.test/" + "a" * 3000
+    chunks = MessageProcessor._split_text(link)
+    assert len(chunks) > 1
+    assert all(len(chunk) <= 2000 for chunk in chunks)
+
+
 def test_split_keeps_code_blocks_closed_in_every_chunk():
     text = "here:\n```python\n" + "value = compute(1, 2)\n" * 300 + "```\ndone"
     chunks = MessageProcessor._split_text(text)

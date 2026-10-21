@@ -92,6 +92,15 @@ async def test_table_right_after_a_text_line_still_renders_as_a_table():
     assert docx_xml(built.data).count("<w:tbl>") == 1
 
 
+def test_plain_math_turns_commands_into_symbols():
+    from src.document_builder import plain_math
+    assert plain_math(r"$x \times y$") == "x × y"
+    assert plain_math(r"\frac{a}{b}") == "(a)/(b)"
+    assert plain_math(r"\sqrt{x}") == "√(x)"
+    assert plain_math(r"A \cap B") == "A ∩ B"
+    assert plain_math(r"x_1^2") == "x_1^2"
+
+
 def test_clean_turns_dashes_between_words_into_commas():
     assert clean_document_text("Costs fell — a lot.") == "Costs fell, a lot."
 
@@ -106,6 +115,19 @@ def test_clean_removes_a_dash_that_opens_a_line_or_list_item():
 
 def test_clean_straightens_curly_quotes():
     assert clean_document_text("“Quoted” and ‘single’") == "\"Quoted\" and 'single'"
+
+
+def test_plain_math_leaves_code_prices_and_paths_alone():
+    from src.document_builder import plain_math
+    assert plain_math("costs $5 and $10") == "costs $5 and $10"
+    assert plain_math("run `$HOME/bin` now") == "run `$HOME/bin` now"
+    assert plain_math(r"open C:\Users\name\file.txt") == r"open C:\Users\name\file.txt"
+
+
+def test_plain_math_uses_the_lowercase_sigma_and_keeps_inline_math_out_of_code():
+    from src.document_builder import plain_math
+    assert plain_math(r"$\sigma$") == "σ"
+    assert plain_math(r"`$x \times y$` and $x \times y$") == r"`$x \times y$` and x × y"
 
 
 def test_clean_leaves_code_blocks_alone():

@@ -56,3 +56,10 @@ def test_validate_returns_dict_on_success():
     result = Config.validate()
     assert isinstance(result, dict)
     assert result.get("discord_token") is True
+
+
+def test_study_allowances_stay_inside_the_monthly_budget():
+    assert Config.AI_MONTHLY_BUDGET_USD == 20.0
+    assert Config.AI_USER_WEEKLY_BUDGET_USD * 4 * 3 < Config.AI_MONTHLY_BUDGET_USD
+    assert Config.AI_STUDY_MAX_TOKENS > Config.AI_CHAT_MAX_TOKENS
+    assert Config.AI_STUDY_MAX_TOOL_ROUNDS > Config.AI_CHAT_MAX_TOOL_ROUNDS

@@ -20,7 +20,7 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 SUPPORTED_FORMATS = ("pdf", "docx", "md")
-MAX_DOCUMENT_CHARS = 80000
+MAX_DOCUMENT_CHARS = 200000
 MAX_DIAGRAMS_PER_DOCUMENT = 6
 MAX_FILE_BYTES = 9 * 1024 * 1024  # Discord rejects uploads over 10 MB
 PANDOC_TIMEOUT_SECONDS = 60
@@ -187,6 +187,63 @@ def strip_filler(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", _FILLER_SENTENCES.sub("", text))
 
 
+# LaTeX that models still write into prose, and the plain symbol it stands for
+_MATH_SYMBOLS = {
+    r"\times": "×", r"\cdot": "·", r"\div": "÷", r"\pm": "±", r"\mp": "∓",
+    r"\le": "≤", r"\leq": "≤", r"\ge": "≥", r"\geq": "≥", r"\neq": "≠", r"\ne": "≠",
+    r"\approx": "≈", r"\infty": "∞", r"\sum": "Σ", r"\prod": "Π", r"\int": "∫",
+    r"\partial": "∂", r"\nabla": "∇", r"\in": "∈", r"\notin": "∉", r"\subset": "⊂",
+    r"\cup": "∪", r"\cap": "∩", r"\forall": "∀", r"\exists": "∃", r"\to": "→",
+    r"\rightarrow": "→", r"\leftarrow": "←", r"\Rightarrow": "⇒", r"\iff": "⇔",
+    r"\alpha": "α", r"\beta": "β", r"\gamma": "γ", r"\delta": "δ", r"\epsilon": "ε",
+    r"\theta": "θ", r"\lambda": "λ", r"\mu": "μ", r"\pi": "π", r"\rho": "ρ",
+    r"\sigma": "σ", r"\tau": "τ", r"\phi": "φ", r"\omega": "ω", r"\Delta": "Δ",
+    r"\Omega": "Ω", r"\Sigma": "Σ", r"\Phi": "Φ", r"\Lambda": "Λ",
+}
+
+
+_CODE_SPAN = re.compile(r"(```.*?```|`[^`\n]*`)", re.DOTALL)
+
+
+def _inline_dollars(text: str) -> str:
+    """Drop inline math dollars, but leave prices and other dollar amounts alone."""
+    def unwrap(match: re.Match) -> str:
+        body = match.group(1)
+        # "$5 and $10" is money, not maths. A closing dollar followed by a digit
+        # starts the next amount, so this pair is not a formula.
+        if match.string[match.end():match.end() + 1].isdigit():
+            return match.group(0)
+        return body
+    return re.sub(r"(?<!\\)\$(?!\$)([^\n$]+?)(?<!\\)\$", unwrap, text)
+
+
+def _plain_math(text: str) -> str:
+    """The LaTeX conversion for prose. Code spans are protected by plain_math."""
+    text = re.sub(r"\$\$(.+?)\$\$", r"\1", text, flags=re.DOTALL)
+    text = _inline_dollars(text)
+    # Nested braces in a fraction are rare; the simple form covers what models write
+    text = re.sub(r"\\(?:d|t)?frac\{([^{}]*)\}\{([^{}]*)\}", r"(\1)/(\2)", text)
+    text = re.sub(r"\\sqrt\{([^{}]*)\}", r"√(\1)", text)
+    text = re.sub(r"\\(?:text|mathrm|mathbf|mathit)\{([^{}]*)\}", r"\1", text)
+    for command, symbol in _MATH_SYMBOLS.items():
+        text = re.sub(re.escape(command) + r"(?![A-Za-z])", symbol, text)
+    text = re.sub(r"\\(?:left|right)(?![A-Za-z])", "", text)
+    # A subscript or superscript keeps its marker, without the braces
+    text = re.sub(r"([_^])\{([^{}]*)\}", r"\1\2", text)
+    # Only a command that takes braces is a LaTeX command. "C:\Users\name" is a path.
+    return re.sub(r"\\([A-Za-z]+)(?=\s*\{)", r"\1", text)
+
+
+def plain_math(text: str) -> str:
+    """
+    Turn LaTeX that a model writes into readable plain text: $...$ loses its dollars,
+    \frac{a}{b} becomes (a)/(b), and common commands become their symbols. Inline
+    code, fenced code, prices and Windows paths are left exactly as written.
+    """
+    parts = _CODE_SPAN.split(text)
+    return "".join(part if part.startswith("`") else _plain_math(part) for part in parts)
+
+
 def clean_document_text(markdown: str) -> str:
     """
     Remove the marks that make a document read as machine-written: stock filler
@@ -195,6 +252,7 @@ def clean_document_text(markdown: str) -> str:
     def clean(text: str) -> str:
         for curly, straight in _CURLY_QUOTES.items():
             text = text.replace(curly, straight)
+        text = plain_math(text)
         text = strip_filler(text)
         text = re.sub(rf"(?<=\d)\s*{_DASHES}\s*(?=\d)", "-", text)   # number ranges keep a hyphen
         # a dash that opens a line (or a list item) is just removed

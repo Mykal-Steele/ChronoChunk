@@ -166,3 +166,16 @@ def test_a_question_that_names_its_day_is_not_about_the_latest():
     assert about_latest("what did the latest lecture cover")
     assert not about_latest("what did the latest lecture on 2026-10-12 cover")
     assert not about_latest("what did the last lecture on oct 6 cover")
+
+
+def test_a_long_source_line_is_split_between_links_not_through_one():
+    from src.course_retrieval import SOURCE_LINE_CHARS
+    named = {str(number): (f"CBLL lecture {number} Oct 2026, 0:0{number}:00", f"https://example.test/lecture-{number}.mp4")
+             for number in range(1, 40)}
+    reply = "an answer\n-# Source: " + " ".join(f"[{number}]" for number in named)
+    shown = render_sources(reply, named)
+    lines = [line for line in shown.splitlines() if line.startswith("-# Source: ")]
+    assert len(lines) > 1
+    assert all(len(line) <= SOURCE_LINE_CHARS + len("-# Source: ") for line in lines)
+    assert all(line.count("](") == line.count("(<https://") for line in lines)
+    assert "[CBLL lecture 1 Oct 2026" in lines[0] and "[CBLL lecture 39 Oct 2026" in lines[-1]

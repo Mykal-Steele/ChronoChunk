@@ -10,10 +10,33 @@ from src.course_store import DIMENSIONS, CourseStore
 from src.exceptions import RateLimitError
 from src.tools import courses
 from src.tools.base import Turn
+from src.ai_response_handler import AIResponseHandler
+from src.course_need import CourseNeed
 from src.course_scope import Scope
 from src.tools.courses import SearchCourse, courses_summary, lookup_for
 from tests.unit.test_ai_response_handler import _message, _tool_call
 from tests.unit.test_course_store import direction
+
+
+class _Router:
+    """A stand-in for the routing model. Tests may swap decide to answer differently per message."""
+
+    def __init__(self, original):
+        self.original = original
+        self.calls = 0
+        self.decide = lambda query: CourseNeed(needs_course=True)
+
+    async def __call__(self, query, history, attached, codes, in_course, request):
+        self.calls += 1
+        return self.decide(query)
+
+
+@pytest.fixture(autouse=True)
+def router(monkeypatch):
+    """Keep the routing call's own model call out of the reply tests; its tests call the original."""
+    route = _Router(AIResponseHandler._course_need)
+    monkeypatch.setattr(AIResponseHandler, "_course_need", route)
+    return route
 
 
 @pytest.fixture
@@ -286,17 +309,17 @@ async def test_without_a_course_file_the_model_hears_nothing_about_courses(handl
 
 # ── the flag ──────────────────────────────────────────────────────────────────
 
-async def test_without_a_flag_nothing_about_courses_reaches_the_model(handler, mock_openai_client, material):
-    mock_openai_client.chat.completions.create.side_effect = [_message(content="not much, u?")]
+async def test_a_class_question_without_a_flag_is_recognised_and_looked_up(handler, mock_openai_client, material):
+    # The routing call reads the message and the catalog, so a clear class question does not need a flag
+    mock_openai_client.chat.completions.create.side_effect = [_message(content="pca cuts the dimensions down")]
     reply = await handler.generate_reply("/what did csc340 say about pca", "", "Kruskal", "1", allow_files=True)
-    assert reply.text == "not much, u?"
+    assert reply.text == "pca cuts the dimensions down"
     call = mock_openai_client.chat.completions.create.call_args[1]
-    assert "search_course" not in [tool["function"]["name"] for tool in call["tools"]]
+    assert "search_course" in [tool["function"]["name"] for tool in call["tools"]]
     system = call["messages"][0]["content"]
-    assert "COURSE MATERIAL" not in system and "CSC340 Artificial Intelligence" not in system
-    # It is told how they can ask, so a class question is not answered from general knowledge
-    assert "-c " in system and "-csc340" in system
-    mock_openai_client.embeddings.create.assert_not_awaited()
+    assert "COURSE MATERIAL:" in system and "CSC340 Artificial Intelligence" in system
+    assert "CLASS QUESTIONS:" not in system
+    mock_openai_client.embeddings.create.assert_awaited_once()
 
 
 async def test_the_course_flag_looks_up_before_the_model_is_asked(handler, mock_openai_client, material):
@@ -503,7 +526,8 @@ def _names(call):
     return [tool["function"]["name"] for tool in call[1].get("tools") or []]
 
 
-async def test_after_a_flag_they_just_keep_chatting(handler, mock_openai_client, material, clock):
+async def test_after_a_flag_they_just_keep_chatting(handler, mock_openai_client, material, clock, router):
+    router.decide = lambda query: CourseNeed(needs_course=("pca" in query and "pc1" not in query))
     mock_openai_client.chat.completions.create.side_effect = [
         _message(content="pca squashes the dimensions"), _message(content="pc1 is the direction with the most variance")]
     await handler.generate_reply("/what is pca -csc340", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
@@ -521,7 +545,8 @@ async def test_after_a_flag_they_just_keep_chatting(handler, mock_openai_client,
     assert second[1]["messages"][-1]["content"].rstrip().endswith('[Kruskal]: "and what is pc1 then"')
 
 
-async def test_a_search_made_while_chatting_is_kept_for_what_comes_next(handler, mock_openai_client, material, clock):
+async def test_a_search_made_while_chatting_is_kept_for_what_comes_next(handler, mock_openai_client, material, clock, router):
+    router.decide = lambda query: CourseNeed(needs_course=query == "what is pca")
     mock_openai_client.chat.completions.create.side_effect = [
         _message(content="pca squashes the dimensions"),
         _message(tool_calls=[_tool_call("search_course", {"query": "naive bayes", "course": "CSC345"})]),
@@ -538,7 +563,8 @@ async def test_a_search_made_while_chatting_is_kept_for_what_comes_next(handler,
     assert saved.index("Principal component analysis") < saved.index("Naive Bayes is simple")
 
 
-async def test_a_session_belongs_to_one_person_in_one_channel(handler, mock_openai_client, material, clock):
+async def test_a_session_belongs_to_one_person_in_one_channel(handler, mock_openai_client, material, clock, router):
+    router.decide = lambda query: CourseNeed(needs_course=False)
     await handler.generate_reply("/what is pca -csc340", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
     for key in ("chan:2", "other:1", None):
         await handler.generate_reply("/and what is pc1 then", "", "Sam", "2", allow_files=True, session_key=key)
@@ -547,7 +573,8 @@ async def test_a_session_belongs_to_one_person_in_one_channel(handler, mock_open
         assert len(call[1]["messages"]) == 2
 
 
-async def test_after_an_hour_they_are_asked_for_the_flag_again(handler, mock_openai_client, material, clock):
+async def test_after_an_hour_they_are_asked_for_the_flag_again(handler, mock_openai_client, material, clock, router):
+    router.decide = lambda query: CourseNeed(needs_course=query == "what is pca")
     await handler.generate_reply("/what is pca -csc340", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
     clock.now += 3601
     await handler.generate_reply("/and what is pc1 then", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
@@ -581,7 +608,8 @@ async def test_the_model_names_passages_by_number_and_the_reply_gets_the_links(h
                           "-# Source: [5th--Regression, page 35 (1 Sep 2026)](<https://example.test/deck.pdf>)")
 
 
-async def test_numbers_run_on_through_a_session_so_each_names_one_passage(handler, mock_openai_client, material, clock):
+async def test_numbers_run_on_through_a_session_so_each_names_one_passage(handler, mock_openai_client, material, clock, router):
+    router.decide = lambda query: CourseNeed(needs_course=query == "what is pca")
     mock_openai_client.chat.completions.create.side_effect = [
         _message(content="pca squashes the dimensions\n-# Source: [1]"),
         _message(tool_calls=[_tool_call("search_course", {"query": "naive bayes", "course": "CSC345"})]),
@@ -602,7 +630,8 @@ def test_the_prompt_asks_for_numbers_and_not_for_links(material):
     assert "example.com" not in prompt
 
 
-async def test_the_first_message_is_told_its_lookup_is_done(handler, mock_openai_client, material, clock):
+async def test_the_first_message_is_told_its_lookup_is_done(handler, mock_openai_client, material, clock, router):
+    router.decide = lambda query: CourseNeed(needs_course=query == "what is pca")
     mock_openai_client.chat.completions.create.side_effect = [_message(content="a"), _message(content="b")]
     await handler.generate_reply("/what is pca -csc340", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
     await handler.generate_reply("/and pc1", "", "Kruskal", "1", allow_files=True, session_key="chan:1")
@@ -637,3 +666,90 @@ async def test_an_accent_in_an_english_message_does_not_send_it_down_the_slow_pa
     call = mock_openai_client.chat.completions.create.call_args[1]
     # Looked up before the model was asked, like any English message, and no search is forced
     assert "tool_choice" not in call and mock_openai_client.embeddings.create.await_count == 1
+
+
+# ── the routing call before a reply ────────────────────────────────────────────
+
+async def test_the_routing_call_sees_the_catalog_and_returns_what_they_want(handler, mock_openai_client, material, router):
+    mock_openai_client.chat.completions.create.return_value = _message(tool_calls=[_tool_call("check_course_need", {
+        "needs_course": True,
+        "course_codes": ["CSC340"],
+        "search_query": "principal component analysis",
+        "context": "They want a quiz on PCA for CSC340, using the course slides.",
+        "is_rewrite": False,
+        "study_kind": "quiz",
+        "study_items": 10,
+        "wants_detail": False,
+    })])
+    need = await router.original(handler, "make 10 mcqs on pca -csc340", "", "", ["CSC340"], True,
+                                 _turn(direction(pca=1)))
+    assert need == CourseNeed(True, ["CSC340"], "principal component analysis",
+                              "They want a quiz on PCA for CSC340, using the course slides.", False,
+                              "quiz", 10, False)
+    call = mock_openai_client.chat.completions.create.call_args[1]
+    assert call["tool_choice"] == {"type": "function", "function": {"name": "check_course_need"}}
+    system = call["messages"][0]["content"]
+    assert "CSC340 (Artificial Intelligence, BIF651)" in system and "slide decks" in system
+    assert "COURSE MODE: on for CSC340" in system
+    asked = call["messages"][1]["content"]
+    assert 'CURRENT MESSAGE:\n"make 10 mcqs on pca -csc340"' in asked
+
+
+async def test_a_cached_plain_answer_does_not_pay_for_the_routing_call_again(handler, mock_openai_client, router):
+    router.decide = lambda query: CourseNeed(needs_course=False)
+    mock_openai_client.chat.completions.create.return_value = _message(content="plain answer")
+    await handler.generate_reply("what is up", "", "Kruskal", "1", allow_files=True)
+    await handler.generate_reply("what is up", "", "Kruskal", "1", allow_files=True)
+    assert router.calls == 1
+
+
+async def test_the_flag_forces_the_material_even_when_the_router_says_no(handler, mock_openai_client, material, router):
+    router.decide = lambda query: CourseNeed(needs_course=False)
+    mock_openai_client.chat.completions.create.return_value = _message(content="pca cuts dimensions")
+    await handler.generate_reply("/what did the lecture say about pca -csc340", "", "Kruskal", "1", allow_files=True)
+    mock_openai_client.embeddings.create.assert_awaited_once()
+
+
+async def test_the_router_can_ask_for_a_study_guide_without_a_keyword(handler, mock_openai_client, router):
+    router.decide = lambda query: CourseNeed(needs_course=False, study_kind="guide")
+    mock_openai_client.chat.completions.create.return_value = _message(
+        content="Topic one.\n\n=== GUIDE COMPLETE ===")
+    reply = await handler.generate_reply("help me revise deadlocks", "", "Kruskal", "1", allow_files=True)
+    system = mock_openai_client.chat.completions.create.call_args[1]["messages"][0]["content"]
+    assert "STUDY GUIDE" in system
+    assert "GUIDE COMPLETE" not in reply.text
+
+
+async def test_a_rewrite_is_answered_without_searching_the_course(handler, mock_openai_client, material, router):
+    router.decide = lambda query: CourseNeed(
+        needs_course=False,
+        context="They want the previous weather answer rewritten as an explanation of a big data exam topic. "
+                "This is a roleplay rewrite, not a question about exam logistics.",
+        rewrite=True,
+    )
+    mock_openai_client.chat.completions.create.return_value = _message(content="a topic, explained")
+    attached = ("=== MESSAGE THEY REPLIED TO (sent by ChronoChunk) ===\n"
+                "its 30 degrees and sunny\n=== END OF REPLIED-TO MESSAGE ===")
+    reply = await handler.generate_reply("/rewrite that as if ur explaining a big data topic -c",
+                                         "Kruskal: earlier chat", "Kruskal", "1",
+                                         attached_context=attached, allow_files=True)
+    assert reply.text == "a topic, explained"
+    mock_openai_client.embeddings.create.assert_not_awaited()
+    call = mock_openai_client.chat.completions.create.call_args[1]
+    system = call["messages"][0]["content"]
+    asked = call["messages"][-1]["content"]
+    assert "REWRITE REQUEST" in system
+    assert "previous weather answer" in asked and "not a question about exam logistics" in asked
+    assert "SAVED COURSE MATERIAL" not in asked
+    assert call["max_completion_tokens"] == Config.AI_DETAIL_MAX_TOKENS
+
+
+async def test_the_topic_the_routing_call_wrote_is_the_one_searched(handler, mock_openai_client, material, router):
+    router.decide = lambda query: CourseNeed(
+        needs_course=True, codes=["CSC340"],
+        search_query="principal component analysis", context="They want the PCA deck explained.")
+    mock_openai_client.chat.completions.create.return_value = _message(content="pca cuts the dimensions")
+    await handler.generate_reply("/explain that pca slide properly -csc340", "", "Kruskal", "1", allow_files=True)
+    assert mock_openai_client.embeddings.create.await_args[1]["input"] == ["principal component analysis"]
+    asked = mock_openai_client.chat.completions.create.call_args[1]["messages"][-1]["content"]
+    assert "They want the PCA deck explained." in asked

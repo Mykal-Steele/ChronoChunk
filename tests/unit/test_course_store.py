@@ -333,3 +333,21 @@ def test_the_course_list_and_counts_are_read_from_the_file_once(store, path):
     assert reader.courses() == first[0]
     reader._connection = real
     reader.close()
+
+
+# ── outline ───────────────────────────────────────────────────────────────────
+
+def test_outline_lists_each_course_and_its_sources_oldest_first(store):
+    from src.course_retrieval import outline_text
+    text = outline_text(store)
+    assert text.startswith("=== COURSE OUTLINE") and text.endswith("=== END OF THE COURSE OUTLINE ===")
+    assert "CSC340 Artificial Intelligence:" in text and "CSC345 Data Science:" in text
+    assert "- slides: 5th--Predict Classify Regression.pdf (Week 5, 2026-09-01)" in text
+    assert "- lecture recording: CSC340_20260804 (2026-08-04)" in text
+    assert text.index("CSC340 Artificial Intelligence:") < text.index("CSC345 Data Science:")
+
+
+def test_outline_can_be_narrowed_to_one_course(store):
+    from src.course_retrieval import outline_text
+    text = outline_text(store, ["CSC345"])
+    assert "CSC345 Data Science:" in text and "CSC340" not in text

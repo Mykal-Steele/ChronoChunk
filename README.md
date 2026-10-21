@@ -101,11 +101,11 @@ Everything else uses the default from `config/config.py` unless `.env` sets it:
 
 | Name | Default | What it does |
 | --- | --- | --- |
-| `AI_MONTHLY_BUDGET_USD` | 15 | The bot stops calling the model past this much in a billing month |
-| `AI_DAILY_BUDGET_USD` | 2 | The same, per day |
+| `AI_MONTHLY_BUDGET_USD` | 20 | The bot stops calling the model past this much in a billing month |
+| `AI_DAILY_BUDGET_USD` | 2.50 | The same, per day |
 | `AI_BUDGET_RESET_DAY` | 14 | Day of the month the billing month starts |
-| `AI_USER_DAILY_BUDGET_USD` | 0.20 | What one person may use in a day |
-| `AI_USER_WEEKLY_BUDGET_USD` | 0.60 | What one person may use over 7 days |
+| `AI_USER_DAILY_BUDGET_USD` | 0.50 | What one person may use in a day |
+| `AI_USER_WEEKLY_BUDGET_USD` | 1.50 | What one person may use over 7 days |
 | `AI_UNLIMITED_USER_IDS` | empty | Discord user ids the two limits above skip, separated by commas |
 | `PDF_PAGE_NOTES` | `auto` | `auto`, `on` or `off`: whether the bot describes PDF pages from pictures of them |
 | `PDF_NOTES_KEEP_DAYS` | 7 | Days a PDF's page descriptions are kept |
@@ -186,7 +186,7 @@ Limits (also shown by `/help`):
 
 - Images up to 5 MB each, files up to 15 MB each.
 - 3 images and 4 files per message.
-- PDFs are read up to 150 pages. Long text files are cut at 30,000 characters.
+- PDFs are read up to 400 pages. Long text files are cut at 120,000 characters.
 - The first question about a PDF takes longer, up to a minute for a long slide deck, while the bot looks at every page. Later questions about the same file are quick, for anyone, for 7 days after it was last used (`PDF_NOTES_KEEP_DAYS`). Set `PDF_PAGE_NOTES` to `off` in `.env` to skip this and read only the text and the first 10 pictures, or to `on` to describe every page of every PDF.
 - From recent posts: the last 5 messages, 30 minutes old at most, 2 images and 1 file (cut at 12,000 characters).
 - `/tldr`: 5 to 200 messages, plus the newest 6 images and 3 files in them (each cut at 6,000 characters), and 6 recaps per hour per user.
@@ -227,10 +227,10 @@ The bot can open links and search the web.
 
 The bot can answer questions about your university courses from the slides, lecture recordings and assignments of the semester.
 
-- Course material only comes into a reply when you ask for it with a flag at the very end of the message. A `-c` anywhere else is just text. `-course`, or `-c` for short, says the message is about a course, and you name the class in your own words: `/what did the lecture say about heuristic search in the ai class -c`. A course code names it directly: `/what is a heuristic -csc340`. Small typos in a course name are fine.
+- A message that needs the course material is recognised by a routing call before the answer. It reads the message, the one you replied to, the recent chat, and the list of courses and the kinds of material they hold, then decides. A clear class question works without a flag: `/what did the lecture say about heuristic search in the ai class`.
+- A flag at the very end is still the sure way to say a message is about a course. `-course`, or `-c`, names the class in your own words; a course code names it directly: `/what is a heuristic -csc340`. A `-c` anywhere else is just text. Small typos in a course name are fine.
 - With `-c` and no class named, every course is searched: `/whats due this week -c`.
-- A flag turns course mode on for you in that channel for an hour. After it you just keep chatting: `/and what about week 6`. The bot keeps what it looked up, answers from that when it can, and searches again only when it needs something new. A message that is not about class gets a normal answer.
-- Without a flag, and once the hour is over, the bot does not look anything up and does not talk about course material. Asked a class question then, it tells you to add the flag instead of guessing.
+- A flag turns course mode on for you in that channel for an hour. After it you just keep chatting: `/and what about week 6`. The bot keeps what it looked up, answers from that when it can, and searches again only when it needs something new. A message that is not about class gets a normal answer. Without a flag the bot still checks each message; a rewrite, roleplay or ordinary chat does not bring the material in, and when it cannot tell it asks for the flag.
 - `COURSE_SESSION_SECONDS` sets how long course mode stays on (3600).
 - The bot looks the material up before it answers, answers from what it found, and ends with the deck and page, the lecture and time, or the assignment, plus the link.
 - When the material has no answer, the bot says it could not find one. When it only found something near the topic, it says so and gives the closest thing. It does not answer course facts from memory.
@@ -242,7 +242,7 @@ The bot can answer questions about your university courses from the slides, lect
 - The material comes from the course sync in [`sync/`](sync/README.md). It runs on a PC, writes one file, `courses.db`, and uploads it to `data/state` on the server. The bot opens the new file on the next question, with no restart. With no file there, the bot has no course search.
 - The search runs in English, and material in Thai is translated when it is synced. For a question in another language the bot searches again with the topic in English.
 - A question is embedded with the `text-embedding-3-small` deployment, which is the model the sync embeds the material with. A file embedded with another model is not searched, and the log says so.
-- One reply looks the material up at most 3 times, the lookup for the message included. Each returns up to 6 passages, at most 2 from one deck or recording. The numbers are at the top of `src/tools/courses.py` and `src/course_store.py`.
+- One reply looks the material up at most 3 times in chat or a normal course reply, 6 times for a detailed explanation and 10 times for a study request, the lookup for the message included. A normal lookup returns up to 6 passages, at most 2 from one deck or recording; study requests search wider and also start from a course outline. The numbers are at the top of `src/tools/courses.py` and `src/course_store.py`.
 
 ## Privacy
 
@@ -254,19 +254,22 @@ The bot stops calling the model when it reaches its spending cap, and starts aga
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `AI_MONTHLY_BUDGET_USD` | 15 | Hard cap per billing cycle |
-| `AI_DAILY_BUDGET_USD` | 2 | Hard cap per day |
+| `AI_MONTHLY_BUDGET_USD` | 20 | Hard cap per billing cycle |
+| `AI_DAILY_BUDGET_USD` | 2.50 | Hard cap per day |
 | `AI_BUDGET_RESET_DAY` | 14 | Day of the month the cycle restarts |
 | `AZURE_OPENAI_DEPLOYMENT` | gpt-5-mini | The chat model. `deployment/docker-compose.yml` sets it to gpt-6-luna |
-| `AI_USER_DAILY_BUDGET_USD` | 0.20 | What one person may spend per day |
-| `AI_USER_WEEKLY_BUDGET_USD` | 0.60 | What one person may spend over any 7 days |
+| `AI_USER_DAILY_BUDGET_USD` | 0.50 | What one person may spend per day |
+| `AI_USER_WEEKLY_BUDGET_USD` | 1.50 | What one person may spend over any 7 days |
 | `AI_UNLIMITED_USER_IDS` | empty | Discord user ids, separated by commas, with no personal limit |
 | `AI_CHAT_REASONING_EFFORT` | low | Reasoning effort for chat replies. Must be `none` for gpt-6-luna and gpt-5.6-luna, which do not take tool calls with reasoning on |
+| `AI_STUDY_REASONING_EFFORT` | medium | Reasoning for study material, when the reply has no tools. If tools are offered on a model that needs `none`, the chat setting wins |
 | `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` | empty | A cheaper deployment, such as gpt-5-nano, for picking facts out of messages. Empty uses the main one |
+| `AI_COURSE_CHECK_DEPLOYMENT` | empty | The model for the routing call that decides whether a message needs course material. Empty uses the chat model |
+| `AI_COURSE_CHECK_REASONING_EFFORT` | chat setting | Reasoning effort for the routing call. Production's chat setting is `none`, which its tool-calling model requires |
 
-Set these in `.env`. Costs are estimated from token counts and each model's price, and kept in the database, one row per day and model. `/usage` shows the current totals. Each reply also writes one log line with the images and files it read, the number of model calls and the estimated cost.
+Set these in `.env`. Costs are estimated from token counts and each model's price, and kept in the database, one row per day and model. `/usage` shows the current totals. Each reply also writes one log line with the images and files it read, the number of model calls and the estimated cost. The $20 monthly cap is the hard backstop; the personal caps are sized so three heavy users for a few days a month stay well under it.
 
-Per user, the bot answers 50 messages per 30 minutes, makes 15 files per day (2 per reply), reads 10 new PDFs in full per day, makes 20 web lookups per day and searches the course material 40 times per day. `/usage` shows each person what they have left.
+Per user, the bot answers 50 messages per 30 minutes, makes 30 files per day (up to 5 per reply), reads 30 new PDFs in full per day, makes 20 web lookups per day and searches the course material 120 times per day. `/usage` shows each person what they have left.
 
 ## Music commands
 
@@ -333,11 +336,12 @@ ChronoChunk/
 │   │   ├── base.py            # The interface every tool implements
 │   │   ├── documents.py       # create_document and create_diagram
 │   │   ├── web.py             # open_url and web_search
-│   │   └── courses.py         # search_course, the lookup for a flagged message, and /courses
+│   │   └── courses.py         # search_course, the lookup for a course message, and /courses
 │   ├── document_builder.py    # Turns Markdown into PDF, DOCX and diagram images
 │   ├── web_tools.py           # Fetches pages and calls the search service
 │   ├── course_store.py        # The course material file and its search
 │   ├── course_scope.py        # The -c, -course and -csc340 flags: is a message about a course, and which
+│   ├── course_need.py         # The routing call that decides whether a reply needs the course material
 │   ├── course_retrieval.py    # One lookup: passages, the dated assignment list, and how good the match is
 │   ├── course_session.py      # Course mode: what was looked up for a person, kept for an hour
 │   ├── slash_commands.py      # Slash commands
