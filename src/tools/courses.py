@@ -14,20 +14,29 @@ from src.course_retrieval import (  # noqa: F401  (the limits are part of this m
     about_dates,
     about_latest,
     format_hits,
+    outline_text,
     render_sources,
     retrieve,
 )
 from src.course_scope import Scope, course_scope, search_words
 from src.course_store import DIMENSIONS, KINDS, CourseLibrary, CourseStore
 from src.exceptions import RateLimitError
+from src.study import study_request, study_search_words
 from src.tools.base import Tool, ToolResult, Turn
 from src.usage_guard import BudgetExceededError
 
 logger = logging.getLogger(__name__)
 
 # One reply may look the material up this many times, the lookup for the message included.
-# Each one adds about 3,000 tokens to the next call.
+# Each one adds about 3,000 tokens to the next call. A study reply may cover a whole exam,
+# so it gets more searches; a full explanation gets a few more than plain chat.
 MAX_COURSE_SEARCHES_PER_REPLY = 3
+STUDY_COURSE_SEARCHES_PER_REPLY = 10
+DETAIL_COURSE_SEARCHES_PER_REPLY = 6
+# A study reply may carry the whole course outline and several topics. This is a ceiling,
+# not a target; it keeps one reply from sending a novel on every tool round.
+STUDY_MATERIAL_CHARS = 160000
+DETAIL_MATERIAL_CHARS = 90000
 
 # The kinds whose newest date says how up to date a course is. An assignment's date is the day it is due.
 DATED_KINDS = tuple(kind for kind in KINDS if kind != "assignment")
@@ -118,6 +127,32 @@ def _counted(kind: str, count: int) -> str:
     return f"{count} {many if count != 1 else one}"
 
 
+def course_codes() -> List[str]:
+    """The codes of every course in the file, for the routing call's allowed values."""
+    store = course_store()
+    return [course["code"] for course in store.courses()] if store else []
+
+
+def course_catalog() -> str:
+    """
+    What the course material holds, for the call that decides whether a message needs it.
+    Courses, the kinds of material in each, and the newest date, but no passages.
+    """
+    store = course_store()
+    if not store:
+        return ""
+    counts, newest = store.counts(), store.newest()
+    lines = [f"last synced {_synced_on(store)}.",
+             "each course holds slide decks, lecture recordings, class posts and assignments from its Teams team."]
+    for course in store.courses():
+        held = counts.get(course["code"], {})
+        kinds = ", ".join(_counted(kind, held[kind]) for kind in KINDS if held.get(kind)) or "nothing yet"
+        names = ", ".join([course["name"], *course["aliases"]])
+        latest = _newest(newest.get(course["code"], {}))
+        lines.append(f"- {course['code']} ({names}): {kinds}" + (f"; newest {latest}" if latest else ""))
+    return "\n".join(lines)
+
+
 def courses_summary() -> str:
     """The indexed courses, how much each holds and when they were synced, for /courses."""
     store = course_store()
@@ -170,16 +205,35 @@ def saved_material(blocks: List[str]) -> str:
     return ("SAVED COURSE MATERIAL (looked up earlier in this conversation, oldest first):\n\n" + "\n\n".join(blocks))
 
 
+def _search_limit(turn: Turn) -> int:
+    """How many course searches this reply may make."""
+    if turn.study:
+        return STUDY_COURSE_SEARCHES_PER_REPLY
+    if turn.detail:
+        return DETAIL_COURSE_SEARCHES_PER_REPLY
+    return MAX_COURSE_SEARCHES_PER_REPLY
+
+
+def _material_limit(turn: Turn) -> int:
+    """How many characters of course material this reply may gather."""
+    if turn.study:
+        return STUDY_MATERIAL_CHARS
+    if turn.detail:
+        return DETAIL_MATERIAL_CHARS
+    return 60000
+
+
 def _limit_note(error: RateLimitError) -> str:
     hours = max(1, round(error.retry_after / 3600))
     return ("not looked up: this person has used all their course lookups for today. Answer without the course "
             f"material, say that you could not check it, and tell them they get more lookups in about {hours} hours")
 
 
-async def lookup_for(turn: Turn, scope: Scope) -> str:
+async def lookup_for(turn: Turn, scope: Scope, query: str = "") -> str:
     """
-    The course material for a flagged message, looked up before the model is asked, so
-    the lookup does not depend on the model choosing to make it.
+    The course material for a message, looked up before the model is asked, so the
+    lookup does not depend on the model choosing to make it. query is the English topic
+    the routing call wrote; without it the message's own words are used.
     """
     store = course_store()
     if not store or not turn.embed:
@@ -190,22 +244,37 @@ async def lookup_for(turn: Turn, scope: Scope) -> str:
         except RateLimitError as e:
             return _block(_limit_note(e))
     turn.course_searches += 1
-    words = search_words(scope.text, store.courses(), scope.codes)
+    # A study request says "make 30 mcqs on deadlocks": the words to search are "deadlocks",
+    # not the instruction. A full explanation keeps its own wording, including chapter numbers.
+    if query.strip():
+        words = query.strip()
+    elif turn.study:
+        words = study_search_words(scope.text, study_request(scope.text)) or search_words(
+            scope.text, store.courses(), scope.codes)
+    else:
+        words = search_words(scope.text, store.courses(), scope.codes)
     try:
         found = await retrieve(store, turn.embed, words, scope.codes, _now(), dated=about_dates(scope.text),
                                asked=scope.text, first_number=_next_number(turn), seen=turn.course_seen,
-                               latest=about_latest(scope.text))
+                               latest=about_latest(scope.text), many=bool(turn.study or turn.detail))
     except BudgetExceededError:
         raise
     except Exception as e:
         logger.error(f"The course lookup crashed for {words[:200]!r}: {e!r}")
         return _block("not looked up: the course search failed because of an internal error. tell them it could not be searched")
     turn.course_sources.update(found.sources)
-    if found.hits or found.rows:
-        turn.findings.append(found.text)
+    text = found.text
+    # A study reply is told what the course holds, so it can cover topics its own words did
+    # not happen to match. It is a list of sources, not passages, and gets no source numbers.
+    if (turn.study or turn.detail) and not any(finding.startswith("=== COURSE OUTLINE") for finding in turn.findings):
+        outline = outline_text(store, scope.codes or [])
+        if outline:
+            text = outline + "\n\n" + text
+    if found.hits or found.rows or text.startswith("=== COURSE OUTLINE"):
+        turn.findings.append(text)
     logger.info(f"Course lookup for {turn.username}: {words[:200]!r} in {scope.codes or 'every course'} gave "
-                f"{len(found.hits)} passages ({found.label}), {found.rows} assignments, {len(found.text)} chars")
-    return found.text
+                f"{len(found.hits)} passages ({found.label}), {found.rows} assignments, {len(text)} chars")
+    return text
 
 
 def _next_number(turn: Turn) -> int:
@@ -293,8 +362,10 @@ class SearchCourse(Tool):
         return None
 
     async def run(self, args: dict, turn: Turn) -> ToolResult:
-        if turn.course_searches >= MAX_COURSE_SEARCHES_PER_REPLY:
+        if turn.course_searches >= _search_limit(turn):
             return ToolResult("error: this reply has used all its course searches. answer from what you already have")
+        if sum(len(finding) for finding in turn.findings) >= _material_limit(turn):
+            return ToolResult("error: this reply has gathered as much course material as it can hold. answer from what you have")
         turn.course_searches += 1
         query = str(args.get("query") or "").strip()
         if not query:
@@ -323,7 +394,7 @@ class SearchCourse(Tool):
         try:
             found = await retrieve(store, turn.embed, query, codes, _now(), kind=kind, since=since or None,
                                    dated=about_dates(query), due=due, first_number=_next_number(turn),
-                                   seen=turn.course_seen)
+                                   seen=turn.course_seen, many=bool(turn.study or turn.detail))
         except BudgetExceededError:
             raise
         except Exception as e:

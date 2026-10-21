@@ -114,7 +114,7 @@ def setup_summary(chat_model: str) -> str:
         ("joins in", f"may answer uncalled messages for {Config.JOIN_IN_SECONDS}s after a call"
                      if Config.JOIN_IN_SECONDS > 0 else "off"),
         ("", ""),
-        ("bot budget", f"${Config.AI_MONTHLY_BUDGET_USD:g} a month, ${Config.AI_DAILY_BUDGET_USD:g} a day, "
+        ("bot budget", f"${Config.AI_MONTHLY_BUDGET_USD:g} a month, ${Config.AI_DAILY_BUDGET_USD:.2f} a day, "
                        f"new month on day {Config.AI_BUDGET_RESET_DAY}"),
         ("per person", f"${Config.AI_USER_DAILY_BUDGET_USD:.2f} a day, ${Config.AI_USER_WEEKLY_BUDGET_USD:.2f} over 7 days"),
         ("limits", ", ".join(f"{name} {count} {_per(window)}" for name, (count, window) in limits.items()

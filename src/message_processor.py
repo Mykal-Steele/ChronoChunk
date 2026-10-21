@@ -455,10 +455,19 @@ is_correction: bool) -> None:
     def _split_text(text: str, limit: int = 1900) -> List[str]:
         """Split text into chunks Discord accepts, breaking at a line or word boundary."""
         chunks = []
+        links = re.compile(r"\[[^\]\n]*\]\(<[^>\n]*>\)|\[[^\]\n]*\]\([^)\s]*\)|<https?://[^>\s]+>|https?://[^\s<>()]+")
         while len(text) > limit:
             split_at = text.rfind('\n', 0, limit)
             if split_at <= 0:
                 split_at = text.rfind(' ', 0, limit)
+            if split_at <= 0:
+                split_at = limit
+            # A cut through a masked link posts both halves as raw text. Move the cut
+            # before the link instead, or after it when the link starts the message.
+            for link in links.finditer(text):
+                if link.start() < split_at < link.end():
+                    split_at = link.start() if link.start() > 0 else link.end()
+                    break
             if split_at <= 0:
                 split_at = limit
             chunk, text = text[:split_at], text[split_at:].lstrip()

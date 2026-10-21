@@ -92,6 +92,15 @@ async def test_table_right_after_a_text_line_still_renders_as_a_table():
     assert docx_xml(built.data).count("<w:tbl>") == 1
 
 
+def test_plain_math_turns_commands_into_symbols():
+    from src.document_builder import plain_math
+    assert plain_math(r"$x \times y$") == "x × y"
+    assert plain_math(r"\frac{a}{b}") == "(a)/(b)"
+    assert plain_math(r"\sqrt{x}") == "√(x)"
+    assert plain_math(r"A \cap B") == "A ∩ B"
+    assert plain_math(r"x_1^2") == "x_1^2"
+
+
 def test_clean_turns_dashes_between_words_into_commas():
     assert clean_document_text("Costs fell — a lot.") == "Costs fell, a lot."
 

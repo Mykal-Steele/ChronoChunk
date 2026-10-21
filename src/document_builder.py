@@ -20,7 +20,7 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 SUPPORTED_FORMATS = ("pdf", "docx", "md")
-MAX_DOCUMENT_CHARS = 80000
+MAX_DOCUMENT_CHARS = 200000
 MAX_DIAGRAMS_PER_DOCUMENT = 6
 MAX_FILE_BYTES = 9 * 1024 * 1024  # Discord rejects uploads over 10 MB
 PANDOC_TIMEOUT_SECONDS = 60
@@ -187,6 +187,42 @@ def strip_filler(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", _FILLER_SENTENCES.sub("", text))
 
 
+# LaTeX that models still write into prose, and the plain symbol it stands for
+_MATH_SYMBOLS = {
+    r"\times": "×", r"\cdot": "·", r"\div": "÷", r"\pm": "±", r"\mp": "∓",
+    r"\le": "≤", r"\leq": "≤", r"\ge": "≥", r"\geq": "≥", r"\neq": "≠", r"\ne": "≠",
+    r"\approx": "≈", r"\infty": "∞", r"\sum": "Σ", r"\prod": "Π", r"\int": "∫",
+    r"\partial": "∂", r"\nabla": "∇", r"\in": "∈", r"\notin": "∉", r"\subset": "⊂",
+    r"\cup": "∪", r"\cap": "∩", r"\forall": "∀", r"\exists": "∃", r"\to": "→",
+    r"\rightarrow": "→", r"\leftarrow": "←", r"\Rightarrow": "⇒", r"\iff": "⇔",
+    r"\alpha": "α", r"\beta": "β", r"\gamma": "γ", r"\delta": "δ", r"\epsilon": "ε",
+    r"\theta": "θ", r"\lambda": "λ", r"\mu": "μ", r"\pi": "π", r"\rho": "ρ",
+    r"\sigma": "Σ", r"\tau": "τ", r"\phi": "φ", r"\omega": "ω", r"\Delta": "Δ",
+    r"\Omega": "Ω", r"\Sigma": "Σ", r"\Phi": "Φ", r"\Lambda": "Λ",
+}
+
+
+def plain_math(text: str) -> str:
+    """
+    Turn LaTeX that a model writes into readable plain text: $...$ loses its dollars,
+    \frac{a}{b} becomes (a)/(b), and common commands become their symbols. Code is
+    handled by the caller and never reaches this.
+    """
+    text = re.sub(r"\$\$(.+?)\$\$", r"\1", text, flags=re.DOTALL)
+    text = re.sub(r"(?<!\\)\$(.+?)(?<!\\)\$", r"\1", text, flags=re.DOTALL)
+    # Nested braces in a fraction are rare; the simple form covers what models write
+    text = re.sub(r"\\(?:d|t)?frac\{([^{}]*)\}\{([^{}]*)\}", r"(\1)/(\2)", text)
+    text = re.sub(r"\\sqrt\{([^{}]*)\}", r"√(\1)", text)
+    text = re.sub(r"\\(?:text|mathrm|mathbf|mathit)\{([^{}]*)\}", r"\1", text)
+    for command, symbol in _MATH_SYMBOLS.items():
+        text = re.sub(re.escape(command) + r"(?![A-Za-z])", symbol, text)
+    text = text.replace(r"\left", "").replace(r"\right", "")
+    # A subscript or superscript keeps its marker, without the braces
+    text = re.sub(r"([_^])\{([^{}]*)\}", r"\1\2", text)
+    # Any command left loses its backslash rather than showing as code
+    return re.sub(r"\\([A-Za-z]+)", r"\1", text)
+
+
 def clean_document_text(markdown: str) -> str:
     """
     Remove the marks that make a document read as machine-written: stock filler
@@ -195,6 +231,7 @@ def clean_document_text(markdown: str) -> str:
     def clean(text: str) -> str:
         for curly, straight in _CURLY_QUOTES.items():
             text = text.replace(curly, straight)
+        text = plain_math(text)
         text = strip_filler(text)
         text = re.sub(rf"(?<=\d)\s*{_DASHES}\s*(?=\d)", "-", text)   # number ranges keep a hyphen
         # a dash that opens a line (or a list item) is just removed

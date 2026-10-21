@@ -35,9 +35,9 @@ def test_the_summary_names_the_version_the_models_and_the_budget(monkeypatch):
     assert f"version     {__version__}" in text
     assert "chat model  gpt-6-luna, reasoning none" in text
     assert "background  gpt-5-nano" in text
-    assert "bot budget  $15 a month, $2 a day, new month on day 14" in text
-    assert "per person  $0.20 a day, $0.60 over 7 days" in text
-    assert "chat 50 per 30 min" in text and "file 15 a day" in text
+    assert "bot budget  $20 a month, $2.50 a day, new month on day 14" in text
+    assert "per person  $0.50 a day, $1.50 over 7 days" in text
+    assert "chat 50 per 30 min" in text and "file 30 a day" in text
     assert text.endswith("#where-it-runs>")
     assert "`/stats` has the full count" in text
 
@@ -118,7 +118,7 @@ def test_the_summary_adds_up_everything_used_so_far(database):
     assert "used so far since Jan 20, 2025" in text
     assert "ai calls    1,201" in text
     assert "tokens      4.0M in, 60.5K out" in text
-    assert "ai cost     $1.50 in all, $0.00 of $15 this month" in text
+    assert "ai cost     $1.50 in all, $0.00 of $20 this month" in text
     assert "people met  2" in text
 
 

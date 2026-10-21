@@ -21,15 +21,15 @@ logger = logging.getLogger(__name__)
 # Limits keep one message from blowing up memory, the prompt size or the bill
 MAX_FILE_BYTES = 15 * 1024 * 1024
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
-MAX_FILE_CHARS = 30000
-MAX_PDF_PAGES = 150
+MAX_FILE_CHARS = 120000
+MAX_PDF_PAGES = 400
 MAX_IMAGES = 3
 # Pictures taken out of PDFs have their own limit per request. They are shrunk before
 # they are sent, so ten of them are still a small upload.
 MAX_PDF_IMAGES = 10
 # A PDF that comes with page notes (see src/pdf_notes.py) gets more room for its own text,
 # because the notes replace its pictures
-NOTED_PDF_CHARS = 60000
+NOTED_PDF_CHARS = 180000
 # One request waits this long in total for page descriptions, however many PDFs it has.
 # A PDF that is not ready by then is read the old way, and its descriptions are there next time.
 NOTES_WAIT_SECONDS = 90
@@ -225,13 +225,21 @@ def _read_pdf(data: bytes, image_budget: int = 0, max_chars: Optional[int] = Non
     total_pages = len(reader.pages)
     parts = []
     chars = 0
+    last_page = 0
     for number in range(min(total_pages, MAX_PDF_PAGES)):
         page_text = (reader.pages[number].extract_text() or "").strip()
         if page_text:
             parts.append(f"[page {number + 1}]\n{page_text}")
             chars += len(page_text)
+            last_page = number + 1
         if chars >= max_chars:
             break
+    if total_pages > MAX_PDF_PAGES:
+        parts.append(f"(only the first {MAX_PDF_PAGES} of {total_pages} pages are read; "
+                     "ask for the rest in a smaller file if it matters)")
+    elif last_page < total_pages and chars >= max_chars:
+        parts.append(f"(the text stops at page {last_page} of {total_pages} because the file is long; "
+                     "the rest is cut off)")
 
     pictures = _pdf_pictures(reader)
     images = []

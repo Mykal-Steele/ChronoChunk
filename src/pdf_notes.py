@@ -23,18 +23,18 @@ from src.usage_guard import BudgetExceededError
 logger = logging.getLogger(__name__)
 
 # A PDF with more pages than this has only its first pages described
-MAX_NOTE_PAGES = 150
+MAX_NOTE_PAGES = 400
 # Pages sent to the model in one request, and how many requests run at once
 PAGES_PER_REQUEST = 8
 REQUESTS_AT_ONCE = 5
-# Long side of a rendered page. Slides are 16:9, so this is 768 by 432, enough to read a table cell.
-PAGE_PICTURE_SIDE = 768
+# Long side of a rendered page. Slides are 16:9, so this is 1024 by 576, enough to read small table text.
+PAGE_PICTURE_SIDE = 1024
 # Room for the descriptions of one request's pages
-NOTES_MAX_TOKENS = 4000
+NOTES_MAX_TOKENS = 6000
 # The whole first pass may take this long. What is done by then is used.
 NOTES_TIMEOUT_SECONDS = 120
 # Descriptions are cut here before they go into a prompt
-NOTES_MAX_CHARS = 90000
+NOTES_MAX_CHARS = 180000
 # In "auto", a page with less text than this is described even when no picture is found on it
 SPARSE_PAGE_CHARS = 50
 # The newest descriptions are kept in memory: this many files, for this long

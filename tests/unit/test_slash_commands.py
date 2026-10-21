@@ -181,11 +181,11 @@ async def test_help_states_the_real_limits(commands):
     limits = next(field.value for field in embed.fields if "limits" in field.name)
     assert f"up to {message_context.MAX_IMAGES} images and {message_context.MAX_FILES} files per message" in limits
     assert "tables, charts and diagrams count" in limits
-    assert f"the first {message_context.MAX_PDF_PAGES} pages" in limits and "30,000 characters" in limits
+    assert f"the first {message_context.MAX_PDF_PAGES} pages" in limits and "120,000 characters" in limits
     assert f"the newest {message_context.TLDR_MAX_IMAGES} images and {message_context.TLDR_MAX_FILES} files" in limits
     assert f"{Config.RATE_LIMITS['tldr'][0]} recaps an hour" in limits
     assert f"chat: {Config.RATE_LIMITS['chat'][0]} messages every 30 min" in limits
-    assert f"files i make: {Config.RATE_LIMITS['file'][0]} a day, 2 per reply" in limits
+    assert f"files i make: {Config.RATE_LIMITS['file'][0]} a day, 5 per reply" in limits
 
 
 async def test_help_has_no_swearing_and_fits_discords_limits(commands):

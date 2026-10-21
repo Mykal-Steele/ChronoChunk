@@ -115,5 +115,5 @@ def test_remaining_reports_what_is_left_without_using_any(limiter, clock):
 
 def test_real_config_has_the_pdf_and_web_limits():
     from config.config import Config
-    assert Config.RATE_LIMITS["pdf"] == (10, 86400) and Config.RATE_LIMITS["web"] == (20, 86400)
+    assert Config.RATE_LIMITS["pdf"] == (30, 86400) and Config.RATE_LIMITS["web"] == (20, 86400)
 

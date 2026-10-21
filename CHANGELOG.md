@@ -10,6 +10,33 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.20.0 (2026-10-21)
+
+### Added
+
+- A routing call before a course answer reads the current message, the message it replies to, the recent chat, and a catalog of the courses and the kinds of material they hold. It decides whether the answer needs the course material, picks the courses and the English search topic, and records what the user actually wants. A clear class question is looked up without a flag. A rewrite, roleplay or ordinary chat stays out of the material.
+- Study requests get their own shape for that reply only: a quiz writes the number of questions asked for (up to 100), four options each and an answer key; short-answer practice has no options; a study guide covers the course's topics with worked examples. The personality prompt is not changed, so the bot sounds the same in every reply.
+- A study reply that stops short is continued for the missing questions, then for the answer key, instead of being sent incomplete. A key written before the missing questions is moved to the end.
+- A study lookup starts from a course outline of the decks, lectures and assignments, so the questions can cover the exam and not only the words in the request. Study and detailed requests search wider: 18 passages, up to 6 from one source.
+- LaTeX that a model writes into a document or chat reply is turned into plain symbols before it is shown: `\times` becomes ×, `\frac{a}{b}` becomes (a)/(b), and `$...$` loses its dollars.
+- `PLAN.md` keeps the work that needs its own paid or hand-checked run, starting with the study quality gate.
+
+### Changed
+
+- Course material no longer depends on a flag alone. The routing call can bring it in for a clear class question, and an explicit `-c` still opens course mode for an hour. A flag still names the class, and a message that is not about class gets a normal answer.
+- The monthly model cap is $20, with $2.50 a day. One person may spend $0.50 a day and $1.50 over any 7 days, which keeps three heavy users for a few days a month under the monthly cap.
+- Study and detailed replies get a higher token ceiling, up to 8 tool rounds, and are not served from the short chat cache. Normal chat keeps its 3 rounds and 4,000-token reply.
+- Files made per day rise from 15 to 30, up to 5 in one reply. PDFs read in full rise from 10 to 30 a day, and course asks from 40 to 120 a day.
+- PDFs are read up to 400 pages, text files up to 120,000 characters, and a document up to 200,000 characters. A cut PDF or text file says it was cut.
+- Small documents still default to about a page. A study guide, a chapter-by-chapter guide or a detailed report is allowed the length the brief needs.
+- `AI_STUDY_REASONING_EFFORT` is `medium` for study replies without tools. When tools are offered on a model that needs reasoning `none`, the chat setting still wins, so the live model keeps taking tool calls.
+
+### Fixed
+
+- A `rewrite that ...` request in course mode was answered as if it were a question about exam logistics. The routing call now passes what they want to the answer model, and a rewrite of the replied-to message is done without a course lookup.
+- A source line long enough to split across messages could be cut through a link, which posted both halves as raw Markdown. Source lines now wrap between links, and the sender never splits a masked link or a bare URL.
+- A LaTeX command such as `\cap` crashed document cleanup and every reply that used it. Commands are now matched as literal text before their symbol is substituted.
+
 ## 3.19.1 (2026-10-18)
 
 ### Fixed

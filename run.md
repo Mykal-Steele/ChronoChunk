@@ -15,6 +15,7 @@ Rules:
 | Picture probe, then 4 picture descriptions | Assignment instructions that are only a picture | about $0.01 |
 | Answer check with a judge, about 60 questions, per run | The gate for every change to retrieval or the prompt | about $0.06 a run, about 6 runs |
 | Full sync for the server, after the remaining sync work | The course file the live bot will read | about $0.01 |
+| Study-mode live check: 100 questions and a full guide on `gpt-6-luna-checks` | The unit tests do not show whether the prompt and continuation loop make complete, usable material | about $0.10 |
 
 ## Done
 

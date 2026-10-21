@@ -37,6 +37,10 @@ RESULTS = 6
 # How many of them may come from one deck or recording. A three-hour lecture can hold
 # two places worth reading, and more than that would crowd out the other sources.
 PER_SOURCE = 2
+# A study request needs the whole topic, not the six closest passages. These are wider,
+# still capped per source so one long lecture cannot crowd out the rest of the course.
+MANY_RESULTS = 18
+MANY_PER_SOURCE = 6
 # How many candidates the vectors and the keywords each put forward
 CANDIDATES = 50
 # Weighs a rank when two rankings are merged. 60 is the usual value for reciprocal rank fusion.
@@ -311,6 +315,23 @@ class CourseStore:
                 + " ORDER BY sources.date, sources.title", () if course is None else (course,)).fetchall()
         return [{**dict(row), "meta": json.loads(row["meta"] or "{}")} for row in rows]
 
+    def outline(self, codes: Sequence[str] = (), per_course: int = 60) -> List[dict]:
+        """
+        The sources of these courses, oldest first, for a study reply that has to cover
+        the whole exam. At most per_course from each course, so one course cannot fill the
+        prompt. An empty codes means every course.
+        """
+        marks = ",".join("?" * len(codes))
+        where = f"WHERE course IN ({marks})" if codes else ""
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT course, kind, title, section, date FROM sources "
+                f"{where} ORDER BY course, date, kind, section, title", tuple(codes)).fetchall()
+        kept: Dict[str, List[dict]] = {}
+        for row in rows:
+            kept.setdefault(row["course"], []).append(dict(row))
+        return [source for code in sorted(kept) for source in kept[code][:per_course]]
+
     def chunk_counts(self) -> Dict[str, int]:
         """How many chunks every course has."""
         with self._lock:
@@ -320,9 +341,9 @@ class CourseStore:
         return {row["course"]: row["chunks"] for row in rows}
 
     def search(self, query: str, vector: Sequence[float], course: Optional[str] = None, kind: Optional[str] = None,
-               since: Optional[str] = None, limit: int = RESULTS) -> List[Hit]:
+               since: Optional[str] = None, limit: int = RESULTS, per_source: int = PER_SOURCE) -> List[Hit]:
         """
-        The chunks that best answer query, best first, at most PER_SOURCE from one source. vector is
+        The chunks that best answer query, best first, at most per_source from one source. vector is
         the embedding of query. course and kind narrow the search before ranking, and
         since (YYYY-MM-DD) drops older sources. An empty list means the material has no
         answer, and the bot should say so.
@@ -383,7 +404,7 @@ class CourseStore:
                     continue
                 taken = chosen.get(row["source_id"], [])
                 # A chunk next to a chosen one is already in that result as its neighbour
-                if len(taken) >= PER_SOURCE or any(abs(row["position"] - position) <= 1 for position in taken):
+                if len(taken) >= per_source or any(abs(row["position"] - position) <= 1 for position in taken):
                     continue
                 if similarity.get(chunk_id, 0.0) < MIN_SIMILARITY:
                     continue

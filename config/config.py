@@ -34,19 +34,40 @@ class Config:
     STATE_DIR = os.path.join(BASE_DIR, "state")  # small files that must survive a restart
 
     # AI spending caps. Once a cap is hit the bot stops calling the model until it resets.
-    AI_MONTHLY_BUDGET_USD = float(os.getenv("AI_MONTHLY_BUDGET_USD", 15))
-    AI_DAILY_BUDGET_USD = float(os.getenv("AI_DAILY_BUDGET_USD", 2))
+    # $20 is the whole Azure budget for a month. The daily cap stops one bad day from
+    # eating it, and the per-person caps below stop one student from spending it all.
+    AI_MONTHLY_BUDGET_USD = float(os.getenv("AI_MONTHLY_BUDGET_USD", 20))
+    AI_DAILY_BUDGET_USD = float(os.getenv("AI_DAILY_BUDGET_USD", 2.50))
     AI_BUDGET_RESET_DAY = int(os.getenv("AI_BUDGET_RESET_DAY", 14))  # the Azure credit renews on the 14th
 
-    # What one person may spend, so nobody can use up the bot for everyone. A heavy study day
-    # on gpt-6-luna (150 messages, 6 slide decks, 10 documents) is about $0.13. The 7 days roll.
-    AI_USER_DAILY_BUDGET_USD = float(os.getenv("AI_USER_DAILY_BUDGET_USD", 0.20))
-    AI_USER_WEEKLY_BUDGET_USD = float(os.getenv("AI_USER_WEEKLY_BUDGET_USD", 0.60))
+    # What one person may spend, so nobody can use up the bot for everyone. One 30-question
+    # study reply is a few cents, and a heavy study day is under a dollar. Three students
+    # using it hard for a few days stay well under $10; the $20 ceiling is the backstop.
+    # The 7 days roll. A weekly cap of $1.50 each means three people cannot spend the month out.
+    AI_USER_DAILY_BUDGET_USD = float(os.getenv("AI_USER_DAILY_BUDGET_USD", 0.50))
+    AI_USER_WEEKLY_BUDGET_USD = float(os.getenv("AI_USER_WEEKLY_BUDGET_USD", 1.50))
     # Discord user ids, separated by commas, that the two limits above do not apply to
     AI_UNLIMITED_USER_IDS = {part.strip() for part in os.getenv("AI_UNLIMITED_USER_IDS", "").split(",") if part.strip()}
 
     # Reasoning effort for chat replies. "low" answers about twice as fast and costs less than the default.
     AI_CHAT_REASONING_EFFORT = os.getenv("AI_CHAT_REASONING_EFFORT", "low")
+    # Study replies are the one place the model gets more room and a harder think. The
+    # raised ceiling is a maximum, not a target: Azure bills the tokens actually written.
+    AI_STUDY_REASONING_EFFORT = os.getenv("AI_STUDY_REASONING_EFFORT", "medium")
+    AI_CHAT_MAX_TOKENS = int(os.getenv("AI_CHAT_MAX_TOKENS", 4000))
+    AI_CHAT_TOOL_MAX_TOKENS = int(os.getenv("AI_CHAT_TOOL_MAX_TOKENS", 8000))
+    AI_STUDY_MAX_TOKENS = int(os.getenv("AI_STUDY_MAX_TOKENS", 32000))
+    # The call before a reply decides whether the course material is needed. It gets a short
+    # answer, and its own deployment only when one is set; empty keeps it on the chat model.
+    AI_COURSE_CHECK_MAX_TOKENS = int(os.getenv("AI_COURSE_CHECK_MAX_TOKENS", 700))
+    AI_COURSE_CHECK_DEPLOYMENT = os.getenv("AI_COURSE_CHECK_DEPLOYMENT", "").strip()
+    AI_DETAIL_MAX_TOKENS = int(os.getenv("AI_DETAIL_MAX_TOKENS", 12000))
+    # Tool rounds per reply. Study requests may need to search several topics; normal chat does not.
+    AI_CHAT_MAX_TOOL_ROUNDS = int(os.getenv("AI_CHAT_MAX_TOOL_ROUNDS", 3))
+    AI_COURSE_MAX_TOOL_ROUNDS = int(os.getenv("AI_COURSE_MAX_TOOL_ROUNDS", 6))
+    AI_STUDY_MAX_TOOL_ROUNDS = int(os.getenv("AI_STUDY_MAX_TOOL_ROUNDS", 8))
+    # The document writer gets a harder think, but only once per file.
+    AI_WRITER_REASONING_EFFORT = os.getenv("AI_WRITER_REASONING_EFFORT", "medium")
 
     # gpt-5-mini prices in USD per 1M tokens, used to estimate what each call costs
     AI_PRICE_INPUT_PER_M = float(os.getenv("AI_PRICE_INPUT_PER_M", 0.25))
@@ -107,11 +128,11 @@ class Config:
         "forget": (20, 3600),  # 20 forget requests per hour
         "default": (30, 1800), # 30 requests per 30 minutes (fallback)
         "mydata": (10, 1800),  # 10 data requests per 30 minutes
-        "file": (15, 86400),   # 15 generated documents or diagrams per day
+        "file": (30, 86400),   # 30 generated documents or diagrams per day
         "tldr": (6, 3600),     # 6 channel summaries per hour
-        "pdf": (10, 86400),    # 10 PDFs described page by page per day. One already described is free.
+        "pdf": (30, 86400),    # 30 PDFs described page by page per day. One already described is free.
         "web": (20, 86400),    # 20 web searches or opened links per day
-        "course": (40, 86400), # 40 searches of the course material per day
+        "course": (120, 86400),# 120 searches of the course material per day
     }
     
     # Dynamic settings like directories are initialized in a method rather than duplicated

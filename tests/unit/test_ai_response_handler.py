@@ -645,7 +645,7 @@ async def test_model_cannot_loop_on_tools_forever(handler, mock_openai_client, b
     mock_openai_client.chat.completions.create.side_effect = looping + [_message(content="ok thats enough")]
     reply = await handler.generate_reply("/draw", "", "Kruskal", "1", allow_files=True)
     assert reply.text == "ok thats enough"
-    assert len(reply.files) == MAX_FILES_PER_REPLY
+    assert len(reply.files) == min(MAX_TOOL_ROUNDS, MAX_FILES_PER_REPLY)
     assert "tools" not in mock_openai_client.chat.completions.create.call_args[1]
 
 
@@ -1080,3 +1080,86 @@ def test_a_line_that_is_only_a_stray_token_is_taken_out(handler):
 def test_a_stray_token_line_inside_code_is_kept(handler):
     reply = "the pattern is\n```\n^(finish)\n```"
     assert handler._format_ai_response(reply) == reply
+
+
+# ── study requests ────────────────────────────────────────────────────────────
+
+def _quiz(number):
+    """One numbered multiple-choice question, different enough that no repeat check drops it."""
+    return f"{number}. What does topic {number} do in case {number}?\nA. answer {number}a\nB. answer {number}b\nC. answer {number}c\nD. answer {number}d"
+
+
+def _quiz_reply(first, last):
+    questions = "\n\n".join(_quiz(number) for number in range(first, last + 1))
+    key = "\n".join(f"{number}. A. because case {number} says so." for number in range(first, last + 1))
+    return questions + "\n\n## Answer key\n" + key
+
+
+async def test_a_study_request_gets_the_study_prompt_and_room(handler, mock_openai_client):
+    from config.config import Config
+    mock_openai_client.chat.completions.create.return_value = _message(content=_quiz_reply(1, 30))
+    await handler.generate_reply("make 30 multiple choice for my ai exam", "", "Kruskal", "1")
+    call = mock_openai_client.chat.completions.create.call_args[1]
+    assert call["max_completion_tokens"] == Config.AI_STUDY_MAX_TOKENS
+    assert call["reasoning_effort"] == Config.AI_STUDY_REASONING_EFFORT
+    system = call["messages"][0]["content"]
+    assert "STUDY MATERIAL" in system and "exactly 30 questions" in system
+    assert "ChronoChunk" in system  # the personality is still there
+
+
+async def test_normal_chat_does_not_get_the_study_rules(handler, mock_openai_client):
+    from config.config import Config
+    await handler.generate_reply("yo", "", "Kruskal", "1")
+    call = mock_openai_client.chat.completions.create.call_args[1]
+    assert call["max_completion_tokens"] == Config.AI_CHAT_MAX_TOKENS
+    assert "STUDY MATERIAL" not in call["messages"][0]["content"]
+
+
+async def test_a_short_answer_request_asks_for_model_answers_not_options(handler, mock_openai_client):
+    mock_openai_client.chat.completions.create.return_value = _message(
+        content="1. Explain deadlock.\n\n## Answer key\n1. A deadlock is ...")
+    await handler.generate_reply("make 10 short answer questions on deadlocks", "", "Kruskal", "1")
+    system = mock_openai_client.chat.completions.create.call_args[1]["messages"][0]["content"]
+    assert "short-answer theory practice" in system and "No multiple-choice options" in system
+
+
+async def test_a_study_reply_that_stops_short_is_continued_without_repeating(handler, mock_openai_client):
+    full_key = "\n".join(f"{number}. A. because case {number} says so." for number in range(1, 31))
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(content=_quiz_reply(1, 12)),
+        _message(content=_quiz_reply(13, 30)),
+        _message(content="## Answer key\n" + full_key),
+    ]
+    reply = await handler.generate_reply("make 30 mcqs for ai", "", "Kruskal", "1")
+    calls = mock_openai_client.chat.completions.create.call_args_list
+    assert len(calls) == 3
+    assert "You wrote 12 of the 30 questions" in calls[1][1]["messages"][-1]["content"]
+    assert "full answer key" in calls[2][1]["messages"][-1]["content"]
+    assert "13. What does topic 13" in reply.text and "30. What does topic 30" in reply.text
+    assert reply.text.count("## Answer key") == 1
+    assert "1. A. Because case 1" in reply.text and "30. A. Because case 30" in reply.text
+
+
+async def test_a_complete_study_reply_is_not_continued(handler, mock_openai_client):
+    mock_openai_client.chat.completions.create.return_value = _message(content=_quiz_reply(1, 30))
+    reply = await handler.generate_reply("make 30 mcqs for ai", "", "Kruskal", "1")
+    assert mock_openai_client.chat.completions.create.call_count == 1
+    assert "30. What does topic 30" in reply.text
+
+
+async def test_a_study_reply_is_not_served_from_the_plain_chat_cache(handler, mock_openai_client):
+    mock_openai_client.chat.completions.create.return_value = _message(content=_quiz_reply(1, 10))
+    query = "make 10 mcqs for ai"
+    await handler.generate_reply(query, "", "Kruskal", "1")
+    await handler.generate_reply(query, "", "Kruskal", "1")
+    assert mock_openai_client.chat.completions.create.call_count == 2
+
+
+async def test_a_detail_request_gets_room_without_a_study_shape(handler, mock_openai_client):
+    from config.config import Config
+    mock_openai_client.chat.completions.create.return_value = _message(content="a full answer")
+    await handler.generate_reply("explain deadlock in detail", "", "Kruskal", "1")
+    call = mock_openai_client.chat.completions.create.call_args[1]
+    assert call["max_completion_tokens"] == Config.AI_DETAIL_MAX_TOKENS
+    system = call["messages"][0]["content"]
+    assert "FULL ANSWER" in system and "STUDY MATERIAL" not in system

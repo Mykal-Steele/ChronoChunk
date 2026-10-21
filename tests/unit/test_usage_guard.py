@@ -260,9 +260,9 @@ def test_listed_people_have_no_limit(user_guard, as_user, monkeypatch):
 def test_a_persons_spending_survives_a_restart(database, as_user):
     as_user("111")
     first = UsageGuard(database, monthly_budget=100.0, daily_budget=50.0, reset_day=14)
-    first.record(usage(completion=100_000))  # $0.20, the default daily limit
+    first.record(usage(completion=300_000))  # $0.60, past the default $0.50 daily limit
     second = UsageGuard(database, monthly_budget=100.0, daily_budget=50.0, reset_day=14)
-    assert second.user_summary("111")["day_cost"] == pytest.approx(0.20)
+    assert second.user_summary("111")["day_cost"] == pytest.approx(0.60)
     with pytest.raises(BudgetExceededError):
         second.check()
 
