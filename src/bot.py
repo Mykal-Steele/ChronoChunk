@@ -24,6 +24,7 @@ from src.user_data_manager import UserDataManager
 
 # Import refactored modules
 from src.ai_response_handler import AIResponseHandler
+from src.reply_log import ReplyLog
 from src.message_handler import MessageHandler
 from src.slash_commands import SlashCommandManager
 from src.version import __version__
@@ -75,6 +76,7 @@ class ChronoChunk(commands.Bot):
             endpoint=AZURE_OPENAI_ENDPOINT,
             api_key=AZURE_OPENAI_KEY,
             deployment=AZURE_OPENAI_DEPLOYMENT,
+            reply_log=ReplyLog(),
         )
         
         # PDFs are described page by page with the same model and budget as chat

@@ -16,10 +16,6 @@ that exists stays as it is until its item here is planned and checked.
   return 18 passages (6 per source). Check whether the outline crowds out the passages that
   answer the request, and whether 160,000 characters is the right ceiling for a 100-question
   reply. Acceptance: a measured prompt size and a retrieval check on real exam questions.
-- **Five files in a normal chat reply.** A reply may hold 5 files, but normal chat stops after
-  3 tool rounds, so "make 5 diagrams" can produce only 3. Decide whether a file-heavy request
-  should raise the round limit without raising it for every chat. Acceptance: a file request
-  makes all requested diagrams, and ordinary chat keeps its 3-round cost.
 - **Writer reasoning on the live model.** The writer uses `AI_WRITER_REASONING_EFFORT=medium`
   with no tools. Check that `gpt-6-luna` accepts it and that the output improves enough to
   justify the tokens. Acceptance: one document run logged in `run.md`, no API error, and a

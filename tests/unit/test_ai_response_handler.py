@@ -293,6 +293,26 @@ def built_files(monkeypatch):
     return document, diagram
 
 
+def test_the_debug_log_gets_the_context_and_not_just_the_one_line(handler):
+    from src.ai_response_handler import Reply
+    from src.tools import Turn
+    handler.reply_log = MagicMock()
+    request = Turn("what dev tool", "Kruskal", "Alex: earlier", "file: notes.md", ["img"],
+                   user_id="42", channel_id="99", routing={"course": False})
+    request.course_sources = {"10": ("Week 9", "https://example.test/9")}
+    request.calls = 2
+    request.cost = 0.0123
+    handler._log_reply(request, Reply("it is Teams"))
+    fields = handler.reply_log.record.call_args.kwargs
+    assert fields["query"] == "what dev tool"
+    assert fields["conversation_history"] == "Alex: earlier"
+    assert fields["attached_context"] == "file: notes.md"
+    assert fields["channel_id"] == "99" and fields["user_id"] == "42"
+    assert fields["routing"] == {"course": False}
+    assert fields["sources"]["10"][0] == "Week 9"
+    assert fields["model_calls"] == 2 and fields["cost"] == 0.0123
+
+
 async def test_each_reply_logs_what_it_read_and_what_it_cost(handler, mock_openai_client, caplog):
     from types import SimpleNamespace
     response = _message(content="its a cat")
@@ -655,6 +675,24 @@ async def test_model_cannot_loop_on_tools_forever(handler, mock_openai_client, b
     assert reply.text == "ok thats enough"
     assert len(reply.files) == min(MAX_TOOL_ROUNDS, MAX_FILES_PER_REPLY)
     assert "tools" not in mock_openai_client.chat.completions.create.call_args[1]
+
+
+async def test_a_request_for_five_files_gets_enough_rounds_to_make_them(handler, mock_openai_client, built_files):
+    from src.tools.documents import MAX_FILES_PER_REPLY
+    _, diagram = built_files
+    calls = [
+        _message(tool_calls=[_tool_call(
+            "create_diagram",
+            {"title": f"Flow {n}", "mermaid": "flowchart TD\n  A --> B"},
+            f"call_{n}",
+        )])
+        for n in range(MAX_FILES_PER_REPLY)
+    ]
+    mock_openai_client.chat.completions.create.side_effect = calls + [_message(content="five diagrams attached")]
+    reply = await handler.generate_reply("/make five diagrams", "", "Kruskal", "1", allow_files=True)
+    assert reply.text == "five diagrams attached"
+    assert len(reply.files) == MAX_FILES_PER_REPLY
+    assert diagram.await_count == MAX_FILES_PER_REPLY
 
 
 async def test_same_document_is_not_built_twice_in_one_reply(handler, mock_openai_client, built_files):

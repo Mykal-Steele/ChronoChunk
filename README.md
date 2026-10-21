@@ -110,6 +110,8 @@ Everything else uses the default from `config/config.py` unless `.env` sets it:
 | `PDF_PAGE_NOTES` | `auto` | `auto`, `on` or `off`: whether the bot describes PDF pages from pictures of them |
 | `PDF_NOTES_KEEP_DAYS` | 7 | Days a PDF's page descriptions are kept |
 | `LOG_RETENTION_DAYS` | 30 | Days a log file is kept |
+| `REPLY_LOG_PATH` | `state/replies.sqlite3` | Local SQLite copy of each reply, for tracing a bad answer |
+| `REPLY_LOG_KEEP_DAYS` | 30 | Days a reply log row is kept |
 | `JOIN_IN_SECONDS` | 30 | Seconds after a call in which the bot may answer a message nobody addressed to it. 0 turns it off. |
 | `JOIN_IN_CHANCE` | 0.5 | How likely the bot is to take that chance, from 0 to 1. It is decided once per call, before the model is asked. |
 | `COURSES_FILE` | `state/courses.db` | The course material the bot searches. See [Course material](#course-material). |
@@ -314,6 +316,7 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/app -w /app c
 - Data is in one SQLite file, `state/chronochunk.db`. To look inside: `sqlite3 state/chronochunk.db ".tables"`. The schema is the `MIGRATIONS` list in `src/database.py`. To change it, add a new entry at the end.
 - The bot copies that file to `state/backups/chronochunk-<day>.db` at startup and once a day, and keeps 7 copies. To go back to one: stop the bot, delete `state/chronochunk.db-wal` and `state/chronochunk.db-shm` if they exist, copy the backup over `state/chronochunk.db`, and start the bot.
 - Logs go to `logs/chronochunk.log`. A new file starts each day and files older than 30 days are deleted.
+- Every answer also writes a row to `state/replies.sqlite3`: who and where, the message, the conversation history, the attached context, the routing answer, every tool call and what it returned, the reply, files, sources, cost and latency. Rows older than `REPLY_LOG_KEEP_DAYS` are deleted. Read one with `sqlite3 state/replies.sqlite3 "select * from replies order by id desc limit 1"`.
 - Every answer writes an `Answered <name> in ...` line to the log with the seconds each step took: history, context, model and tools, and send. Start there when a reply was slow.
 
 ### Project structure

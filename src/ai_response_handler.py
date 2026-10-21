@@ -5,7 +5,7 @@ import re
 import logging
 import time
 from datetime import datetime, timedelta, timezone
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from openai import AsyncOpenAI
 from typing import Callable, List, Optional, Tuple
 from config.ai_config import PERSONALITY_PROMPT, load_voice_examples, voice_examples_prompt
@@ -17,8 +17,10 @@ from src.document_builder import BuiltFile, plain_math, strip_filler
 from src.usage_guard import BudgetExceededError, UsageGuard, get_usage_guard, guard_client
 from src.tools import Tool, ToolResult, Turn, default_tools
 from src.tools.base import user_content
+from src.tools.documents import MAX_FILES_PER_REPLY
 from src.course_session import CourseSessions
 from src.course_retrieval import render_sources
+from src.reply_log import ReplyLog
 from src.tools.courses import (
     LOOKED_UP_NOTE,
     NOT_LOOKED_UP,
@@ -121,6 +123,23 @@ never bring up /game /music or other bot commands unless they ask.
 # How many times the model may call tools before it has to answer in text. A course reply
 # gets more, and a study reply more again, so several topics can be searched in one answer.
 MAX_TOOL_ROUNDS = Config.AI_CHAT_MAX_TOOL_ROUNDS
+
+# A request for several deliverable files gets enough tool rounds to make them all. Ordinary
+# chat and one-file requests keep the lower limits, so a chatty reply cannot spend the budget.
+_MULTI_FILE_REQUEST = re.compile(
+    r"\b(?:two|three|four|five|[2-5])\b(?:[^\n.!?]{0,40}?)\b(?:diagrams?|files?|documents?|pdfs?|images?)\b"
+    r"|\b(?:diagrams?|files?|documents?|pdfs?|images?)\b(?:[^\n.!?]{0,40}?)\b(?:two|three|four|five|[2-5])\b",
+    re.IGNORECASE,
+)
+
+
+def _wants_many_files(query: str) -> bool:
+    return bool(_MULTI_FILE_REQUEST.search(query))
+
+
+def _shorten(text: str, limit: int = 4000) -> str:
+    """Keep tool output in the debug log small enough to read, without hiding that it was cut."""
+    return text if len(text) <= limit else text[:limit] + f"\n... ({len(text) - limit} more chars)"
 
 # Inline code, discord links and web addresses: text whose letters are never changed
 _VERBATIM = re.compile(r'`[^`\n]+`|\[[^\]\n]*\]\(<?[^)\s]+>?\)|<?https?://[^\s>]*[^\s>.,!?)]>?')
@@ -414,8 +433,10 @@ class Reply:
 class AIResponseHandler:
     """Handles all AI response generation logic"""
 
-    def __init__(self, endpoint: str, api_key: str, deployment: str):
+    def __init__(self, endpoint: str, api_key: str, deployment: str,
+                 reply_log: Optional[ReplyLog] = None):
         self.response_cache = {}
+        self.reply_log = reply_log
         self.cache_size = 50
         # A kept reply is served again for this many seconds. Every prompt carries the time of day,
         # so an answer cannot be kept for long.
@@ -741,7 +762,8 @@ class AIResponseHandler:
             # so that call's cost is counted against the same reply.
             request = Turn(clean_query, username, conversation_history or "", attached_context, images,
                            file_gate=file_gate, web_gate=web_gate, course_gate=course_gate, course_codes=codes,
-                           study=bool(study), detail=detail)
+                           study=bool(study), detail=detail, user_id=user_id,
+                           channel_id=session_key.split(":", 1)[0] if session_key else None)
             request.ask_model = lambda model_messages, limit, effort=None: self._chat(
                 model_messages, limit, reasoning_effort=effort, request=request)
             request.embed = lambda text: self._embed(text, request)
@@ -752,6 +774,8 @@ class AIResponseHandler:
             decision = (await self._course_need(clean_query, conversation_history, attached_context,
                                                 codes or [], in_course, request)) if allow_files else None
             rewrite = bool(decision and decision.rewrite)
+            if decision:
+                request.routing = asdict(decision)
             needs_course, study, detail, codes = _read_routing(decision, flagged, study, detail, codes)
             request.course_codes = codes if codes is not None else []
             request.study = bool(study)
@@ -825,6 +849,8 @@ class AIResponseHandler:
             rounds = (Config.AI_STUDY_MAX_TOOL_ROUNDS if deep
                       else Config.AI_COURSE_MAX_TOOL_ROUNDS if in_course
                       else Config.AI_CHAT_MAX_TOOL_ROUNDS)
+            if allow_files and _wants_many_files(clean_query):
+                rounds = max(rounds, MAX_FILES_PER_REPLY)
             raw = ""
             # Name of a tool the model has to call again, set when a diagram did not parse
             redo: Optional[str] = None
@@ -934,18 +960,27 @@ class AIResponseHandler:
                 return Reply(self._content_filter_response(error_msg), ok=False)
             return Reply("something broke on my end, not ur msg. try again in a sec 💀", ok=False)
 
-    @staticmethod
-    def _log_reply(request: Turn, reply: Reply) -> None:
+    def _log_reply(self, request: Turn, reply: Reply) -> None:
         """One line on what a reply read, made, cost and how long it took, so a bill or a slow answer can be traced."""
         files_read = len(re.findall(r"^file: ", request.attached, flags=re.MULTILINE))
+        took = time.monotonic() - request.started
         logger.info(
             f"Reply for {request.username}: read {len(request.images)} images and {files_read} files "
             f"({len(request.attached)} chars of context), {request.calls} model calls, "
             f"about ${request.cost:.4f}, sent {len(reply.files)} files, {request.lookups} web lookups, "
             f"{request.course_searches} course searches, "
-            f"took {time.monotonic() - request.started:.1f}s ({request.model_seconds:.1f}s waiting for the model, "
+            f"took {took:.1f}s ({request.model_seconds:.1f}s waiting for the model, "
             f"{request.tool_seconds:.1f}s in tools)"
         )
+        if self.reply_log:
+            self.reply_log.record(
+                user_id=request.user_id, username=request.username, channel_id=request.channel_id,
+                query=request.query, conversation_history=request.history, attached_context=request.attached,
+                image_count=len(request.images), routing=request.routing, tool_calls=request.tool_calls,
+                reply=reply.text, files=[built.filename for built in reply.files],
+                sources=request.course_sources, model_calls=request.calls, cost=request.cost,
+                latency_ms=round(took * 1000),
+            )
 
     async def generate_response(self, query: str, conversation_history: str,
                                 username: str, user_id: Optional[str] = None,
@@ -976,13 +1011,18 @@ class AIResponseHandler:
         tool = by_name.get(name)
         if not tool:
             return ToolResult(f"error: there is no tool called {name}")
+        record = {"name": name, "arguments": args}
+        turn.tool_calls.append(record)
         try:
-            return await tool.run(args, turn)
+            result = await tool.run(args, turn)
+            record["result"] = _shorten(result.text)
+            return result
         except BudgetExceededError:
             raise
         except Exception as e:
             # Tools catch their own failures. This is for a bug in a tool, which should not cost them the reply.
             logger.error(f"Tool {name} crashed: {e!r}")
+            record["result"] = f"error: {e!r}"
             return ToolResult("error: the tool failed because of an internal error")
 
     @staticmethod

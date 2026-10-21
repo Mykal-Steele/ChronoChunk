@@ -32,6 +32,9 @@ class Config:
     LOG_DIR = os.path.join(BASE_DIR, "logs")
     LOG_RETENTION_DAYS = int(os.getenv("LOG_RETENTION_DAYS", 30))  # daily log files older than this are deleted
     STATE_DIR = os.path.join(BASE_DIR, "state")  # small files that must survive a restart
+    # A local sqlite copy of every chat reply, so a bad answer can be traced back to the context that made it.
+    REPLY_LOG_PATH = os.getenv("REPLY_LOG_PATH", os.path.join(STATE_DIR, "replies.sqlite3"))
+    REPLY_LOG_KEEP_DAYS = int(os.getenv("REPLY_LOG_KEEP_DAYS", 30))
 
     # AI spending caps. Once a cap is hit the bot stops calling the model until it resets.
     # $20 is the whole Azure budget for a month. The daily cap stops one bad day from

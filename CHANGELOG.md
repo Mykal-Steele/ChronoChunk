@@ -10,6 +10,17 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.21.0 (2026-10-22)
+
+### Added
+
+- Every answer is recorded in `state/replies.sqlite3`: the user and channel, the message, the conversation history, the attached context, the routing answer, every tool call and what it returned, the reply, files, sources, model calls, cost and latency. Rows older than 30 days are deleted. `REPLY_LOG_PATH` and `REPLY_LOG_KEEP_DAYS` change where it goes and how long it is kept.
+- A request that asks for several files gets up to five tool rounds, so "make five diagrams" can make all five. Ordinary chat and one-file requests keep the lower round limit.
+
+### Fixed
+
+- A reply that named passages but forgot its `-# Source:` line showed bare numbers such as `[10] [12] [13]`. The source line is now written from those numbers, and the bare numbers are removed.
+
 ## 3.20.0 (2026-10-21)
 
 ### Added

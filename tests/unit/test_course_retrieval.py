@@ -105,6 +105,25 @@ def test_a_reply_with_no_source_line_is_left_alone():
     assert render_sources("use list[2] to get the third item", {}) == "use list[2] to get the third item"
 
 
+def test_link_text_that_looks_like_a_passage_number_is_not_a_citation():
+    reply = "see [2](<https://example.test/w9.pdf>) and [3](<https://example.test/w8.mp4>)"
+    assert render_sources(reply, SOURCES) == reply
+
+
+def test_bare_numbers_after_the_source_line_are_removed_too():
+    reply = "answer [2]\n-# Source: [2]\nthen [2] again"
+    assert render_sources(reply, SOURCES) == (
+        "answer\n-# Source: [CBLL Week 9, page 47 (9 Oct 2026)](<https://example.test/w9.pdf>)\nthen again")
+
+
+def test_bare_passage_numbers_get_a_source_line_instead_of_showing_as_numbers():
+    reply = "Spark is the familiar one. [2][3][2]"
+    assert render_sources(reply, SOURCES) == (
+        "Spark is the familiar one.\n"
+        "-# Source: [CBLL Week 9, page 47 (9 Oct 2026)](<https://example.test/w9.pdf>), "
+        "[LNG320 lecture 2 Oct 2026, 1:51:48](<https://example.test/w8.mp4>)")
+
+
 def test_passages_can_be_numbered_on_from_an_earlier_lookup():
     text = format_hits("homework", [_hit(), _hit(locator="page 48")], {"LNG320": "Content-based Language Learning"}, start=4)
     assert "[4] LNG320 Content-based Language Learning" in text and "[5] LNG320" in text and "[1]" not in text

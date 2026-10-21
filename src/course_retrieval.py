@@ -272,35 +272,58 @@ _MARK = re.compile(r"\[(\d+|A)\]")
 SOURCE_LINE_CHARS = 900
 
 
+def _marks_outside_code(text: str) -> List[str]:
+    """Passage numbers in prose, not in code and not an index such as rows[2]."""
+    marks = []
+    for block in re.split(r"(```.*?```|`[^`\n]*`)", text, flags=re.DOTALL)[::2]:
+        for found in _MARK.finditer(block):
+            if found.start() and (block[found.start() - 1].isalnum() or block[found.start() - 1] == "_"):
+                continue
+            # [2](https://...) is link text, not a passage citation
+            if found.end() < len(block) and block[found.end()] == "(":
+                continue
+            marks.append(found.group(1))
+    return marks
+
+
 def render_sources(text: str, sources: Dict[str, Tuple[str, str]]) -> str:
     """
     Write a reply's source line from the numbers the model put on it. The model never
     types a link: it names the passages it used, and their names, dates and links are
     filled in here. A number that stands for nothing is dropped, and a line left with
     nothing goes. A source line in the middle of the reply, where the model ended an answer
-    and went on, joins the last one.
+    and went on, joins the last one. A reply that names passages but forgets the source
+    line still gets one, so the reader never sees bare numbers such as [10] [12] [13].
     """
     code = [(block.start(), block.end()) for block in re.finditer(r"```.*?```", text, flags=re.DOTALL)]
     lines = [found for found in _SOURCE_LINE.finditer(text)
              if not any(opened < found.start() < closed for opened, closed in code)]
-    if not lines:
-        return text
-    line = lines[-1]
-    marks = [key for found in lines for key in _MARK.findall(found.group(1))]
-    named = [sources[key] for key in dict.fromkeys(marks) if key in sources]
     # A number set in the answer itself says nothing to the person reading it. Code is left as it
     # is, and so is a number glued to a word, since "rows[2]" is an index and not a passage.
     def without_marks(prose: str) -> str:
         return re.sub(r" ?(?<![\w\]])((?:\[(?:\d+|A)\])+)(?![\w(\[])",
                       lambda marks: "" if all(key in sources for key in _MARK.findall(marks.group(1))) else marks.group(0), prose)
-    before = text[:line.start()]
-    if len(lines) > 1:
-        before = "".join(text[end:start] for end, start in
-                         zip([0] + [found.end() for found in lines[:-1]], [found.start() for found in lines], strict=True))
-        before = re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]+\n", "\n", before))
-    pieces = re.split(r"(```.*?```|`[^`\n]*`)", before, flags=re.DOTALL)
-    body = "".join(piece if index % 2 else without_marks(piece) for index, piece in enumerate(pieces))
-    rest = text[line.end():]
+
+    def clean(prose: str) -> str:
+        pieces = re.split(r"(```.*?```|`[^`\n]*`)", prose, flags=re.DOTALL)
+        return "".join(piece if index % 2 else without_marks(piece) for index, piece in enumerate(pieces))
+    if lines:
+        line = lines[-1]
+        marks = [key for found in lines for key in _MARK.findall(found.group(1))]
+        before = text[:line.start()]
+        if len(lines) > 1:
+            before = "".join(text[end:start] for end, start in
+                             zip([0] + [found.end() for found in lines[:-1]], [found.start() for found in lines], strict=True))
+            before = re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]+\n", "\n", before))
+        rest = clean(text[line.end():])
+    else:
+        # The model forgot the "-# Source:" line. Keep the numbers it used in the answer,
+        # since those are the only record of which passages it read.
+        marks = _marks_outside_code(text)
+        before = text
+        rest = ""
+    named = [sources[key] for key in dict.fromkeys(marks) if key in sources]
+    body = clean(before)
     if not named:
         return (body.rstrip() + rest).rstrip()
     # One source line can outgrow what Discord accepts in a single chunk. Wrapping it
