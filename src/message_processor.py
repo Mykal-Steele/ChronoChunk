@@ -470,6 +470,9 @@ is_correction: bool) -> None:
                     break
             if split_at <= 0:
                 split_at = limit
+            # A link longer than a whole Discord message cannot be kept in one piece.
+            # Split it rather than sending a chunk that Discord rejects.
+            split_at = min(split_at, limit)
             chunk, text = text[:split_at], text[split_at:].lstrip()
             # A split inside a code block closes it here and reopens it in the next chunk
             # A cut through the middle of a custom emoji would post it as broken text

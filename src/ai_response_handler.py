@@ -285,28 +285,49 @@ def _second_copy(text: str) -> int:
     return found
 
 
-# Study replies are checked after they are written: a model asked for 30 questions can stop at 12.
-# A few continuations finish the set without paying for the whole reply again.
-STUDY_CONTINUATIONS = 4
+# Study replies are checked after they are written: a model asked for 30 questions can stop at 12,
+# or leave gaps. A few continuations finish the set without paying for the whole reply again.
+STUDY_CONTINUATIONS = 8
+GUIDE_COMPLETE = "=== GUIDE COMPLETE ==="
 _QUESTION_LINE = re.compile(
     r"^[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*)?(?:Q(?:uestion)?[ \t]*)?(\d{1,3})[.)\]:]",
     re.MULTILINE | re.IGNORECASE,
 )
-_ANSWER_KEY = re.compile(r"^[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*)?answer[ \t]+key\b", re.MULTILINE | re.IGNORECASE)
+_KEY_HEADING = re.compile(
+    r"^[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*)?(?:answer[ \t]+key|model[ \t]+answers?)\b",
+    re.MULTILINE | re.IGNORECASE,
+)
 
 
 def _study_numbers(text: str) -> set:
-    """The question numbers written before the answer key. Key lines are not questions."""
-    questions = _ANSWER_KEY.split(text, maxsplit=1)[0]
+    """The question numbers written before the answer key or model answers."""
+    questions = _KEY_HEADING.split(text, maxsplit=1)[0]
     return {int(number) for number in _QUESTION_LINE.findall(questions)}
 
 
 def _study_key_numbers(text: str) -> set:
-    """The numbers in the answer key, after the heading."""
-    parts = _ANSWER_KEY.split(text, maxsplit=1)
+    """The numbers in the answer key or model answers, after the heading."""
+    parts = _KEY_HEADING.split(text, maxsplit=1)
     if len(parts) < 2:
         return set()
     return {int(number) for number in _QUESTION_LINE.findall(parts[1])}
+
+
+def _number_ranges(numbers) -> str:
+    """Write 1, 2, 3, 7, 9 as "1 to 3, 7, 9" without hiding a gap."""
+    ordered = sorted(set(numbers))
+    if not ordered:
+        return ""
+    runs = []
+    first = previous = ordered[0]
+    for number in ordered[1:]:
+        if number == previous + 1:
+            previous = number
+            continue
+        runs.append((first, previous))
+        first = previous = number
+    runs.append((first, previous))
+    return ", ".join(str(first) if first == last else f"{first} to {last}" for first, last in runs)
 
 
 def _study_gap(text: str, study: StudyRequest) -> str:
@@ -317,24 +338,58 @@ def _study_gap(text: str, study: StudyRequest) -> str:
     would sit in the middle of the reply once the missing questions arrive.
     """
     if study.kind == "guide":
-        return ""
+        if GUIDE_COMPLETE in text:
+            return ""
+        return ("Continue the study guide from where it stopped. Cover the topics from the course material "
+                "that are not yet covered, without repeating a topic. When every topic is covered, end with "
+                f"a line containing only: {GUIDE_COMPLETE}")
     wanted = study.items
-    have = len([number for number in _study_numbers(text) if 1 <= number <= wanted])
-    if have < wanted:
-        return (f"You wrote {have} of the {wanted} questions. Continue from question {have + 1} to {wanted}. "
-                "Write only the missing questions, numbered on from where you stopped. "
-                "Do not repeat a question, do not start again, and do not write an answer key yet.")
-    if not _ANSWER_KEY.search(text):
-        return (f"The questions are there but the answer key is missing. Add the full answer key for questions "
-                f"1 to {wanted} now: for each number give the letter and one or two sentences on why. "
-                "Do not repeat the questions.")
+    numbers = _study_numbers(text)
+    missing = [number for number in range(1, wanted + 1) if number not in numbers]
+    if missing:
+        have = wanted - len(missing)
+        return (f"You wrote {have} of the {wanted} questions. Write only the missing questions: "
+                f"{_number_ranges(missing)}. Number each one with its number. Do not repeat a question, "
+                "do not start again, and do not write the answer section yet.")
+    short_answer = study.kind == "short"
+    key_name = "model answers" if short_answer else "answer key"
+    if not _KEY_HEADING.search(text):
+        detail = ("Each answer is two to five sentences and names the key points a marker would look for. "
+                  if short_answer else "For each number give the letter and one or two sentences on why. ")
+        return (f"The questions are there but the {key_name} is missing. Add the full {key_name} for questions "
+                f"1 to {wanted} now: {detail}Do not repeat the questions.")
     missing = [number for number in range(1, wanted + 1) if number not in _study_key_numbers(text)]
     if missing:
-        shown = f"{missing[0]} to {missing[-1]}" if len(missing) > 5 else ", ".join(str(number) for number in missing)
+        shown = _number_ranges(missing)
+        if short_answer:
+            return (f"The model answers are missing entries for questions {shown}. Add only those entries at the end "
+                    "of the model answers: the number and two to five sentences naming the key points. "
+                    "Do not repeat the heading or the questions.")
         return (f"The answer key is missing entries for questions {shown}. Add only those entries at the end "
                 "of the key: the number, the letter and one or two sentences on why. Do not repeat the heading "
                 "or the questions.")
     return ""
+
+
+def _read_routing(decision: Optional[CourseNeed], flagged: bool, study: Optional[StudyRequest],
+                  detail: bool, codes: Optional[List[str]]):
+    """Apply the routing call to what this reply needs. A flag always asks for the material,
+    except on a rewrite, where it only opens course mode."""
+    if decision is None:
+        return flagged, study, detail, codes
+    needs_course = decision.needs_course
+    if flagged and not decision.rewrite:
+        needs_course = True
+    if decision.study_kind == "none":
+        study = None
+    else:
+        count = decision.study_items or (study.count if study else 0)
+        study = StudyRequest(decision.study_kind, count)
+    if decision.detail:
+        detail = True
+    if needs_course and decision.codes:
+        codes = decision.codes
+    return needs_course, study, detail, codes
 
 
 def _join_continuation(written: str, more: str) -> str:
@@ -425,7 +480,16 @@ class AIResponseHandler:
         ai_response = re.sub(r'\s*[—–]\s*', ' ', ai_response)
 
         # A formula the model wrote as LaTeX is unreadable in Discord. Turn it into plain text.
-        ai_response = plain_math(ai_response)
+        # Links and inline code are verbatim: paired dollar signs in a URL are not maths.
+        kept: List[str] = []
+
+        def hold_link(found) -> str:
+            kept.append(found.group(0))
+            return f"\x01{len(kept) - 1}\x01"
+
+        held = _VERBATIM.sub(hold_link, ai_response)
+        held = plain_math(held)
+        ai_response = re.sub(r"\x01(\d+)\x01", lambda found: kept[int(found.group(1))], held)
 
         # Same story for stock openers like "I hope you are well."
         ai_response = strip_filler(ai_response)
@@ -536,7 +600,7 @@ class AIResponseHandler:
         try:
             message = await self._chat(
                 messages, Config.AI_COURSE_CHECK_MAX_TOKENS, [check_tool(allowed)],
-                Config.AI_CHAT_REASONING_EFFORT, COURSE_CHECK_TOOL, request,
+                Config.AI_COURSE_CHECK_REASONING_EFFORT, COURSE_CHECK_TOOL, request,
                 model=Config.AI_COURSE_CHECK_DEPLOYMENT or None,
             )
         except BudgetExceededError:
@@ -553,6 +617,45 @@ class AIResponseHandler:
             return parse_check(content, allowed)
         logger.warning("Course routing check returned no decision, using the explicit flag")
         return None
+
+    async def _continue_study(self, messages: List[dict], raw: str, study: StudyRequest,
+                              max_tokens: int, effort: str, request: Turn) -> str:
+        """Ask for missing questions and then the key, keeping each assistant turn short."""
+        # Only the latest increment goes back as the assistant turn. Appending the whole
+        # joined reply again makes the context grow quadratically and invites the model
+        # to start the set over.
+        last_written = raw
+        for _ in range(STUDY_CONTINUATIONS):
+            gap = _study_gap(raw, study)
+            if not gap:
+                break
+            # Questions are still arriving. A key written early would end up above the
+            # questions that follow, so it is dropped and asked for at the end.
+            if gap.startswith("You wrote"):
+                raw = _KEY_HEADING.split(raw, maxsplit=1)[0].rstrip()
+                last_written = raw
+            messages.append({"role": "assistant", "content": last_written})
+            messages.append({"role": "user", "content": gap})
+            try:
+                message = await self._chat(messages, max_tokens, None, effort, None, request)
+            except BudgetExceededError:
+                raise
+            except Exception as e:
+                logger.warning(f"Study continuation failed: {e!r}")
+                break
+            more = message.content if isinstance(message.content, str) else ""
+            if gap.startswith("You wrote"):
+                more = _KEY_HEADING.split(more, maxsplit=1)[0].rstrip()
+            if not more.strip():
+                break
+            joined = _join_continuation(raw, more)
+            if joined == raw:
+                break
+            raw = joined
+            last_written = more
+        if _study_gap(raw, study):
+            logger.warning(f"Study reply for {request.username} is still incomplete after {STUDY_CONTINUATIONS} continuations")
+        return raw
 
     async def generate_reply(self, query: str, conversation_history: str,
                              username: str, user_id: Optional[str] = None,
@@ -628,6 +731,11 @@ class AIResponseHandler:
             codes = scope.codes if scope and flagged else (session.codes if session else None)
             study = study_request(clean_query)
             detail = wants_detail(clean_query)
+            # A kept plain answer costs nothing and needs no routing call. Course mode and
+            # study replies are never kept, so they always get a fresh decision.
+            if (cache_key in self.response_cache and fresh and not flagged and session is None
+                    and not asked_study):
+                return Reply(self.response_cache[cache_key])
 
             # The state every tool for this reply shares. It exists before the routing call,
             # so that call's cost is counted against the same reply.
@@ -644,13 +752,9 @@ class AIResponseHandler:
             decision = (await self._course_need(clean_query, conversation_history, attached_context,
                                                 codes or [], in_course, request)) if allow_files else None
             rewrite = bool(decision and decision.rewrite)
-            if decision is None:
-                needs_course = flagged
-            else:
-                needs_course = decision.needs_course
-                if needs_course and decision.codes:
-                    codes = decision.codes
+            needs_course, study, detail, codes = _read_routing(decision, flagged, study, detail, codes)
             request.course_codes = codes if codes is not None else []
+            request.study = bool(study)
             request.detail = detail or rewrite
             in_course = bool(flagged or session is not None or needs_course)
 
@@ -665,12 +769,6 @@ class AIResponseHandler:
                 max_tokens = Config.AI_CHAT_TOOL_MAX_TOKENS
             else:
                 max_tokens = Config.AI_CHAT_MAX_TOKENS
-
-            # A plain answer with nothing looked up can still come from the cache. A rewrite and
-            # a course answer cannot, since the reading of the message is part of the answer.
-            if (cache_key in self.response_cache and fresh and not in_course and not asked_study
-                    and not needs_course and not rewrite):
-                return Reply(self.response_cache[cache_key])
 
             # The tools on offer for this reply, and the state they share
             offered = [tool for tool in self.tools if tool.available() and (in_course or not tool.course_only)] if allow_files else []
@@ -782,31 +880,9 @@ class AIResponseHandler:
             # A model asked for 30 questions sometimes stops at 12. Ask only for what is
             # missing, then for the key, so the set is complete without paying for it twice.
             if study and not files and not gave_up and raw.strip():
-                for _ in range(STUDY_CONTINUATIONS):
-                    gap = _study_gap(raw, study)
-                    if not gap:
-                        break
-                    # Questions are still arriving. A key written early would end up above
-                    # the questions that follow, so it is dropped and asked for at the end.
-                    if gap.startswith("You wrote"):
-                        raw = _ANSWER_KEY.split(raw, maxsplit=1)[0].rstrip()
-                    messages.append({"role": "assistant", "content": raw})
-                    messages.append({"role": "user", "content": gap})
-                    try:
-                        message = await self._chat(messages, max_tokens, None, effort, None, request)
-                    except BudgetExceededError:
-                        raise
-                    except Exception as e:
-                        logger.warning(f"Study continuation failed: {e!r}")
-                        break
-                    more = message.content if isinstance(message.content, str) else ""
-                    if not more.strip():
-                        break
-                    if gap.startswith("You wrote"):
-                        more = _ANSWER_KEY.split(more, maxsplit=1)[0].rstrip()
-                    raw = _join_continuation(raw, more)
-                if _study_gap(raw, study):
-                    logger.warning(f"Study reply for {username} is still incomplete after {STUDY_CONTINUATIONS} continuations")
+                raw = await self._continue_study(messages, raw, study, max_tokens, effort, request)
+            if study and study.kind == "guide":
+                raw = raw.replace(GUIDE_COMPLETE, "").strip()
 
             if gave_up and not files:
                 reply = Reply(gave_up)

@@ -3,6 +3,9 @@ import re
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from src.ai_response_handler import _study_gap
+from src.study import StudyRequest
+
 
 @pytest.fixture
 def handler(mock_openai_client):
@@ -252,6 +255,11 @@ def test_format_still_strips_dashes_between_words(handler):
 
 
 # ── code blocks, tools and the document writer ───────────────────────────────
+
+def test_format_keeps_dollar_signs_inside_a_link(handler):
+    result = handler._format_ai_response("see [the page](<https://example.test/a$b$c>)")
+    assert "https://example.test/a$b$c" in result
+
 
 def test_format_leaves_code_blocks_exactly_as_written(handler):
     code = "```js\nitems\n    .filter(x => x , y)\n    .map(f)\n```"
@@ -1116,11 +1124,43 @@ async def test_normal_chat_does_not_get_the_study_rules(handler, mock_openai_cli
 
 
 async def test_a_short_answer_request_asks_for_model_answers_not_options(handler, mock_openai_client):
+    questions = "\n".join(f"{number}. Explain topic {number}." for number in range(1, 11))
+    answers = "\n".join(f"{number}. It is the key point for topic {number}." for number in range(1, 11))
     mock_openai_client.chat.completions.create.return_value = _message(
-        content="1. Explain deadlock.\n\n## Answer key\n1. A deadlock is ...")
+        content=questions + "\n\n## Model answers\n" + answers)
     await handler.generate_reply("make 10 short answer questions on deadlocks", "", "Kruskal", "1")
     system = mock_openai_client.chat.completions.create.call_args[1]["messages"][0]["content"]
     assert "short-answer theory practice" in system and "No multiple-choice options" in system
+    assert "Model answers" in system
+
+
+def test_the_study_gap_fills_holes_instead_of_counting_them():
+    text = "1. One\n2. Two\n4. Four\n\n## Answer key\n1. A\n2. B\n4. D"
+    gap = _study_gap(text, StudyRequest("quiz", 5))
+    assert "Write only the missing questions: 3, 5" in gap
+    assert "Continue from question 4" not in gap
+
+
+def test_the_short_answer_gap_asks_for_model_answers_without_letters():
+    text = "1. Explain one.\n2. Explain two.\n\n## Model answers\n1. One is ..."
+    gap = _study_gap(text, StudyRequest("short", 2))
+    assert "model answers are missing entries" in gap
+    assert "letter" not in gap
+
+
+def test_a_study_guide_ends_on_its_completion_marker():
+    done = "Topic one.\n\n=== GUIDE COMPLETE ==="
+    assert _study_gap(done, StudyRequest("guide", 0)) == ""
+    gap = _study_gap("Topic one.", StudyRequest("guide", 0))
+    assert "Continue the study guide" in gap and "=== GUIDE COMPLETE ===" in gap
+
+
+async def test_a_guide_completion_marker_is_not_sent(handler, mock_openai_client):
+    mock_openai_client.chat.completions.create.return_value = _message(
+        content="Topic one.\n\n=== GUIDE COMPLETE ===")
+    reply = await handler.generate_reply("make a study guide for ai", "", "Kruskal", "1")
+    assert "GUIDE COMPLETE" not in reply.text
+    assert "topic one." in reply.text
 
 
 async def test_a_study_reply_that_stops_short_is_continued_without_repeating(handler, mock_openai_client):
@@ -1135,6 +1175,9 @@ async def test_a_study_reply_that_stops_short_is_continued_without_repeating(han
     assert len(calls) == 3
     assert "You wrote 12 of the 30 questions" in calls[1][1]["messages"][-1]["content"]
     assert "full answer key" in calls[2][1]["messages"][-1]["content"]
+    last_assistant = [message for message in calls[2][1]["messages"] if message["role"] == "assistant"][-1]["content"]
+    assert "13. What does topic 13" in last_assistant
+    assert "1. What does topic 1" not in last_assistant
     assert "13. What does topic 13" in reply.text and "30. What does topic 30" in reply.text
     assert reply.text.count("## Answer key") == 1
     assert "1. A. Because case 1" in reply.text and "30. A. Because case 30" in reply.text

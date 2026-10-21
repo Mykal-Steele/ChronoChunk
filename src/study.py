@@ -15,8 +15,8 @@ DEFAULT_QUIZ_ITEMS = 10
 
 _QUIZ = re.compile(
     r"\b(?:quiz(?:zes)?|mcqs?|multiple[- ]choice(?:\s+questions?)?|practice\s+(?:questions?|exam|test)|"
-    r"mock\s+(?:exam|test)|exam\s+questions?|revision\s+questions?|test\s+me|flashcards?|short[- ]answer(?:\s+questions?)?|"
-    r"theory\s+questions?|open[- ]ended\s+questions?)\b",
+    r"mock\s+(?:exam|test)|exam\s+questions?|revision\s+questions?|test\s+me|quiz\s+me|flashcards?|"
+    r"short[- ]answer(?:\s+questions?)?|theory\s+questions?|open[- ]ended\s+questions?|qs?)\b",
     re.IGNORECASE,
 )
 _SHORT = re.compile(r"\b(?:short[- ]answer|theory\s+questions?|open[- ]ended)\b", re.IGNORECASE)
@@ -26,13 +26,16 @@ _GUIDE = re.compile(
 )
 # "30 questions", "30 mcqs", "30 multiple choice", "30-question quiz"
 _COUNT = re.compile(
-    r"\b(\d{1,3})\s*(?:x\s*)?(?:multiple[- ]choice(?:\s+questions?)?|mcqs?|(?:(?:practice|revision)\s+)?questions?|problems?|items?)\b",
+    r"\b(\d{1,3})\s*(?:x\s*)?(?:(?:short[- ]answer|theory|open[- ]ended)\s+)?"
+    r"(?:multiple[- ]choice(?:\s+questions?)?|mcqs?|qs?|(?:(?:practice|revision)\s+)?questions?|problems?|items?)\b",
     re.IGNORECASE,
 )
 _COUNT_BEFORE = re.compile(r"\b(\d{1,3})[- ](?:question|mcq|item|problem)\b", re.IGNORECASE)
+# An explicit request to make something. "do", "try" and "help me" are too broad:
+# "help me with these 5 questions" is not a request to write a new quiz.
 _ASK = re.compile(
-    r"\b(?:make|create|write|give|generate|prepare|build|need|want|send|produce|do|try|practice|"
-    r"help\s+me|test\s+me)\b",
+    r"\b(?:make|create|write|give|generate|prepare|build|need|want|send|produce|"
+    r"test\s+me|quiz\s+me)\b",
     re.IGNORECASE,
 )
 # Someone asking for the whole story, not a one-line answer.
@@ -48,7 +51,7 @@ _DETAIL = re.compile(
 _STUDY_WORDS = re.compile(
     r"\b(?:please|pls|plz|can|could|would|u|you|me|i|we|us|my|our|a|an|the|some|any|of|for|on|about|from|"
     r"with|and|or|to|in|at|by|make|create|write|give|generate|prepare|build|need|want|send|produce|do|try|"
-    r"help|practice|test|quiz|quizzes|mcq|mcqs|multiple|choice|question|questions|problem|problems|item|items|"
+    r"help|practice|test|quiz|quizzes|mcq|mcqs|qs?|multiple|choice|question|questions|problem|problems|item|items|"
     r"study|guide|notes?|revision|cheat|sheet|answer|answers|key|keys|short|theory|open|ended|"
     r"cover|covering|covers|topic|topics|explain|explanation|detailed|detail|step|steps|worked|example|examples)\b",
     re.IGNORECASE,
@@ -92,7 +95,7 @@ def study_request(text: str) -> Optional[StudyRequest]:
     guide = _GUIDE.search(text)
     quiz = _QUIZ.search(text)
     asked = bool(_ASK.search(text))
-    if guide and (asked or count or re.search(r"\b(?:for|on)\b", text, re.IGNORECASE)):
+    if guide and (asked or count):
         return StudyRequest("guide", count)
     plain_questions = re.search(r"\b(?:questions?|problems?|items?)\b", text, re.IGNORECASE)
     if quiz and (asked or count):
@@ -131,6 +134,7 @@ STUDY GUIDE (this reply only: the voice stays exactly the same):
 - Put the topics in your own words and use the course's names for things. Do not pad, repeat, or add topics the material does not hold.
 - If the material is thin on a topic, say so in one line and give what it does hold instead of inventing the rest.
 - Formulas go in plain text with normal symbols (for example P(A|B) = P(A and B) / P(B)), never raw LaTeX and never $...$.
+- When every topic from the outline is covered, end with a line containing only: === GUIDE COMPLETE ===
 - The short-chat rules (1 to 3 lines, no lists) do not apply to this reply. The personality, tone and slang do.
 """
     count = request.items
@@ -146,7 +150,7 @@ STUDY MATERIAL (this reply only: the voice stays exactly the same):
 - Cover the topics in the course material, not only the words of their message. If they named an exam, cover the material for that exam.
 - Mix recall, explanation, application and "compare these two". No duplicate or near-duplicate questions.
 - If the material cannot support {count} distinct questions, say which topics are thin, then write as many distinct questions as it does support.
-- Put a model answer at the end. Each answer is two to five sentences and names the key points a marker would look for.
+- Put the model answers under a "Model answers" heading at the end. Each answer is two to five sentences and names the key points a marker would look for.
 - Formulas go in plain text with normal symbols (for example P(A|B) = P(A and B) / P(B)), never raw LaTeX and never $...$.
 - The short-chat rules (1 to 3 lines, no lists) do not apply to this reply. The personality, tone and slang do.
 """

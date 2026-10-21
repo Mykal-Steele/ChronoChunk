@@ -124,6 +124,14 @@ async def test_pdf_text_is_extracted_with_page_numbers():
     assert "Second page here" in context.text
 
 
+async def test_pdf_character_cut_names_the_page_where_it_stopped(monkeypatch):
+    monkeypatch.setattr(message_context, "MAX_FILE_CHARS", 20)
+    pdf = fake_attachment("long.pdf", make_pdf(["A" * 50, "B" * 50]), "application/pdf")
+    replied = fake_message(fake_author("Kruskal"), "", attachments=[pdf])
+    context = await build_attached_context(fake_message(fake_author(), "/read"), replied, BOT_ID)
+    assert "text stops at page 1 of 2" in context.text
+
+
 async def test_pdf_without_text_says_so():
     pdf = fake_attachment("scan.pdf", make_pdf([""]), "application/pdf")
     replied = fake_message(fake_author(), "", attachments=[pdf])

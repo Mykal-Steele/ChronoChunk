@@ -10,6 +10,8 @@ import json
 from dataclasses import dataclass, field
 from typing import List, Sequence
 
+from src.study import MAX_STUDY_ITEMS
+
 # The fields the model must fill in. They are sent as a forced tool call, so the
 # answer is structured even on deployments that do not support JSON response format.
 COURSE_CHECK_TOOL = "check_course_need"
@@ -27,6 +29,12 @@ class CourseNeed:
     context: str = ""
     # True when they want an earlier message transformed rather than a new answer.
     rewrite: bool = False
+    # The shape of the reply, independent of whether it needs course material.
+    study_kind: str = "none"  # "none", "quiz", "short" or "guide"
+    # How many questions they asked for, 0 when they did not name a number.
+    study_items: int = 0
+    # True when they want the full explanation rather than the short version.
+    detail: bool = False
 
 
 def check_tool(codes: Sequence[str]) -> dict:
@@ -69,8 +77,27 @@ def check_tool(codes: Sequence[str]) -> dict:
                         "description": "True when they want an earlier message said again another way, "
                                        "not a new answer about a course.",
                     },
+                    "study_kind": {
+                        "type": "string",
+                        "enum": ["none", "quiz", "short", "guide"],
+                        "description": "The shape they asked for: multiple-choice quiz, short-answer practice, "
+                                       "or a study guide. 'none' for ordinary chat, including a general explanation.",
+                    },
+                    "study_items": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": MAX_STUDY_ITEMS,
+                        "description": "The number of questions they named, or 0 when they named none. "
+                                       "This is independent of whether the material is needed.",
+                    },
+                    "wants_detail": {
+                        "type": "boolean",
+                        "description": "True when they asked for a full explanation, a chapter walkthrough, "
+                                       "or another answer that needs more room than short chat.",
+                    },
                 },
-                "required": ["needs_course", "course_codes", "search_query", "context", "is_rewrite"],
+                "required": ["needs_course", "course_codes", "search_query", "context", "is_rewrite",
+                             "study_kind", "study_items", "wants_detail"],
                 "additionalProperties": False,
             },
         },
@@ -118,6 +145,17 @@ True when they want an earlier message transformed (rewritten, rephrased, turned
 in another style, translated, made shorter or longer). False when they ask a new question. A rewrite can
 still need course material if they also ask for a course fact; in that case set needs_course true too.
 
+6. study_kind and study_items
+Set study_kind from what they want made, not from a list of trigger words. "quiz" is multiple-choice or
+practice questions, "short" is short-answer or theory questions, and "guide" is a study guide, revision
+notes or exam prep. Set study_items to the number they named, capped at 100; use 0 when they named no
+number. A study request can have needs_course false: a general quiz about a well-known subject is still a
+quiz, it just does not need their class files. "quiz me on deadlocks" is a quiz with 0 items.
+
+7. wants_detail
+True when they ask for the full explanation, a chapter walkthrough, step-by-step teaching, or another
+answer that needs more room than short chat. False for a quick definition or ordinary chat.
+
 The message they replied to is what "this", "that" and "it" mean. Do not treat exam dates, rooms, marks or
 rules as the topic of a rewrite unless they explicitly ask about them.
 """
@@ -137,10 +175,20 @@ def parse_check(arguments: str, codes: Sequence[str]) -> CourseNeed:
     chosen = list(dict.fromkeys(str(code) for code in picked if str(code) in allowed))
     query = data.get("search_query")
     context = data.get("context")
+    kind = data.get("study_kind")
+    kind = kind if kind in ("quiz", "short", "guide") else "none"
+    try:
+        items = int(data.get("study_items") or 0)
+    except (TypeError, ValueError):
+        items = 0
+    items = max(0, min(items, MAX_STUDY_ITEMS))
     return CourseNeed(
         needs_course=data.get("needs_course") is True,
         codes=chosen,
         search_query=(query.strip()[:300] if isinstance(query, str) else ""),
         context=(context.strip()[:800] if isinstance(context, str) else ""),
         rewrite=data.get("is_rewrite") is True,
+        study_kind=kind,
+        study_items=items,
+        detail=data.get("wants_detail") is True,
     )

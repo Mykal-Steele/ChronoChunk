@@ -117,6 +117,19 @@ def test_clean_straightens_curly_quotes():
     assert clean_document_text("“Quoted” and ‘single’") == "\"Quoted\" and 'single'"
 
 
+def test_plain_math_leaves_code_prices_and_paths_alone():
+    from src.document_builder import plain_math
+    assert plain_math("costs $5 and $10") == "costs $5 and $10"
+    assert plain_math("run `$HOME/bin` now") == "run `$HOME/bin` now"
+    assert plain_math(r"open C:\Users\name\file.txt") == r"open C:\Users\name\file.txt"
+
+
+def test_plain_math_uses_the_lowercase_sigma_and_keeps_inline_math_out_of_code():
+    from src.document_builder import plain_math
+    assert plain_math(r"$\sigma$") == "σ"
+    assert plain_math(r"`$x \times y$` and $x \times y$") == r"`$x \times y$` and x × y"
+
+
 def test_clean_leaves_code_blocks_alone():
     text = "Text — here\n```\ncode — stays\n```"
     assert clean_document_text(text) == "Text, here\n```\ncode — stays\n```"

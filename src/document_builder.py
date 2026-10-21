@@ -197,30 +197,51 @@ _MATH_SYMBOLS = {
     r"\rightarrow": "→", r"\leftarrow": "←", r"\Rightarrow": "⇒", r"\iff": "⇔",
     r"\alpha": "α", r"\beta": "β", r"\gamma": "γ", r"\delta": "δ", r"\epsilon": "ε",
     r"\theta": "θ", r"\lambda": "λ", r"\mu": "μ", r"\pi": "π", r"\rho": "ρ",
-    r"\sigma": "Σ", r"\tau": "τ", r"\phi": "φ", r"\omega": "ω", r"\Delta": "Δ",
+    r"\sigma": "σ", r"\tau": "τ", r"\phi": "φ", r"\omega": "ω", r"\Delta": "Δ",
     r"\Omega": "Ω", r"\Sigma": "Σ", r"\Phi": "Φ", r"\Lambda": "Λ",
 }
 
 
-def plain_math(text: str) -> str:
-    """
-    Turn LaTeX that a model writes into readable plain text: $...$ loses its dollars,
-    \frac{a}{b} becomes (a)/(b), and common commands become their symbols. Code is
-    handled by the caller and never reaches this.
-    """
+_CODE_SPAN = re.compile(r"(```.*?```|`[^`\n]*`)", re.DOTALL)
+
+
+def _inline_dollars(text: str) -> str:
+    """Drop inline math dollars, but leave prices and other dollar amounts alone."""
+    def unwrap(match: re.Match) -> str:
+        body = match.group(1)
+        # "$5 and $10" is money, not maths. A closing dollar followed by a digit
+        # starts the next amount, so this pair is not a formula.
+        if match.string[match.end():match.end() + 1].isdigit():
+            return match.group(0)
+        return body
+    return re.sub(r"(?<!\\)\$(?!\$)([^\n$]+?)(?<!\\)\$", unwrap, text)
+
+
+def _plain_math(text: str) -> str:
+    """The LaTeX conversion for prose. Code spans are protected by plain_math."""
     text = re.sub(r"\$\$(.+?)\$\$", r"\1", text, flags=re.DOTALL)
-    text = re.sub(r"(?<!\\)\$(.+?)(?<!\\)\$", r"\1", text, flags=re.DOTALL)
+    text = _inline_dollars(text)
     # Nested braces in a fraction are rare; the simple form covers what models write
     text = re.sub(r"\\(?:d|t)?frac\{([^{}]*)\}\{([^{}]*)\}", r"(\1)/(\2)", text)
     text = re.sub(r"\\sqrt\{([^{}]*)\}", r"√(\1)", text)
     text = re.sub(r"\\(?:text|mathrm|mathbf|mathit)\{([^{}]*)\}", r"\1", text)
     for command, symbol in _MATH_SYMBOLS.items():
         text = re.sub(re.escape(command) + r"(?![A-Za-z])", symbol, text)
-    text = text.replace(r"\left", "").replace(r"\right", "")
+    text = re.sub(r"\\(?:left|right)(?![A-Za-z])", "", text)
     # A subscript or superscript keeps its marker, without the braces
     text = re.sub(r"([_^])\{([^{}]*)\}", r"\1\2", text)
-    # Any command left loses its backslash rather than showing as code
-    return re.sub(r"\\([A-Za-z]+)", r"\1", text)
+    # Only a command that takes braces is a LaTeX command. "C:\Users\name" is a path.
+    return re.sub(r"\\([A-Za-z]+)(?=\s*\{)", r"\1", text)
+
+
+def plain_math(text: str) -> str:
+    """
+    Turn LaTeX that a model writes into readable plain text: $...$ loses its dollars,
+    \frac{a}{b} becomes (a)/(b), and common commands become their symbols. Inline
+    code, fenced code, prices and Windows paths are left exactly as written.
+    """
+    parts = _CODE_SPAN.split(text)
+    return "".join(part if part.startswith("`") else _plain_math(part) for part in parts)
 
 
 def clean_document_text(markdown: str) -> str:

@@ -51,6 +51,10 @@ class Config:
 
     # Reasoning effort for chat replies. "low" answers about twice as fast and costs less than the default.
     AI_CHAT_REASONING_EFFORT = os.getenv("AI_CHAT_REASONING_EFFORT", "low")
+    # The routing call can use a different deployment, so it gets its own effort. It falls
+    # back to the chat setting, which production keeps at "none" for tool calls.
+    AI_COURSE_CHECK_REASONING_EFFORT = os.getenv(
+        "AI_COURSE_CHECK_REASONING_EFFORT", AI_CHAT_REASONING_EFFORT)
     # Study replies are the one place the model gets more room and a harder think. The
     # raised ceiling is a maximum, not a target: Azure bills the tokens actually written.
     AI_STUDY_REASONING_EFFORT = os.getenv("AI_STUDY_REASONING_EFFORT", "medium")
@@ -59,7 +63,7 @@ class Config:
     AI_STUDY_MAX_TOKENS = int(os.getenv("AI_STUDY_MAX_TOKENS", 32000))
     # The call before a reply decides whether the course material is needed. It gets a short
     # answer, and its own deployment only when one is set; empty keeps it on the chat model.
-    AI_COURSE_CHECK_MAX_TOKENS = int(os.getenv("AI_COURSE_CHECK_MAX_TOKENS", 700))
+    AI_COURSE_CHECK_MAX_TOKENS = int(os.getenv("AI_COURSE_CHECK_MAX_TOKENS", 1500))
     AI_COURSE_CHECK_DEPLOYMENT = os.getenv("AI_COURSE_CHECK_DEPLOYMENT", "").strip()
     AI_DETAIL_MAX_TOKENS = int(os.getenv("AI_DETAIL_MAX_TOKENS", 12000))
     # Tool rounds per reply. Study requests may need to search several topics; normal chat does not.

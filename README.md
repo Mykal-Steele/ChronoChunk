@@ -242,7 +242,7 @@ The bot can answer questions about your university courses from the slides, lect
 - The material comes from the course sync in [`sync/`](sync/README.md). It runs on a PC, writes one file, `courses.db`, and uploads it to `data/state` on the server. The bot opens the new file on the next question, with no restart. With no file there, the bot has no course search.
 - The search runs in English, and material in Thai is translated when it is synced. For a question in another language the bot searches again with the topic in English.
 - A question is embedded with the `text-embedding-3-small` deployment, which is the model the sync embeds the material with. A file embedded with another model is not searched, and the log says so.
-- One reply looks the material up at most 3 times in chat, 6 times in a course reply and 8 times for a study request, the lookup for the message included. A normal lookup returns up to 6 passages, at most 2 from one deck or recording; study requests search wider and also start from a course outline. The numbers are at the top of `src/tools/courses.py` and `src/course_store.py`.
+- One reply looks the material up at most 3 times in chat or a normal course reply, 6 times for a detailed explanation and 10 times for a study request, the lookup for the message included. A normal lookup returns up to 6 passages, at most 2 from one deck or recording; study requests search wider and also start from a course outline. The numbers are at the top of `src/tools/courses.py` and `src/course_store.py`.
 
 ## Privacy
 
@@ -265,6 +265,7 @@ The bot stops calling the model when it reaches its spending cap, and starts aga
 | `AI_STUDY_REASONING_EFFORT` | medium | Reasoning for study material, when the reply has no tools. If tools are offered on a model that needs `none`, the chat setting wins |
 | `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` | empty | A cheaper deployment, such as gpt-5-nano, for picking facts out of messages. Empty uses the main one |
 | `AI_COURSE_CHECK_DEPLOYMENT` | empty | The model for the routing call that decides whether a message needs course material. Empty uses the chat model |
+| `AI_COURSE_CHECK_REASONING_EFFORT` | chat setting | Reasoning effort for the routing call. Production's chat setting is `none`, which its tool-calling model requires |
 
 Set these in `.env`. Costs are estimated from token counts and each model's price, and kept in the database, one row per day and model. `/usage` shows the current totals. Each reply also writes one log line with the images and files it read, the number of model calls and the estimated cost. The $20 monthly cap is the hard backstop; the personal caps are sized so three heavy users for a few days a month stay well under it.
 

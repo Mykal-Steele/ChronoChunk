@@ -23,9 +23,11 @@ class _Router:
 
     def __init__(self, original):
         self.original = original
+        self.calls = 0
         self.decide = lambda query: CourseNeed(needs_course=True)
 
     async def __call__(self, query, history, attached, codes, in_course, request):
+        self.calls += 1
         return self.decide(query)
 
 
@@ -675,11 +677,15 @@ async def test_the_routing_call_sees_the_catalog_and_returns_what_they_want(hand
         "search_query": "principal component analysis",
         "context": "They want a quiz on PCA for CSC340, using the course slides.",
         "is_rewrite": False,
+        "study_kind": "quiz",
+        "study_items": 10,
+        "wants_detail": False,
     })])
     need = await router.original(handler, "make 10 mcqs on pca -csc340", "", "", ["CSC340"], True,
                                  _turn(direction(pca=1)))
     assert need == CourseNeed(True, ["CSC340"], "principal component analysis",
-                              "They want a quiz on PCA for CSC340, using the course slides.", False)
+                              "They want a quiz on PCA for CSC340, using the course slides.", False,
+                              "quiz", 10, False)
     call = mock_openai_client.chat.completions.create.call_args[1]
     assert call["tool_choice"] == {"type": "function", "function": {"name": "check_course_need"}}
     system = call["messages"][0]["content"]
@@ -687,6 +693,31 @@ async def test_the_routing_call_sees_the_catalog_and_returns_what_they_want(hand
     assert "COURSE MODE: on for CSC340" in system
     asked = call["messages"][1]["content"]
     assert 'CURRENT MESSAGE:\n"make 10 mcqs on pca -csc340"' in asked
+
+
+async def test_a_cached_plain_answer_does_not_pay_for_the_routing_call_again(handler, mock_openai_client, router):
+    router.decide = lambda query: CourseNeed(needs_course=False)
+    mock_openai_client.chat.completions.create.return_value = _message(content="plain answer")
+    await handler.generate_reply("what is up", "", "Kruskal", "1", allow_files=True)
+    await handler.generate_reply("what is up", "", "Kruskal", "1", allow_files=True)
+    assert router.calls == 1
+
+
+async def test_the_flag_forces_the_material_even_when_the_router_says_no(handler, mock_openai_client, material, router):
+    router.decide = lambda query: CourseNeed(needs_course=False)
+    mock_openai_client.chat.completions.create.return_value = _message(content="pca cuts dimensions")
+    await handler.generate_reply("/what did the lecture say about pca -csc340", "", "Kruskal", "1", allow_files=True)
+    mock_openai_client.embeddings.create.assert_awaited_once()
+
+
+async def test_the_router_can_ask_for_a_study_guide_without_a_keyword(handler, mock_openai_client, router):
+    router.decide = lambda query: CourseNeed(needs_course=False, study_kind="guide")
+    mock_openai_client.chat.completions.create.return_value = _message(
+        content="Topic one.\n\n=== GUIDE COMPLETE ===")
+    reply = await handler.generate_reply("help me revise deadlocks", "", "Kruskal", "1", allow_files=True)
+    system = mock_openai_client.chat.completions.create.call_args[1]["messages"][0]["content"]
+    assert "STUDY GUIDE" in system
+    assert "GUIDE COMPLETE" not in reply.text
 
 
 async def test_a_rewrite_is_answered_without_searching_the_course(handler, mock_openai_client, material, router):

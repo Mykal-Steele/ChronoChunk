@@ -11,6 +11,9 @@ from src.study import MAX_STUDY_ITEMS, StudyRequest, study_prompt, study_request
     ("make a quiz for csc340", "quiz", 0),
     ("i need a study guide for the os final", "guide", 0),
     ("write 40 revision questions", "quiz", 40),
+    ("quiz me on deadlocks", "quiz", 0),
+    ("make 20 short answer questions", "short", 20),
+    ("20 Qs on pca", "quiz", 20),
 ])
 def test_study_requests_are_spotted(text, kind, count):
     request = study_request(text)
@@ -22,6 +25,8 @@ def test_study_requests_are_spotted(text, kind, count):
     "the quiz was hard",
     "what is a deadlock",
     "send the slides",
+    "my study notes on deadlocks are a mess",
+    "can you help me with these 5 questions",
     "",
 ])
 def test_ordinary_chat_is_not_a_study_request(text):
@@ -64,7 +69,14 @@ def test_the_guide_prompt_asks_for_examples_and_the_voice():
     prompt = study_prompt(StudyRequest("guide", 0))
     assert "worked example" in prompt
     assert "voice stays exactly the same" in prompt
+    assert "=== GUIDE COMPLETE ===" in prompt
     assert "Write exactly" not in prompt
+
+
+def test_the_short_prompt_asks_for_model_answers_not_an_answer_key():
+    prompt = study_prompt(StudyRequest("short", 10))
+    assert "Model answers" in prompt
+    assert "No multiple-choice options" in prompt
 
 
 @pytest.mark.parametrize("text, expected", [

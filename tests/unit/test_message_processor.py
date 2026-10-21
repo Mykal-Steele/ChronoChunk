@@ -47,6 +47,13 @@ def test_split_does_not_break_a_bare_link():
     assert any(link in chunk for chunk in chunks)
 
 
+def test_split_does_not_send_a_link_longer_than_the_limit():
+    link = "https://example.test/" + "a" * 3000
+    chunks = MessageProcessor._split_text(link)
+    assert len(chunks) > 1
+    assert all(len(chunk) <= 2000 for chunk in chunks)
+
+
 def test_split_keeps_code_blocks_closed_in_every_chunk():
     text = "here:\n```python\n" + "value = compute(1, 2)\n" * 300 + "```\ndone"
     chunks = MessageProcessor._split_text(text)
