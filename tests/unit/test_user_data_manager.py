@@ -1,5 +1,6 @@
 """Unit tests for UserDataManager. The data lives in the test database and the model is mocked."""
 import asyncio
+import sqlite3
 
 import pytest
 from unittest.mock import patch
@@ -183,6 +184,14 @@ def test_forget_user_also_deletes_their_reply_log(udm):
     udm.reply_log = MagicMock()
     udm.forget_user(USER_ID)
     udm.reply_log.delete_user.assert_called_once_with(USER_ID)
+
+
+def test_forget_does_not_report_success_when_the_reply_log_delete_fails(udm):
+    from unittest.mock import MagicMock
+    udm.reply_log = MagicMock()
+    udm.reply_log.delete_user.side_effect = sqlite3.OperationalError("database is locked")
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        udm.forget_user(USER_ID)
 
 
 async def test_a_forget_during_fact_extraction_is_not_undone(udm, mock_openai_client, fake_openai_response):

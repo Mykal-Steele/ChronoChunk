@@ -326,7 +326,14 @@ def _link_spans(text: str) -> List[Tuple[int, int]]:
 
 
 def _protected_spans(text: str) -> List[Tuple[int, int]]:
-    return sorted(_code_spans(text) + _link_spans(text))
+    """Code and link ranges, merged so a link inside code (or code inside a link) is one range."""
+    merged: List[Tuple[int, int]] = []
+    for start, end in sorted(_code_spans(text) + _link_spans(text)):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def _marks_outside_code(text: str) -> List[str]:
@@ -484,7 +491,9 @@ def _recent_day_hits(store: CourseStore, words: str, vector: List[float], codes:
             hits += day_hits
             if len(hits) >= RESULTS:
                 break
-    return hits
+        if len(hits) >= RESULTS:
+            break
+    return hits[:RESULTS]
 
 
 def _key(hit: Hit) -> tuple:

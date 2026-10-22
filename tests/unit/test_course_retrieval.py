@@ -141,6 +141,33 @@ def test_code_in_an_answer_keeps_its_brackets():
     assert render_sources("take list[2] and matrix[3]\n-# Source: [2]", SOURCES).startswith("take list[2] and matrix[3]\n")
 
 
+def test_a_link_inside_code_and_code_inside_a_link_are_kept_once():
+    fenced = "```\nsee [docs](https://example.com)\n```"
+    assert render_sources(fenced, {}) == fenced
+    inline = "see [`src/foo.py`](https://example.com)"
+    assert render_sources(inline, {}) == inline
+
+
+def test_a_latest_lookup_still_stops_at_the_normal_number_of_passages(tmp_path):
+    from src.course_retrieval import RESULTS, _recent_day_hits
+    from src.course_store import CourseStore
+    from tests.unit.test_course_store import direction
+
+    store = CourseStore.create(str(tmp_path / "courses.db"))
+    store.add_course("CSC345", "Data Science")
+    for day in ("2026-10-19", "2026-10-13", "2026-09-22"):
+        for number in range(2):
+            source = store.add_source("CSC345", "transcript", f"{day}-{number}", date=day)
+            for position in range(2):
+                store.add_chunk(source, position, f"{position}", f"topic {position}", direction(pca=1))
+    store.save()
+    try:
+        hits = _recent_day_hits(store, "pca", direction(pca=1), ["CSC345"])
+    finally:
+        store.close()
+    assert len(hits) == RESULTS
+
+
 def test_a_score_only_says_strong_when_it_is_high_enough_to_mean_it():
     from src.course_retrieval import label_of
     # Measured on 300 passages a judge read: from 0.55 up, 3 in 48 were off the topic. Under it, about 1 in 3.

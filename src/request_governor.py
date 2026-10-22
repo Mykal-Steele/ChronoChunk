@@ -45,9 +45,15 @@ class RequestGovernor:
                     await asyncio.wait_for(self._slots.acquire(), timeout=self.queue_timeout)
                 except asyncio.TimeoutError:
                     raise RequestBusy(self.queue_timeout) from None
+                acquired = True
+                # It is running now, not waiting. Counting it as a waiter would make the
+                # next request look like the queue is full while the slot is in use.
+                async with self._admission:
+                    self._waiting -= 1
+                    waited = False
             else:
                 await self._slots.acquire()
-            acquired = True
+                acquired = True
             yield
         finally:
             if waited:

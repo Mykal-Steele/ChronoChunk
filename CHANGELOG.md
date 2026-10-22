@@ -30,6 +30,9 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - GPT-5 sometimes wrote a planning note before its answer. That note is now removed, and the prompt tells the model to write only the message.
 - A reworded second answer that added a sentence slipped past the duplicate check because the whole-copy word share fell under 75%. The check now compares the later copy at paragraph and sentence level, so the extra sentence no longer hides it.
 - A weak course lookup is no longer shown to the model as a pile of confirmed answers. It is told the passages are related matches and must be checked, and a product or UI claim is never inferred from a setting's name.
+- `/forget` no longer says the data is gone when the encrypted reply log could not be deleted; the command reports that it failed.
+- A link inside a code block, or code inside a link label, is no longer duplicated when a source line is written.
+- A request that waited for a slot no longer keeps the queue marked as full while it runs, so a short burst does not turn away the next message.
 
 ## 3.20.0 (2026-10-21)
 

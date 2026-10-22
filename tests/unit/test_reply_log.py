@@ -104,6 +104,26 @@ def test_the_command_line_explains_a_wrong_or_missing_log(tmp_path, monkeypatch,
     assert "is the key the one that wrote it?" in capsys.readouterr().out
 
 
+def test_a_failed_delete_is_raised_instead_of_reported_as_success(tmp_path, monkeypatch):
+    log = _log(tmp_path / "replies.sqlite3")
+    def locked():
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(log, "_connect", locked)
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        log.delete_user("42")
+
+
+def test_an_unreadable_log_does_not_get_a_new_key(tmp_path, monkeypatch):
+    path = tmp_path / "replies.sqlite3"
+    key_path = tmp_path / "reply_log.key"
+    path.write_bytes(b"not a database")
+    monkeypatch.delenv("REPLY_LOG_KEY", raising=False)
+    monkeypatch.setattr(Config, "REPLY_LOG_KEY_PATH", str(key_path))
+    with pytest.raises(RuntimeError, match="could not check"):
+        ReplyLog(str(path))
+    assert not key_path.exists()
+
+
 def test_a_missing_key_does_not_silently_replace_the_key(tmp_path, monkeypatch):
     path = tmp_path / "replies.sqlite3"
     key_path = tmp_path / "reply_log.key"

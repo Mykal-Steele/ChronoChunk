@@ -345,11 +345,15 @@ class CourseStore:
 
     def chunk_counts(self) -> Dict[str, int]:
         """How many chunks every course has."""
-        with self._lock:
-            rows = self._connection.execute(
-                "SELECT sources.course, COUNT(*) AS chunks FROM chunks JOIN sources ON sources.id = chunks.source_id "
-                "GROUP BY sources.course").fetchall()
-        return {row["course"]: row["chunks"] for row in rows}
+        def read() -> Dict[str, int]:
+            with self._lock:
+                rows = self._connection.execute(
+                    "SELECT sources.course, COUNT(*) AS chunks FROM chunks JOIN sources ON sources.id = chunks.source_id "
+                    "GROUP BY sources.course").fetchall()
+            return {row["course"]: row["chunks"] for row in rows}
+        # The prompt reads this on every reply. A file only read does not change under the bot,
+        # so the aggregate is computed once and the copy kept here is safe.
+        return dict(self._once("chunk_counts", read))
 
     def search(self, query: str, vector: Sequence[float], course: Optional[str] = None, kind: Optional[str] = None,
                since: Optional[str] = None, limit: int = RESULTS, per_source: int = PER_SOURCE) -> List[Hit]:

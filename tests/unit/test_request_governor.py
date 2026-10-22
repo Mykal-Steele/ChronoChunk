@@ -31,6 +31,33 @@ async def test_a_slot_is_released_after_the_work_finishes():
         pass
 
 
+async def test_a_request_stops_counting_as_waiting_once_it_runs():
+    governor = RequestGovernor(max_concurrent=1, max_queued=1, queue_timeout=1)
+    holding = asyncio.Event()
+    release = asyncio.Event()
+    seen = []
+
+    async def holder():
+        async with governor.slot():
+            holding.set()
+            await release.wait()
+
+    async def waiter():
+        await holding.wait()
+        async with governor.slot():
+            seen.append(governor.waiting)
+
+    first = asyncio.create_task(holder())
+    await holding.wait()
+    second = asyncio.create_task(waiter())
+    await asyncio.sleep(0)
+    assert governor.waiting == 1
+    release.set()
+    await asyncio.gather(first, second)
+    assert seen == [0]
+    assert governor.waiting == 0
+
+
 async def test_a_full_queue_is_refused_immediately():
     governor = RequestGovernor(max_concurrent=1, max_queued=0, queue_timeout=1)
     async with governor.slot():

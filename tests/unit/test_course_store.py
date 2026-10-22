@@ -57,6 +57,14 @@ def test_a_new_file_can_be_opened_read_only(store, path):
     reader.close()
 
 
+def test_chunk_counts_are_cached_for_a_read_only_file(store, path):
+    reader = CourseStore.open(path)
+    first = reader.chunk_counts()
+    reader.chunk_counts()["CSC340"] = 999
+    assert reader.chunk_counts() == first
+    reader.close()
+
+
 def test_create_does_not_write_over_an_existing_file(store, path):
     with pytest.raises(FileExistsError):
         CourseStore.create(path)

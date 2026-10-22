@@ -106,8 +106,10 @@ class ReplyLog:
                 if "payload" not in columns:
                     return False
                 return db.execute("SELECT COUNT(*) FROM replies").fetchone()[0] > 0
-        except sqlite3.Error:
-            return False
+        except sqlite3.Error as error:
+            # A locked or corrupt file may still hold rows. Refuse to replace the key
+            # rather than guess that there is nothing worth keeping.
+            raise RuntimeError(f"could not check the reply log at {self.path}: {error}") from error
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=5)
@@ -231,15 +233,15 @@ class ReplyLog:
             }
 
     def delete_user(self, user_id: Optional[str]) -> int:
-        """Drop every reply written for one person. Used by /forget."""
-        try:
-            with closing(self._connect()) as db:
-                with db:
-                    cursor = db.execute("DELETE FROM replies WHERE user_hash = ?", (self._user_hash(user_id),))
-                    return cursor.rowcount
-        except Exception as error:
-            logger.warning(f"Could not delete reply log rows: {error!r}")
-            return 0
+        """Drop every reply written for one person. Used by /forget.
+
+        A failure is raised, not hidden: the command must not tell someone their data is gone
+        when the encrypted rows are still there.
+        """
+        with closing(self._connect()) as db:
+            with db:
+                cursor = db.execute("DELETE FROM replies WHERE user_hash = ?", (self._user_hash(user_id),))
+                return cursor.rowcount
 
 
 def _loads(value: Any) -> Any:
