@@ -124,6 +124,15 @@ def test_newest_leaves_out_sources_with_no_date(store):
     assert store.newest()["CSC345"] == {"transcript": "2026-10-06"}
 
 
+def test_days_gives_the_newest_dated_days_of_one_course(store):
+    store.add_source("CSC345", "transcript", "Lecture 10", date="2026-10-19")
+    store.add_source("CSC345", "slide", "Week 8", date="2026-10-13")
+    store.add_source("CSC345", "transcript", "Lecture 7", date="2026-09-22")
+    store.add_source("CSC345", "post", "Undated", date="")
+    assert store.days("CSC345", limit=2) == ["2026-10-19", "2026-10-13"]
+    assert store.days("CSC345", limit=0) == []
+
+
 def test_assignments_come_back_by_due_day_with_what_they_ask_for(store):
     late = store.add_source("CSC340", "assignment", "Mini project", url="https://example.test/a/2", date="2026-11-16")
     store.add_chunk(late, 0, "", "Mini project\nDue 2026-11-16 23:59 Bangkok time", direction(agents=1))

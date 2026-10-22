@@ -27,6 +27,7 @@ THE WEB:
 # Added as well while web_search is offered
 SEARCH_PROMPT = """- u can also search the web with the web_search tool.
 - web_search: use it when they ask about something recent or something that changes (news, prices, scores, releases, "latest", "current", "right now"), when they tell u to search or look something up, or when u are not sure a fact is still true today. set time_range when they want recent things. dont search for normal chat, opinions, or things u already know well.
+- use web_search when they ask how a named app, website, widget or setting works (for example Orange, Teams or Excel). never answer that from memory. if the results do not answer it, say u could not verify it.
 - a search gives short snippets. when a snippet is not enough to answer, open the best result with open_url.
 - if the search results dont answer it, say u couldnt find it.
 """

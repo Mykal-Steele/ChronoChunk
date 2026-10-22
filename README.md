@@ -142,6 +142,7 @@ ssh azureuser@<server address> /opt/chronochunk/update.sh
 ```
 
 4. Check it came back: `docker logs --tail 50 chronochunk`, or `/setup` in Discord, which shows the new version and a fresh uptime.
+5. Check the reply log started too: `docker logs chronochunk | grep "Reply log ready"`, then `docker compose exec bot python -m src.reply_log --tail 1`.
 
 ### Setting up a new server
 
@@ -333,10 +334,17 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/app -w /app c
 - GitHub Actions runs the linter, the type checker and the tests on every pull request and on every push to `main` (`.github/workflows/tests.yml`).
 - Changes are made on a branch, such as `feature/web-search` or `fix/spotify-links`, and reach `main` through a pull request once the tests pass. The server runs `main`.
 - Packages are pinned. `requirements.in` lists what the bot imports and `requirements.txt` is built from it. To change a version, edit `requirements.in` and run the command at the top of that file. `requirements-dev.in` works the same way for the test packages.
-- Data is in one SQLite file, `state/chronochunk.db`. To look inside: `sqlite3 state/chronochunk.db ".tables"`. The schema is the `MIGRATIONS` list in `src/database.py`. To change it, add a new entry at the end.
+- Data is in two SQLite files: `state/chronochunk.db` for the bot's memory and `state/replies.sqlite3` for the encrypted reply log. To look inside: `sqlite3 state/chronochunk.db ".tables"`. The schema is the `MIGRATIONS` list in `src/database.py`. To change it, add a new entry at the end. The reply log is not included in the database backups below.
 - The bot copies that file to `state/backups/chronochunk-<day>.db` at startup and once a day, and keeps 7 copies. To go back to one: stop the bot, delete `state/chronochunk.db-wal` and `state/chronochunk.db-shm` if they exist, copy the backup over `state/chronochunk.db`, and start the bot.
 - Logs go to `logs/chronochunk.log`. A new file starts each day and files older than 30 days are deleted.
-- Every answer also writes an encrypted row to `state/replies.sqlite3`: who and where, the message, the conversation history, the attached context, the routing answer, every tool call and what it returned, the reply, files, sources, cost and latency. Rows older than `REPLY_LOG_KEEP_DAYS` are deleted. The payload is a Fernet token; the database stores only a keyed user hash and non-text metadata. Set `REPLY_LOG_KEY` or keep the generated `state/reply_log.key` (mode 0600) to read it, for example with `ReplyLog.entries()`.
+- Every answer also writes an encrypted row to `state/replies.sqlite3`: who and where, the message, the conversation history, the attached context, the routing answer, every tool call and what it returned, the reply, files, sources, model, reasoning effort, cost and latency. Rows older than `REPLY_LOG_KEEP_DAYS` are deleted. The payload is a Fernet token; the database stores only a keyed user hash and non-text metadata. Set `REPLY_LOG_KEY` or keep the generated `state/reply_log.key` (mode 0600) to read it.
+- Read the reply log on the server with the built-in command:
+  ```bash
+  docker compose exec bot python -m src.reply_log --tail 20
+  docker compose exec bot python -m src.reply_log --tail 20 --json
+  docker compose exec bot python -m src.reply_log --user 123456789 --tail 50
+  ```
+  The file and key live in the mounted `state/` folder, so they survive a rebuild. On startup the log prints `Reply log ready at ...`; if that line is missing, the bot says why and keeps answering without the debug log.
 - Every answer writes an `Answered <name> in ...` line to the log with the seconds each step took: history, context, model and tools, and send. Start there when a reply was slow.
 
 ### Project structure

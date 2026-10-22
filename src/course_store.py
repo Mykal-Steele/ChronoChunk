@@ -300,6 +300,17 @@ class CourseStore:
             return result
         return {course: dict(kinds) for course, kinds in self._once("newest", read).items()}
 
+    def days(self, course: str, kinds: Sequence[str] = ("transcript", "slide"),
+             limit: int = 3) -> List[str]:
+        """The newest dated days of these kinds in one course, newest first. Undated sources are left out."""
+        marks = ",".join("?" * len(kinds))
+        with self._lock:
+            rows = self._connection.execute(
+                f"SELECT DISTINCT date FROM sources WHERE course = ? AND kind IN ({marks}) "
+                "AND date != '' ORDER BY date DESC LIMIT ?",
+                (course, *kinds, limit)).fetchall()
+        return [row["date"] for row in rows]
+
     def assignments(self, course: Optional[str] = None) -> List[dict]:
         """
         Every assignment, of one course or of all, by the day it is due, with the text that

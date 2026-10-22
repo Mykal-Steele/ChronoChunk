@@ -148,8 +148,12 @@ def test_a_score_only_says_strong_when_it_is_high_enough_to_mean_it():
     weak = _hit()
     weak.similarity = 0.54
     assert label_of([weak]) == "unsure" and label_of([]) == "nothing"
-    # A weaker score is no reason to tell the model its passages are off: a third of them answer the question
-    assert "loosely" not in format_hits("homework", [weak], {})
+    # A weaker score is no reason to tell the model its passages are off: a third of them answer the question.
+    # It is told to check them instead of treating them as confirmed.
+    text = format_hits("homework", [weak], {}, label="unsure")
+    assert "related matches, not confirmed answers" in text
+    assert "loosely" not in text
+    assert "related matches" not in format_hits("homework", [_hit()], {}, label="strong")
 
 
 def test_a_source_line_written_at_the_end_of_a_sentence_is_still_filled_in():

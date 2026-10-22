@@ -24,6 +24,8 @@ from src.tools.documents import MAX_FILES_PER_REPLY
 from src.course_session import CourseSessions
 from src.course_retrieval import render_sources
 from src.reply_log import ReplyLog
+from src.setup_info import self_prompt as self_setup_prompt
+from src.version import __version__
 from src.tools.courses import (
     LOOKED_UP_NOTE,
     NOT_LOOKED_UP,
@@ -123,7 +125,17 @@ MESSAGE LINKS:
 never bring up /game /music or other bot commands unless they ask.
 """
 
-# How many times the model may call tools before it has to answer in text. A course reply
+# Added only to replies where being wrong is expensive: course answers, screenshots,
+# detailed explanations and anything grounded by a web lookup. Normal banter keeps its voice.
+_ACCURACY_PROMPT = """
+
+ACCURACY CHECK FOR THIS REPLY:
+- for how a named app, website, widget or setting works, use the loaded material or a web result. never infer what it does from its name. if neither source answers it, say you are not sure and offer to look it up.
+- check a technical claim against numbers or results in the conversation. if the claim and the observed result disagree, trust the result and correct the claim.
+- for a screenshot, say what is visibly connected or written. if a wire, label or setting is unclear, say which part is unclear instead of guessing.
+- a weak search result is not proof that nothing exists. say what you checked, give the closest passage, and do not turn "i did not find it" into "there is nothing".
+- one short clarifying question is allowed when the evidence is genuinely ambiguous, especially for a screenshot. this is not asking permission and does not break the normal chat voice.
+"""
 # gets more, and a study reply more again, so several topics can be searched in one answer.
 MAX_TOOL_ROUNDS = Config.AI_CHAT_MAX_TOOL_ROUNDS
 
@@ -173,6 +185,12 @@ REPEAT_MIN_LIKENESS = 0.5
 # before share this much of theirs. The first copy may carry stray text, so less is asked of it.
 REPEAT_LATER_SHARE = 0.75
 REPEAT_EARLIER_SHARE = 0.5
+# A reworded copy can add a sentence, so the whole-tail word share falls under the line above.
+# Sentences that survive the rewrite are matched one by one instead.
+REPEAT_COPY_LATER_SHARE = 0.6
+REPEAT_COPY_EARLIER_SHARE = 0.5
+REPEAT_COPY_MIN_WORDS = 10
+REPEAT_COPY_MIN_SENTENCES = 3
 # gpt-5 sometimes writes its planning into the answer. These are the shapes that have leaked.
 _PLANNING_PREAMBLE = re.compile(
     r"^(?:"
@@ -328,7 +346,43 @@ def _second_copy(text: str) -> int:
         # Stray text between the copies gives two places the same score, and the later one leaves it out
         if later_share >= REPEAT_LATER_SHARE and earlier_share >= REPEAT_EARLIER_SHARE and later_share + earlier_share >= best:
             found, best = start, later_share + earlier_share
-    return found
+    if found != -1:
+        return found
+    return _reworded_copy_start(text)
+
+
+def _sentences(text: str) -> List[str]:
+    """The sentences of a reply, with code blocks left out of the comparison."""
+    plain = re.sub(r"```.*?```|~~~.*?~~~", " ", text, flags=re.DOTALL)
+    return [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", plain) if part.strip()]
+
+
+def _reworded_copy_start(text: str) -> int:
+    """Where a reworded copy starts, when it keeps most of the earlier words and adds a sentence."""
+    # A cut inside code would break it. The line-based check above already protects code.
+    if "```" in text or "~~~" in text:
+        return -1
+    for paragraph in re.finditer(r"\n", text):
+        start = paragraph.end()
+        earlier, later = text[:paragraph.start()], text[start:]
+        later_words = _telling_words(later)
+        if len(later_words) < REPEAT_COPY_MIN_WORDS:
+            continue
+        earlier_words = _telling_words(earlier)
+        if not earlier_words:
+            continue
+        # A copy brings no new number. Two lines built alike about CSC340 and CSC345 differ in theirs.
+        if any(word not in earlier_words for word in later_words if any(letter.isdigit() for letter in word)):
+            continue
+        shared = len(later_words & earlier_words)
+        if shared / len(later_words) < REPEAT_COPY_LATER_SHARE:
+            continue
+        if shared / len(earlier_words) < REPEAT_COPY_EARLIER_SHARE:
+            continue
+        if len(_sentences(later)) < REPEAT_COPY_MIN_SENTENCES:
+            continue
+        return start
+    return -1
 
 
 # Study replies are checked after they are written: a model asked for 30 questions can stop at 12,
@@ -748,6 +802,7 @@ class AIResponseHandler:
             file_gate=file_gate, web_gate=web_gate, course_gate=course_gate,
             user_id=user_id,
             channel_id=session_key.split(":", 1)[0] if session_key else None,
+            model=self.deployment,
         )
         timeout = (Config.AI_FILE_REQUEST_TIMEOUT_SECONDS if allow_files
                    else Config.AI_REQUEST_TIMEOUT_SECONDS)
@@ -852,6 +907,7 @@ class AIResponseHandler:
             if decision:
                 request.routing = asdict(decision)
             needs_course, study, detail, codes = _read_routing(decision, flagged, study, detail, codes)
+            request.needs_web = bool(decision and decision.needs_web)
             request.course_codes = codes if codes is not None else []
             request.study = bool(study)
             request.detail = detail or rewrite
@@ -882,6 +938,23 @@ class AIResponseHandler:
             if session is not None:
                 request.course_sources = session.sources
                 request.course_seen = session.seen
+            # A product or UI question is grounded before the answer is written, so the
+            # model cannot answer it from memory. The routing call decides when this is needed.
+            if request.needs_web and allow_files:
+                web_search = by_name.get("web_search")
+                if web_search:
+                    looked_up_web = await web_search.run({"query": clean_query[:300]}, request)
+                    request.tool_calls.append({
+                        "name": "web_search", "arguments": {"query": clean_query[:300]},
+                        "result": _shorten(looked_up_web.text),
+                    })
+                    if looked_up_web.text.startswith("error:"):
+                        user_parts.insert(-1, "(the web search for this question failed or was refused. do not guess; say you could not verify it.)")
+                    else:
+                        user_parts.insert(-1, "(this asks how a named app or UI works. the web result below was just looked up. answer from it; if it does not answer, say you could not verify it and do not guess from memory.)")
+                        user_parts.insert(-1, looked_up_web.text)
+                else:
+                    user_parts.insert(-1, "(this asks how a named app or UI works, but web search is unavailable. do not guess; say you could not verify it.)")
             files = request.files
             # The material is searched in English. The routing call writes the search when it can.
             # Without one, another script cannot be searched, so the model has to write the search.
@@ -905,9 +978,12 @@ class AIResponseHandler:
                            else DETAIL_PROMPT if detail
                            else REWRITE_PROMPT if rewrite
                            else "")
+            accuracy = _ACCURACY_PROMPT if (in_course or images or detail or study or rewrite or request.needs_web) else ""
             messages: List[dict] = [
                 {"role": "system",
-                 "content": _SYSTEM_PROMPT + "".join(tool.prompt() for tool in offered)
+                 "content": _SYSTEM_PROMPT + self_setup_prompt(self.deployment)
+                            + "".join(tool.prompt() for tool in offered)
+                            + accuracy
                             + (NO_FLAG_PROMPT if scope and not in_course else "") + extra_rules + emoji_prompt},
             ]
             if material:
@@ -920,6 +996,7 @@ class AIResponseHandler:
             # study prompt and its token ceiling still apply; only the extra think is skipped.
             if (study or detail or rewrite) and offered and Config.AI_CHAT_REASONING_EFFORT == "none":
                 effort = "none"
+            request.effort = effort
             deep = bool(study or detail or rewrite)
             rounds = (Config.AI_STUDY_MAX_TOOL_ROUNDS if deep
                       else Config.AI_COURSE_MAX_TOOL_ROUNDS if in_course
@@ -1068,15 +1145,20 @@ class AIResponseHandler:
             f"{request.tool_seconds:.1f}s in tools)"
         )
         if self.reply_log:
-            await asyncio.to_thread(
-                self.reply_log.record,
-                user_id=request.user_id, username=request.username, channel_id=request.channel_id,
-                query=request.query, conversation_history=request.history, attached_context=request.attached,
-                image_count=len(request.images), routing=request.routing, tool_calls=request.tool_calls,
-                reply=reply.text, files=[built.filename for built in reply.files],
-                sources=request.course_sources, model_calls=request.calls, cost=request.cost,
-                latency_ms=round(took * 1000), error=error,
-            )
+            try:
+                await asyncio.to_thread(
+                    self.reply_log.record,
+                    user_id=request.user_id, username=request.username, channel_id=request.channel_id,
+                    query=request.query, conversation_history=request.history, attached_context=request.attached,
+                    image_count=len(request.images), routing=request.routing, tool_calls=request.tool_calls,
+                    reply=reply.text, files=[built.filename for built in reply.files],
+                    sources=request.course_sources, model_calls=request.calls, cost=request.cost,
+                    latency_ms=round(took * 1000), error=error, model=request.model,
+                    reasoning_effort=request.effort, needs_web=request.needs_web, version=__version__,
+                )
+            except Exception as log_error:
+                # Logging is a side channel. A broken log must never cost the user their reply.
+                logger.warning(f"Could not write reply log: {log_error!r}")
 
     async def generate_response(self, query: str, conversation_history: str,
                                 username: str, user_id: Optional[str] = None,

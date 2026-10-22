@@ -5,7 +5,8 @@ import os
 import platform
 import re
 import time
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Callable, Optional, Tuple
 
 import aiohttp
 import discord
@@ -24,13 +25,20 @@ AZURE_METADATA_URL = "http://169.254.169.254/metadata/instance/compute?api-versi
 AZURE_METADATA_TIMEOUT_SECONDS = 3
 
 _started = time.monotonic()
+_started_at = datetime.now(timezone.utc)
+# Set by the bot once it is running. Gives aggregate server and member counts, never names or ids.
+_population: Optional[Callable[[], Tuple[Optional[int], Optional[int]]]] = None
 # Filled in once at startup by find_host. None means the bot is not on an Azure VM, or has not asked yet.
 _host: Optional[str] = None
+# The Azure fields the bot may repeat. Deliberately not the name, vm id, subscription, resource
+# group, resource id, tags, addresses or anything from the request: those aid reconnaissance.
+_azure: dict = {}
+AZURE_SAFE_FIELDS = ("location", "vmSize", "zone", "osType", "publisher", "offer", "sku")
 
 
 async def find_host() -> None:
     """Ask Azure which VM this is, so /setup can name it. Anywhere else the question just fails."""
-    global _host
+    global _host, _azure
     try:
         timeout = aiohttp.ClientTimeout(total=AZURE_METADATA_TIMEOUT_SECONDS)
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -41,8 +49,31 @@ async def find_host() -> None:
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, OSError):
         return
     if isinstance(vm, dict) and vm.get("vmSize"):
+        _azure = {key: str(vm[key]) for key in AZURE_SAFE_FIELDS if vm.get(key)}
         _host = f"Azure VM {vm.get('name', '?')}, {vm['vmSize']}, {vm.get('location', '?')}"
         logger.info(f"Running on {_host}")
+
+
+def track_population(provider: Optional[Callable[[], Tuple[Optional[int], Optional[int]]]]) -> None:
+    """Let the bot supply its server and member counts without setup_info importing the bot."""
+    global _population
+    _population = provider
+
+
+def _population_line() -> str:
+    """Aggregate server and member counts, never a name or an id."""
+    if not _population:
+        return ""
+    try:
+        guilds, members = _population()
+    except Exception:
+        return ""
+    if guilds is None:
+        return ""
+    text = f"in {guilds:,} servers"
+    if members:
+        text += f" with {members:,} people in them"
+    return text
 
 
 def _uptime() -> str:
@@ -62,16 +93,45 @@ def _read(path: str) -> str:
         return ""
 
 
+def _memory_total_mb() -> Optional[int]:
+    """The most memory this process may use: its cgroup cap, or the machine's total."""
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        cap = _read(path).strip()
+        if cap.isdigit() and int(cap) < 1 << 60:
+            return int(cap) // (1024 * 1024)
+    total = re.search(r"MemTotal:\s+(\d+) kB", _read("/proc/meminfo"))
+    return int(total.group(1)) // 1024 if total else None
+
+
+def _size(mb: int) -> str:
+    """A memory amount in the unit that reads best, such as "640 MB" or "15.3 GB"."""
+    if mb >= 1024:
+        return f"{mb / 1024:.1f}".removesuffix(".0") + " GB"
+    return f"{mb:,} MB"
+
+
 def _memory() -> str:
-    """Memory in use and the container's cap, such as "96 MB of 640 MB". Empty where Linux does not say."""
+    """Memory in use and the total it may use, such as "96 MB of 640 MB". Empty where Linux does not say."""
     used = re.search(r"VmRSS:\s+(\d+) kB", _read("/proc/self/status"))
     if not used:
         return ""
-    text = f"{int(used.group(1)) // 1024} MB"
-    cap = _read("/sys/fs/cgroup/memory.max").strip()
-    if cap.isdigit():
-        text += f" of {int(cap) // (1024 * 1024)} MB"
+    text = _size(int(used.group(1)) // 1024)
+    total = _memory_total_mb()
+    if total:
+        text += f" of {_size(total)}"
     return text
+
+
+def _load() -> str:
+    """CPU count and the machine's 1 minute load, such as "2 vCPU, load 0.42". Empty off Linux."""
+    cores = os.cpu_count()
+    if not cores:
+        return ""
+    try:
+        load = os.getloadavg()[0]
+    except OSError:
+        return f"{cores} vCPU"
+    return f"{cores} vCPU, load {load:.2f}"
 
 
 def _per(seconds: int) -> str:
@@ -88,6 +148,50 @@ def _courses() -> str:
     if not store:
         return "off, no course file the bot can search"
     return f"{len(store.courses())} courses, {sum(store.chunk_counts().values()):,} passages, embedded with {Config.EMBEDDING_DEPLOYMENT}"
+
+
+def _azure_line() -> str:
+    """Where the VM is, in public terms. Empty off Azure."""
+    if not _azure:
+        return "a dev machine (not azure)"
+    parts = [part for part in (_azure.get("vmSize"), _azure.get("location")) if part]
+    if _azure.get("zone"):
+        parts.append(f"zone {_azure['zone']}")
+    image = " ".join(_azure[key] for key in ("publisher", "offer", "sku") if key in _azure)
+    if image:
+        parts.append(f"{_azure.get('osType', '')} {image}".strip())
+    return "azure vm, " + ", ".join(parts)
+
+
+def self_prompt(chat_model: str) -> str:
+    """
+    What the bot knows about itself in chat. It is the same public kind of detail as /setup:
+    version, where it runs, the hardware, the models and what is switched on. No key, token,
+    path, address, account id, subscription or anyone's name is ever written here.
+    """
+    background = Config.AI_BACKGROUND_DEPLOYMENT or chat_model
+    background_note = ("the same model picks facts out of messages" if background == chat_model
+                       else f"{background} picks facts out of messages")
+    runtime = f"python {platform.python_version()}, discord.py {discord.__version__}"
+    in_docker = " in docker" if os.path.exists("/.dockerenv") else ""
+    hardware = ", ".join(part for part in (_load(), _memory()) if part)
+    population = _population_line()
+    rows = [
+        f"u are ChronoChunk v{__version__}, a discord bot with ur own personality. ur code is at {REPO_URL}",
+        f"u run on {_azure_line()}{in_docker}"
+        + (f", {hardware}" if hardware else "")
+        + f", up {_uptime()} (started {_started_at:%d %b %Y %H:%M} UTC). {runtime}",
+        *([f"u are {population}, counts only, u dont know their names"] if population else []),
+        f"ur chat model is {chat_model} (reasoning {Config.AI_CHAT_REASONING_EFFORT}), "
+        f"{background_note}, and {Config.EMBEDDING_DEPLOYMENT} embeds the course material",
+        f"web search is {'on' if Config.TAVILY_API_KEY else 'off'}. course material: {_courses()}",
+        "if someone asks what u are, say it straight in ur voice: a discord bot. dont deny it and dont turn into a help desk",
+        "only bring this up when someone asks about u, ur setup, where u run or what model u are. never recite it unprompted",
+        "never reveal keys, tokens, database contents, file paths, internal addresses, account or server ids, or other people's data. "
+        "if it is not in these facts, u do not know it",
+    ]
+    return ("\n\n=== WHAT U ACTUALLY ARE AND RUN ON (real facts u can talk about) ===\n- "
+            + "\n- ".join(rows) + "\n=== END OF WHAT U RUN ON ===")
 
 
 def setup_summary(chat_model: str) -> str:

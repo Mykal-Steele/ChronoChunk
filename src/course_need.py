@@ -33,6 +33,8 @@ class CourseNeed:
     study_kind: str = "none"  # "none", "quiz", "short" or "guide"
     # How many questions they asked for, 0 when they did not name a number.
     study_items: int = 0
+    # True when the answer depends on how a named app, website or UI works and is not in the course material.
+    needs_web: bool = False
     # True when they want the full explanation rather than the short version.
     detail: bool = False
 
@@ -95,9 +97,15 @@ def check_tool(codes: Sequence[str]) -> dict:
                         "description": "True when they asked for a full explanation, a chapter walkthrough, "
                                        "or another answer that needs more room than short chat.",
                     },
+                    "needs_web": {
+                        "type": "boolean",
+                        "description": "True when a correct answer depends on how a named app, website, "
+                                       "widget or UI setting works and the course material does not cover it. "
+                                       "False for ordinary chat and for facts the course material holds.",
+                    },
                 },
                 "required": ["needs_course", "course_codes", "search_query", "context", "is_rewrite",
-                             "study_kind", "study_items", "wants_detail"],
+                             "study_kind", "study_items", "wants_detail", "needs_web"],
                 "additionalProperties": False,
             },
         },
@@ -156,6 +164,12 @@ quiz, it just does not need their class files. "quiz me on deadlocks" is a quiz 
 True when they ask for the full explanation, a chapter walkthrough, step-by-step teaching, or another
 answer that needs more room than short chat. False for a quick definition or ordinary chat.
 
+8. needs_web
+True when a correct answer depends on how a named app, website, widget or UI setting works and the course
+material does not cover it. Examples: "what does Drop do in Orange", "why is this button greyed out in
+Teams". False for ordinary chat, general knowledge, coding, weather, and for facts the course material holds.
+This can be true while needs_course is false.
+
 The message they replied to is what "this", "that" and "it" mean. Do not treat exam dates, rooms, marks or
 rules as the topic of a rewrite unless they explicitly ask about them.
 """
@@ -191,4 +205,5 @@ def parse_check(arguments: str, codes: Sequence[str]) -> CourseNeed:
         study_kind=kind,
         study_items=items,
         detail=data.get("wants_detail") is True,
+        needs_web=data.get("needs_web") is True,
     )

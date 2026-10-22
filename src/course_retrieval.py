@@ -80,7 +80,8 @@ class Found:
     hits: List[Hit]
     # How many assignments the dated list holds
     rows: int
-    # strong, unsure or nothing. For the log and the check. The model is not told: it reads the passages itself.
+    # strong, unsure or nothing. The log keeps it, and an unsure lookup tells the model
+    # to check the passages rather than treat them as confirmed answers.
     label: str
     # What each number in the text stands for: number -> (name, link). "A" is the assignment list.
     sources: Dict[str, Tuple[str, str]] = field(default_factory=dict)
@@ -98,6 +99,10 @@ _NAMED_DAY = re.compile(r"\b\d{4}-\d{2}-\d{2}\b|\b(?:jan|feb|mar|apr|may|jun|jul
                         r"\b\d{1,2} ?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|\b\d{1,2}/\d{1,2}\b", re.IGNORECASE)
 # How many passages of a "latest" lookup come from the search. The rest are spread through that day.
 LATEST_SEARCHED = 3
+# "Latest" means the newest class, then the classes just before it. An announcement can sit
+# in the previous lecture, so one day is too narrow.
+RECENT_DAYS = 3
+RECENT_SEARCHED = 2
 
 
 def about_latest(message: str) -> bool:
@@ -408,7 +413,8 @@ def render_sources(text: str, sources: Dict[str, Tuple[str, str]]) -> str:
 
 
 def format_hits(query: str, hits: List[Hit], names: dict, rows: Sequence[str] = (), today: Optional[date] = None,
-                searched: bool = True, start: int = 1, repeats: Sequence[str] = ()) -> str:
+                searched: bool = True, start: int = 1, repeats: Sequence[str] = (),
+                label: str = "", note: str = "") -> str:
     """
     A lookup in a === block for the model: each passage under a numbered line that says
     where it is from, then the dated list. searched is False when the list alone
@@ -417,6 +423,11 @@ def format_hits(query: str, hits: List[Hit], names: dict, rows: Sequence[str] = 
     are the numbers of passages this search found that were shown before: they are named, not sent again.
     """
     lines = [f'=== COURSE MATERIAL for "{query}" ===']
+    if hits and label == "unsure":
+        lines.append("these passages are related matches, not confirmed answers. check that each one answers "
+                     "the question; if none does, say what you checked and give the closest one.")
+    if note:
+        lines.append(note)
     shown = " ".join(f"[{number}]" for number in repeats)
     if repeats and not hits:
         lines.append(f"nothing new: this search found only what was already shown as {shown}. answer from those, "
@@ -454,18 +465,25 @@ def format_hits(query: str, hits: List[Hit], names: dict, rows: Sequence[str] = 
     return "\n".join(lines)
 
 
-def _newest_day_hits(store: CourseStore, words: str, vector: List[float], codes: Sequence[str]) -> List[Hit]:
-    """The best passages of each course's newest lecture or slides, then passages spread through that day."""
-    newest = store.newest()
+def _recent_day_hits(store: CourseStore, words: str, vector: List[float], codes: Sequence[str]) -> List[Hit]:
+    """The best passages of each course's newest lecture, then the two before it, newest first."""
     hits: List[Hit] = []
     for code in codes:
-        day = max((newest.get(code, {}).get(kind, "") for kind in ("transcript", "slide")), default="")
-        if not day:
+        days = store.days(code, ("transcript", "slide"), RECENT_DAYS)
+        if not days:
             continue
-        found = [hit for hit in store.search(words, vector, code, None, day) if hit.date == day][:LATEST_SEARCHED]
-        keys = {_key(hit) for hit in found}
-        found += [hit for hit in store.spread(code, day) if _key(hit) not in keys][:RESULTS - len(found)]
-        hits += found
+        found = store.search(words, vector, code, None, since=days[-1], limit=RESULTS * 2)
+        seen = set()
+        for index, day in enumerate(days):
+            per_day = LATEST_SEARCHED if index == 0 else RECENT_SEARCHED
+            day_hits = [hit for hit in found if hit.date == day and _key(hit) not in seen][:per_day]
+            if not day_hits:
+                day_hits = [hit for hit in store.spread(code, day) if _key(hit) not in seen][:per_day]
+            for hit in day_hits:
+                seen.add(_key(hit))
+            hits += day_hits
+            if len(hits) >= RESULTS:
+                break
     return hits
 
 
@@ -486,7 +504,8 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
     the list is wanted for. first_number is the number the first passage gets. seen
     holds the passages this conversation was already shown, by the number each has.
     latest is for a question about the newest lecture or slides: each course in codes is
-    searched on its newest day only, and passages spread through that day fill the rest.
+    searched on its newest day, then the two before it, and passages spread through those
+    days fill the rest.
     many is for a study request: wider results and more from each source.
     """
     asked = asked or words
@@ -525,7 +544,7 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
                 hits.append(hit)
         hits = sorted(hits, key=lambda hit: (bool(kind) and hit.kind != kind, -hit.similarity))[:limit]
         if latest and codes and not since:
-            hits = await asyncio.to_thread(_newest_day_hits, store, words, vector, codes)
+            hits = await asyncio.to_thread(_recent_day_hits, store, words, vector, codes)
 
     rows: List[str] = []
     count = 0
@@ -535,6 +554,12 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
         rows = [f"- none posted{' for ' + ', '.join(codes) if codes else ''}"]
     names = {course["code"]: course["name"] for course in store.courses()}
     label = label_of(hits)
+    note = ""
+    if latest and codes and not since and hits:
+        days = sorted({hit.date for hit in hits if hit.date}, reverse=True)
+        if len(days) > 1:
+            note = (f"these passages cover the {len(days)} most recent lecture days, newest first: "
+                    + ", ".join(days))
     # A passage shown earlier in the conversation keeps its number and is not sent again
     seen = seen if seen is not None else {}
     repeats = list(dict.fromkeys(seen[_key(hit)] for hit in hits if _key(hit) in seen))
@@ -544,5 +569,6 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
     if dated:
         none = f": none posted{' for ' + ', '.join(codes) if codes else ''}" if not items else " list"
         sources["A"] = (f"teams assignments{none}", "")
-    return Found(format_hits(words, hits, names, rows, today, searched, first_number, repeats), hits, count, label, sources)
+    return Found(format_hits(words, hits, names, rows, today, searched, first_number, repeats, label, note),
+                 hits, count, label, sources)
 

@@ -13,6 +13,8 @@ from src.version import __version__
 @pytest.fixture(autouse=True)
 def no_host(monkeypatch):
     monkeypatch.setattr(setup_info, "_host", None)
+    monkeypatch.setattr(setup_info, "_azure", {})
+    monkeypatch.setattr(setup_info, "_population", None)
 
 
 async def _serve(monkeypatch, handler):
@@ -134,3 +136,100 @@ def test_the_summary_says_whether_the_test_bot_is_answered(monkeypatch):
     text = setup_info.setup_summary("gpt-6-luna")
     assert "test bot    answered in one test channel" in text
     assert "777000777000777000" not in text and "999000999000999000" not in text
+
+
+def test_the_self_prompt_names_the_version_and_the_models(monkeypatch):
+    monkeypatch.setattr(Config, "AI_BACKGROUND_DEPLOYMENT", "gpt-5-nano")
+    monkeypatch.setattr(Config, "AI_CHAT_REASONING_EFFORT", "low")
+    text = setup_info.self_prompt("gpt-6-luna")
+    assert f"ChronoChunk v{__version__}" in text
+    assert "chat model is gpt-6-luna (reasoning low)" in text
+    assert "gpt-5-nano picks facts out of messages" in text
+    assert "a discord bot" in text
+
+
+def test_off_azure_the_self_prompt_says_it_is_a_dev_machine():
+    assert "a dev machine (not azure)" in setup_info.self_prompt("gpt-6-luna")
+
+
+async def test_the_self_prompt_names_azure_but_not_the_account(monkeypatch):
+    async def metadata(request):
+        return web.json_response({
+            "name": "chronochunk-vm",
+            "vmSize": "Standard_B2ats_v2",
+            "location": "southeastasia",
+            "zone": "1",
+            "osType": "Linux",
+            "publisher": "Canonical",
+            "offer": "ubuntu-24_04-lts",
+            "sku": "server",
+            "subscriptionId": "sub-secret",
+            "resourceGroupName": "rg-secret",
+            "resourceId": "/subscriptions/sub-secret/resourceGroups/rg-secret/providers/x",
+            "vmId": "vm-secret",
+            "tags": "owner=secret",
+        })
+
+    runner = await _serve(monkeypatch, metadata)
+    try:
+        await setup_info.find_host()
+    finally:
+        await runner.cleanup()
+
+    text = setup_info.self_prompt("gpt-6-luna")
+    assert "azure vm, Standard_B2ats_v2, southeastasia, zone 1" in text
+    assert "Linux Canonical ubuntu-24_04-lts server" in text
+    for secret in ("chronochunk-vm", "sub-secret", "rg-secret", "vm-secret", "owner=secret"):
+        assert secret not in text
+
+
+def test_the_self_prompt_leaves_out_every_secret(monkeypatch):
+    monkeypatch.setattr(Config, "DISCORD_TOKEN", "discord-secret-token")
+    monkeypatch.setattr(Config, "TAVILY_API_KEY", "tavily-secret-key")
+    monkeypatch.setattr(Config, "AI_UNLIMITED_USER_IDS", {"424242424242"})
+    monkeypatch.setenv("AZURE_OPENAI_KEY", "azure-secret-key")
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://secret-resource.openai.azure.com/openai/v1")
+    text = setup_info.self_prompt("gpt-6-luna")
+    for secret in ("discord-secret-token", "tavily-secret-key", "424242424242", "azure-secret-key", "secret-resource"):
+        assert secret not in text
+    assert "chronochunk.db" not in text and "reply_log.key" not in text
+
+
+def test_the_self_prompt_stays_short():
+    assert len(setup_info.self_prompt("gpt-6-luna")) < 1600
+
+
+def test_the_self_prompt_counts_servers_and_people(monkeypatch):
+    monkeypatch.setattr(setup_info, "_population", lambda: (3, 120))
+    text = setup_info.self_prompt("gpt-6-luna")
+    assert "u are in 3 servers with 120 people in them, counts only" in text
+
+
+def test_a_broken_population_provider_is_ignored(monkeypatch):
+    def boom():
+        raise RuntimeError("no discord yet")
+
+    monkeypatch.setattr(setup_info, "_population", boom)
+    assert "servers" not in setup_info.self_prompt("gpt-6-luna")
+
+
+def test_memory_reads_the_container_cap(monkeypatch):
+    def fake(path):
+        return {
+            "/proc/self/status": "VmRSS: 98304 kB",
+            "/sys/fs/cgroup/memory.max": str(640 * 1024 * 1024),
+        }.get(path, "")
+
+    monkeypatch.setattr(setup_info, "_read", fake)
+    assert setup_info._memory() == "96 MB of 640 MB"
+
+
+def test_memory_falls_back_to_the_machine_total(monkeypatch):
+    def fake(path):
+        return {
+            "/proc/self/status": "VmRSS: 98304 kB",
+            "/proc/meminfo": "MemTotal:       4194304 kB",
+        }.get(path, "")
+
+    monkeypatch.setattr(setup_info, "_read", fake)
+    assert setup_info._memory() == "96 MB of 4 GB"

@@ -64,7 +64,15 @@ class ChronoChunk(commands.Bot):
         
         # One reply log shared by the AI handler and /forget, so deleting a person
         # deletes both their chat data and the encrypted copy of their replies.
-        self.reply_log = ReplyLog()
+        try:
+            self.reply_log = ReplyLog()
+            info = self.reply_log.describe()
+            logger.info(f"Reply log ready at {info['path']} ({info['rows']} rows, "
+                        f"{info['keep_days']}-day retention, key from {info['key_source']})")
+        except Exception as e:
+            # The bot can still answer without the debug log. Say so loudly instead of dying at startup.
+            logger.error(f"Reply log disabled, replies will not be recorded: {e!r}")
+            self.reply_log = None
 
         # Initialize the user data manager
         self.user_data_manager = UserDataManager(reply_log=self.reply_log)
@@ -134,6 +142,13 @@ class ChronoChunk(commands.Bot):
                 logger.error(f"Error handling voice state update: {e}")
                 logger.error(traceback.format_exc())
     
+    def _population_counts(self) -> tuple[int, int] | tuple[None, None]:
+        """Aggregate server and member counts for the bot's self-knowledge. No names, no ids."""
+        if not self.is_ready():
+            return None, None
+        members = sum(guild.member_count or 0 for guild in self.guilds)
+        return len(self.guilds), members
+
     async def setup_hook(self) -> None:
         """Setup hook for bot initialization"""
         try:
@@ -146,6 +161,8 @@ class ChronoChunk(commands.Bot):
         
         # /setup names the machine the bot is on
         await setup_info.find_host()
+        # Chat self-knowledge includes how many servers and people the bot can see, as counts only
+        setup_info.track_population(self._population_counts)
 
         # A copy of the database now and once a day. The task is kept so it is not garbage collected.
         self.backup_task = asyncio.create_task(backups.run_daily())

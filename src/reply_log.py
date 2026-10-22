@@ -4,6 +4,7 @@ The rotating text log is for quick tailing. This sqlite file is for looking up o
 when the model's output cannot explain itself and the conversation has already scrolled away. Everything
 that can identify a person or repeat what they wrote is encrypted before it reaches the database.
 """
+import argparse
 import base64
 import hashlib
 import hmac
@@ -11,9 +12,10 @@ import json
 import logging
 import os
 import sqlite3
+import sys
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -47,6 +49,7 @@ class ReplyLog:
         directory = os.path.dirname(self.path)
         if directory:
             os.makedirs(directory, exist_ok=True)
+        self._key_source = "provided"
         self._key = key or self._load_key()
         self._fernet = Fernet(self._key)
         self._hmac_key = base64.urlsafe_b64decode(self._key)
@@ -63,9 +66,11 @@ class ReplyLog:
         """The encryption key from the environment, or a generated key file with 0600 permissions."""
         configured = os.getenv("REPLY_LOG_KEY", "").strip()
         if configured:
+            self._key_source = "REPLY_LOG_KEY"
             return configured.encode("ascii")
 
         key_path = Config.REPLY_LOG_KEY_PATH
+        self._key_source = key_path
         directory = os.path.dirname(key_path)
         if directory:
             os.makedirs(directory, exist_ok=True)
@@ -78,11 +83,31 @@ class ReplyLog:
                 pass
             return key
 
+        # Never replace a lost key while encrypted rows are still there: a new key would
+        # quietly make every earlier reply unreadable.
+        if self._rows_need_a_key():
+            raise RuntimeError(
+                f"reply log has encrypted rows at {self.path} but its key file {key_path} is missing; "
+                "restore the key or move the log aside")
+
         key = Fernet.generate_key()
         descriptor = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(key + b"\n")
         return key
+
+    def _rows_need_a_key(self) -> bool:
+        """True when the file already has encrypted rows, so generating a new key would lose them."""
+        if not os.path.exists(self.path):
+            return False
+        try:
+            with closing(sqlite3.connect(self.path, timeout=1)) as db:
+                columns = {row[1] for row in db.execute("PRAGMA table_info(replies)")}
+                if "payload" not in columns:
+                    return False
+                return db.execute("SELECT COUNT(*) FROM replies").fetchone()[0] > 0
+        except sqlite3.Error:
+            return False
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=5)
@@ -156,6 +181,10 @@ class ReplyLog:
                 "files": fields.get("files"),
                 "sources": fields.get("sources"),
                 "error": fields.get("error"),
+                "model": fields.get("model"),
+                "reasoning_effort": fields.get("reasoning_effort"),
+                "needs_web": fields.get("needs_web"),
+                "version": fields.get("version"),
             }
             with closing(self._connect()) as db:
                 with db:
@@ -169,13 +198,23 @@ class ReplyLog:
         except Exception as error:
             logger.warning(f"Could not write reply log: {error!r}")
 
-    def entries(self) -> Iterator[Dict[str, Any]]:
-        """Decrypt every kept row, oldest first. Used by tests and the local debug checks."""
+    def describe(self) -> Dict[str, Any]:
+        """Where the log is, how long rows live, and how many are there now. Never includes the key."""
         with closing(self._connect()) as db:
-            rows = db.execute(
-                "SELECT id, created_at, image_count, model_calls, cost, latency_ms, payload "
-                "FROM replies ORDER BY id"
-            ).fetchall()
+            rows = db.execute("SELECT COUNT(*) FROM replies").fetchone()[0]
+        return {"path": self.path, "keep_days": self.keep_days, "rows": rows, "key_source": self._key_source}
+
+    def entries(self, user_id: Optional[str] = None) -> Iterator[Dict[str, Any]]:
+        """Decrypt every kept row, oldest first. Use user_id to read one person's rows."""
+        sql = ("SELECT id, created_at, image_count, model_calls, cost, latency_ms, payload "
+               "FROM replies")
+        params: tuple = ()
+        if user_id is not None:
+            sql += " WHERE user_hash = ?"
+            params = (self._user_hash(user_id),)
+        sql += " ORDER BY id"
+        with closing(self._connect()) as db:
+            rows = db.execute(sql, params).fetchall()
         for row in rows:
             try:
                 payload = json.loads(self._fernet.decrypt(row["payload"]).decode("utf-8"))
@@ -210,3 +249,64 @@ def _loads(value: Any) -> Any:
         return json.loads(value)
     except (TypeError, ValueError):
         return value
+
+
+def _show(entry: Dict[str, Any]) -> str:
+    """One reply as readable text, for the command line."""
+    lines = [f"[{entry.get('created_at', '?')}] {entry.get('username') or '?'} "
+             f"({entry.get('user_id') or 'no id'})"]
+    if entry.get("error"):
+        lines.append(f"error: {entry['error']}")
+    if entry.get("query"):
+        lines.append(f"asked: {entry['query']}")
+    if entry.get("reply"):
+        lines.append(f"replied: {entry['reply']}")
+    if entry.get("tool_calls"):
+        names = ", ".join(str(call.get("name", "?")) for call in entry["tool_calls"])
+        lines.append(f"tools: {names}")
+    if entry.get("model"):
+        parts = [str(entry["model"])]
+        if entry.get("reasoning_effort"):
+            parts.append(f"effort {entry['reasoning_effort']}")
+        if entry.get("needs_web"):
+            parts.append("routing wanted web")
+        if entry.get("version"):
+            parts.append(f"v{entry['version']}")
+        lines.append("model: " + ", ".join(parts))
+    if entry.get("model_calls") or entry.get("cost"):
+        lines.append(f"model calls: {entry.get('model_calls', 0)}, "
+                     f"cost: ${float(entry.get('cost') or 0):.4f}, "
+                     f"latency: {entry.get('latency_ms', 0)} ms")
+    return "\n".join(lines)
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Read the encrypted reply log: python -m src.reply_log --tail 20 [--json] [--user ID]."""
+    parser = argparse.ArgumentParser(description="Read ChronoChunk's encrypted reply log.")
+    parser.add_argument("--path", default=Config.REPLY_LOG_PATH, help="SQLite file (default: %(default)s)")
+    parser.add_argument("--tail", type=int, default=20, help="show the newest N rows (default: 20; 0 for all)")
+    parser.add_argument("--user", help="only rows for this Discord user id")
+    parser.add_argument("--json", action="store_true", help="print the full decrypted row as JSON")
+    args = parser.parse_args(argv)
+    if not os.path.exists(args.path):
+        print(f"no reply log at {args.path}")
+        return 1
+    log = ReplyLog(path=args.path)
+    total = log.describe()["rows"]
+    entries = list(log.entries(user_id=args.user))
+    if args.tail > 0:
+        entries = entries[-args.tail:]
+    if not entries:
+        if total and not args.user:
+            print(f"could not decrypt any of the {total} rows at {log.path}; is the key the one that wrote it?")
+            return 1
+        print(f"no replies logged at {log.path}")
+        return 0
+    for entry in entries:
+        print(_show(entry) if not args.json else json.dumps(entry, ensure_ascii=False, indent=2))
+        print()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

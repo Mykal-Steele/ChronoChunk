@@ -1,5 +1,6 @@
 """Unit tests for AIResponseHandler — Gemini client is mocked."""
 import re
+import sqlite3
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -254,6 +255,19 @@ async def test_bad_image_falls_back_to_a_text_only_request(handler, mock_openai_
     assert "images failed to load" in retry_content
 
 
+async def test_accuracy_rules_are_added_only_when_the_reply_can_be_wrong(handler, mock_openai_client, caplog):
+    await handler.generate_response("yo", "", "Kruskal", "123")
+    plain = mock_openai_client.chat.completions.create.call_args[1]["messages"][0]["content"]
+    assert "ACCURACY CHECK FOR THIS REPLY" not in plain
+
+    await handler.generate_reply("what is this", "", "Kruskal", "123",
+                                 attached_context="file: shot.png", images=["data:image/png;base64,AAAA"])
+    risky = mock_openai_client.chat.completions.create.call_args[1]["messages"][0]["content"]
+    assert "ACCURACY CHECK FOR THIS REPLY" in risky
+    assert "never infer what it does from its name" in risky
+    assert "screenshot" in risky
+
+
 async def test_system_prompt_covers_replies_and_staying_on_topic(handler):
     from src.ai_response_handler import _SYSTEM_PROMPT
     assert "MESSAGE THEY REPLIED TO" in _SYSTEM_PROMPT
@@ -344,6 +358,13 @@ async def test_each_reply_logs_what_it_read_and_what_it_cost(handler, mock_opena
     assert "read 1 images and 1 files" in line
     assert "1 model calls, about $0.2500, sent 0 files" in line
     assert re.search(r"took \d+\.\ds \(\d+\.\ds waiting for the model, \d+\.\ds in tools\)$", line)
+
+
+async def test_a_broken_reply_log_does_not_cost_the_user_their_answer(handler, mock_openai_client):
+    handler.reply_log = MagicMock()
+    handler.reply_log.record.side_effect = sqlite3.OperationalError("database is locked")
+    reply = await handler.generate_reply("still answer me", "", "Kruskal", "1")
+    assert reply.ok and reply.text
 
 
 async def test_tools_are_only_offered_when_files_are_allowed(handler, mock_openai_client):
@@ -1050,6 +1071,22 @@ def test_a_second_copy_on_a_new_line_is_the_one_sent(handler, case):
 ])
 def test_a_reply_with_lines_that_look_alike_is_not_cut(handler, reply):
     assert handler._format_ai_response(reply).lower() == reply.lower()
+
+
+def test_a_reworded_copy_with_an_extra_sentence_is_cut():
+    """The failure from 22 Oct: the later copy shared 68% of its words, under the old 75% line."""
+    from src.ai_response_handler import _without_repeat
+    first = ("Yeah, **in principle** you can test different feature combinations and keep the best one, "
+             "but trying every subset gets huge fast: 10 features already means 1,023 combinations. "
+             "Start with a few sensible comparisons, like adding `CryoSleep`, then check the winner on "
+             "data you didn’t use to choose it so you don’t just overfit the score.")
+    second = ("Yeah, in principle, trying different feature combinations can help you find a better score. "
+              "But every subset adds up fast: 10 features means 1,023 combinations.\n\n"
+              "Start by testing sensible additions like `CryoSleep`. Choose based on validation results, "
+              "then check the final model on untouched test data so you don’t just overfit to the score.")
+    out = _without_repeat(first + "\n" + second)
+    assert out.startswith("Yeah, in principle, trying different feature combinations")
+    assert "you can test different feature combinations and keep the best one" not in out
 
 
 def test_none_of_the_example_replies_is_cut(handler):
