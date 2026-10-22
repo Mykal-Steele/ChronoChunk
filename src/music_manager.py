@@ -9,6 +9,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 import yt_dlp
 
+from config.config import Config
 from src import usage_context
 
 logger = logging.getLogger(__name__)
@@ -37,11 +38,13 @@ def spotify_query_from_page(page: str) -> str:
 
 class Song:
     """Represents a song with metadata"""
-    def __init__(self, url: str, title: str, duration: int, requested_by: str):
+    def __init__(self, url: str, title: str, duration: int, requested_by: str,
+                 requested_by_id: Optional[str] = None):
         self.url = url
         self.title = title
         self.duration = duration  # in seconds
         self.requested_by = requested_by
+        self.requested_by_id = requested_by_id or ""
         
     def __str__(self):
         return f"{self.title} [{self.format_duration()}] (requested by {self.requested_by})"
@@ -66,6 +69,8 @@ class GuildMusicState:
         self.loop = False
         self.last_activity = time.time()  # Track when the last activity occurred
         self.alone_since: Optional[float] = None  # when the last person left the voice channel
+        # One extraction at a time per guild, so a burst cannot start many yt-dlp jobs.
+        self.lock = asyncio.Lock()
 
 class MusicManager:
     """Manages music playback across all guilds"""
@@ -85,7 +90,7 @@ class MusicManager:
             'format': 'bestaudio/best',
             'restrictfilenames': True,
             'noplaylist': True,
-            'nocheckcertificate': True,
+            'nocheckcertificate': False,
             'ignoreerrors': False,
             'quiet': True,
             'no_warnings': True,
@@ -223,7 +228,7 @@ class MusicManager:
             options = {
                 'format': 'bestaudio/best',
                 'noplaylist': True,
-                'nocheckcertificate': True,
+                'nocheckcertificate': False,
                 'ignoreerrors': False,
                 'logtostderr': False,
                 'quiet': True,
@@ -232,8 +237,8 @@ class MusicManager:
                 'source_address': '0.0.0.0',  # IPv6 addresses cause issues sometimes
                 'extract_flat': False,  # Full extraction
                 'skip_download': True,  # We only need the info
-                'retries': 10,          # Retry more times
-                'socket_timeout': 30,   # Increase timeout further
+                'retries': 2,           # Fail fast; the request itself has a deadline
+                'socket_timeout': 15,   # Do not hold a guild slot for half a minute
                 # Add these new options to filter out members-only content
                 'match_filter': lambda info_dict: None if info_dict.get('availability') == 'subscriber_only' else None if 'members only' in info_dict.get('title', '').lower() else None if info_dict.get('premium') is True else True,
             }
@@ -278,8 +283,9 @@ class MusicManager:
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
     
-    async def play(self, guild_id: int, url: str, requested_by: str) -> Tuple[bool, str]:
-        """Add a song to the queue and start playing if not already"""
+    async def play(self, guild_id: int, url: str, requested_by: str,
+                   requested_by_id: Optional[str] = None) -> Tuple[bool, str]:
+        """Add a song to the queue and start playing if not already."""
         state = self.get_guild_music_state(guild_id)
         
         try:
@@ -288,30 +294,41 @@ class MusicManager:
             
             # There's user activity, so the bot is no longer counted as alone
             state.alone_since = None
-            
-            # Rest of the method remains the same
-            logger.info(f"Attempting to play: {url} (requested by {requested_by})")
-            audio_url, title, duration = await self.extract_info(url, requested_by)
-            
-            # Log the audio URL (truncated for security)
-            logger.info(f"Audio URL obtained (first 50 chars): {audio_url[:50]}...")
-            
-            # Create song object
-            song = Song(audio_url, title, duration, requested_by)
-            
-            # Add to queue
-            state.queue.append(song)
-            
-            # Start playing if not already
-            if not state.is_playing and not state.is_paused:
-                return await self._play_next(guild_id)
-            
-            return True, f"Added to queue: {song}"
-            
+
+            async with state.lock:
+                # Check the caps before doing an expensive yt-dlp lookup.
+                if len(state.queue) >= Config.MUSIC_MAX_QUEUE_PER_GUILD:
+                    return False, f"the queue is full ({Config.MUSIC_MAX_QUEUE_PER_GUILD} songs). wait for one to finish"
+                requester = requested_by_id or requested_by
+                mine = sum(1 for song in state.queue
+                           if (song.requested_by_id or song.requested_by) == requester)
+                if state.current_song and (state.current_song.requested_by_id or state.current_song.requested_by) == requester:
+                    mine += 1
+                if mine >= Config.MUSIC_MAX_SONGS_PER_USER:
+                    return False, f"u already have {Config.MUSIC_MAX_SONGS_PER_USER} songs in the queue. let one play first"
+
+                logger.info(f"Attempting to play: {url} (requested by {requested_by})")
+                audio_url, title, duration = await self.extract_info(url, requested_by)
+
+                # Log the audio URL (truncated for security)
+                logger.info(f"Audio URL obtained (first 50 chars): {audio_url[:50]}...")
+
+                # Create song object
+                song = Song(audio_url, title, duration, requested_by, requested_by_id)
+
+                # Add to queue
+                state.queue.append(song)
+
+                # Start playing if not already
+                if not state.is_playing and not state.is_paused:
+                    return await self._play_next(guild_id)
+
+                return True, f"Added to queue: {song}"
+
         except Exception as e:
             error_message = str(e)
             logger.error(f"Error playing music: {error_message}")
-            
+
             # Provide user-friendly error messages
             if "No results found" in error_message:
                 return False, "couldn't find any songs matching that query"
@@ -485,106 +502,96 @@ class MusicManager:
         state = self.get_guild_music_state(guild_id)
         return state.current_song
     
-    async def get_related_song(self, guild_id: int, requested_by: str) -> Tuple[bool, str]:
+    async def get_related_song(self, guild_id: int, requested_by: str,
+                               requested_by_id: Optional[str] = None) -> Tuple[bool, str]:
         """Get a related song based on YouTube's recommendations for the currently playing song"""
-        # Update activity timestamp
         self.update_activity(guild_id)
-        
-        # Check if there's a current song to base recommendations on
-        current_song = self.get_current_song(guild_id)
-        if not current_song:
-            return False, "nothing is currently playing to get recommendations for"
-        
+        state = self.get_guild_music_state(guild_id)
         try:
-            # Get video ID from the current song's URL if it's a YouTube URL
-            video_id = None
-            youtube_match = re.match(YOUTUBE_REGEX, current_song.url)
-            
-            if youtube_match:
-                # Direct extraction if it's a YouTube URL
-                video_id = youtube_match.group(1)
-            else:
-                # Otherwise, search for the song on YouTube to get a video ID
-                options = {
-                    'default_search': 'ytsearch',
-                    'noplaylist': True,
-                    'extract_flat': True,
-                    'skip_download': True,
-                    'quiet': True,
-                    'no_warnings': True
-                }
-                
-                with yt_dlp.YoutubeDL(options) as ydl:  # pyright: ignore[reportArgumentType]
-                    logger.info(f"Searching YouTube for: {current_song.title}")
-                    search_results: Any = await asyncio.get_event_loop().run_in_executor(
-                        None, lambda: ydl.extract_info(f"ytsearch1:{current_song.title}", download=False)
-                    )
-                    
-                    if not search_results or 'entries' not in search_results or not search_results['entries']:
-                        return False, "couldn't find the source video to get recommendations"
-                    
-                    video_id = search_results['entries'][0]['id']
-            
-            if not video_id:
-                return False, "couldn't determine video ID for recommendations"
-                
-            logger.info(f"Found video ID: {video_id}")
-            video_url = f"https://www.youtube.com/watch?v={video_id}"
-            
-            # Now get related videos
-            options = {
-                'skip_download': True,
-                'extract_flat': True,
-                'quiet': True,
-                'no_warnings': True,
-                # Add filter for members-only content
-                'match_filter': lambda info_dict: None if info_dict.get('availability') == 'subscriber_only' else None if 'members only' in info_dict.get('title', '').lower() else None if info_dict.get('premium') is True else True,
-            }
-            
-            with yt_dlp.YoutubeDL(options) as ydl:  # pyright: ignore[reportArgumentType]
-                logger.info(f"Getting recommendations for video ID: {video_id}")
-                
-                # Get video info without downloading
-                video_info = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: ydl.extract_info(video_url, download=False)
-                )
-                
-                if not video_info:
-                    return False, "failed to get video information"
-                    
-                # Check for related videos
-                if not video_info.get('related_videos'):
-                    return False, "no recommendations found for this song"
-                    
-                # Get 5 related videos maximum (that aren't members-only)
-                related_videos = []
-                for video in video_info.get('related_videos', []):
-                    # Skip if it's a members-only video
-                    if video.get('availability') == 'subscriber_only' or 'members only' in video.get('title', '').lower() or video.get('premium') is True:
-                        continue
-                    related_videos.append(video)
-                    if len(related_videos) >= 5:
-                        break
-                    
-                if not related_videos:
-                    return False, "no valid recommendations found (filtered out members-only content)"
-                    
-                # Select a random related video
-                import random
-                related_video = random.choice(related_videos)
-                related_url = f"https://www.youtube.com/watch?v={related_video['id']}"
-                
-                logger.info(f"Selected related video: {related_video.get('title', 'Unknown')} ({related_url})")
-                
-                # Play the related song
-                return await self.play(guild_id, related_url, requested_by)
-                
+            async with state.lock:
+                current_song = state.current_song
+                if not current_song:
+                    return False, "nothing is currently playing to get recommendations for"
+                related_url, error = await self._related_video_url(current_song)
+            if not related_url:
+                return False, error
+            return await self.play(guild_id, related_url, requested_by, requested_by_id)
         except Exception as e:
             logger.error(f"Error getting related song: {e}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False, f"error finding related song: {str(e)}"
-    
+
+    async def _related_video_url(self, current_song: Song) -> Tuple[Optional[str], str]:
+        """Find one playable recommendation for a song, or the reason there is none."""
+        video_id = None
+        youtube_match = re.match(YOUTUBE_REGEX, current_song.url)
+
+        if youtube_match:
+            video_id = youtube_match.group(1)
+        else:
+            options = {
+                'default_search': 'ytsearch',
+                'noplaylist': True,
+                'extract_flat': True,
+                'skip_download': True,
+                'quiet': True,
+                'no_warnings': True
+            }
+
+            with yt_dlp.YoutubeDL(options) as ydl:  # pyright: ignore[reportArgumentType]
+                logger.info(f"Searching YouTube for: {current_song.title}")
+                search_results: Any = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: ydl.extract_info(f"ytsearch1:{current_song.title}", download=False)
+                )
+
+                if not search_results or 'entries' not in search_results or not search_results['entries']:
+                    return None, "couldn't find the source video to get recommendations"
+
+                video_id = search_results['entries'][0]['id']
+
+        if not video_id:
+            return None, "couldn't determine video ID for recommendations"
+
+        logger.info(f"Found video ID: {video_id}")
+        video_url = f"https://www.youtube.com/watch?v={video_id}"
+        options = {
+            'skip_download': True,
+            'extract_flat': True,
+            'quiet': True,
+            'no_warnings': True,
+            'match_filter': lambda info_dict: None if info_dict.get('availability') == 'subscriber_only' else None if 'members only' in info_dict.get('title', '').lower() else None if info_dict.get('premium') is True else True,
+        }
+
+        with yt_dlp.YoutubeDL(options) as ydl:  # pyright: ignore[reportArgumentType]
+            logger.info(f"Getting recommendations for video ID: {video_id}")
+            video_info = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: ydl.extract_info(video_url, download=False)
+            )
+
+            if not video_info:
+                return None, "failed to get video information"
+
+            if not video_info.get('related_videos'):
+                return None, "no recommendations found for this song"
+
+            related_videos = []
+            for video in video_info.get('related_videos', []):
+                if video.get('availability') == 'subscriber_only' or 'members only' in video.get('title', '').lower() or video.get('premium') is True:
+                    continue
+                related_videos.append(video)
+                if len(related_videos) >= 5:
+                    break
+
+            if not related_videos:
+                return None, "no valid recommendations found (filtered out members-only content)"
+
+            import random
+            related_video = random.choice(related_videos)
+            related_url = f"https://www.youtube.com/watch?v={related_video['id']}"
+            logger.info(f"Selected related video: {related_video.get('title', 'Unknown')} ({related_url})")
+            return related_url, ""
+
     def clear_queue(self, guild_id: int) -> bool:
         """Clear the queue for the guild"""
         state = self.get_guild_music_state(guild_id)

@@ -17,4 +17,15 @@ class RateLimitError(BotError):
     """Yo chill with the requests"""
     def __init__(self, retry_after: float):
         self.retry_after = retry_after
-        super().__init__(f"Rate limited, try again in {retry_after:.1f} seconds") 
+        super().__init__(f"Rate limited, try again in {retry_after:.1f} seconds")
+
+
+class RequestBusy(BotError):
+    """The bot is already handling as many replies as it can."""
+    def __init__(self, retry_after: float):
+        self.retry_after = retry_after
+        super().__init__(f"Busy, try again in {retry_after:.1f} seconds")
+
+
+class ReplyLimitError(BotError):
+    """One reply tried to make too many model calls or cost too much."""

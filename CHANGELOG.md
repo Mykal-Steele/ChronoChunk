@@ -14,12 +14,16 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 ### Added
 
-- Every answer is recorded in `state/replies.sqlite3`: the user and channel, the message, the conversation history, the attached context, the routing answer, every tool call and what it returned, the reply, files, sources, model calls, cost and latency. Rows older than 30 days are deleted. `REPLY_LOG_PATH` and `REPLY_LOG_KEEP_DAYS` change where it goes and how long it is kept.
+- Every answer is recorded in `state/replies.sqlite3`: the user and channel, the message, the conversation history, the attached context, the routing answer, every tool call and what it returned, the reply, files, sources, model calls, cost and latency. The text is encrypted before it reaches disk, and `/forget` deletes the user's rows. Rows older than 30 days are deleted. `REPLY_LOG_PATH`, `REPLY_LOG_KEEP_DAYS`, `REPLY_LOG_KEY` and `REPLY_LOG_KEY_PATH` change where it goes, how long it is kept, and which key protects it.
 - A request that asks for several files gets up to five tool rounds, so "make five diagrams" can make all five. Ordinary chat and one-file requests keep the lower round limit.
+- Every model reply runs behind one deadline and one share of the bot's capacity. A bounded queue turns extra work away quickly, and each reply has a model-call and cost ceiling.
+- Music requests are capped per guild and per person, destructive controls need Manage Server, and yt-dlp verifies TLS and retries less.
+- A long web page is read in parts of about 12,000 characters. The answer says where the next part starts, and the bot opens it only when it needs the rest.
 
 ### Fixed
 
 - A reply that named passages but forgot its `-# Source:` line showed bare numbers such as `[10] [12] [13]`. The source line is now written from those numbers, and the bare numbers are removed.
+- GPT-5 sometimes wrote a planning note before its answer. That note is now removed, and the prompt tells the model to write only the message.
 
 ## 3.20.0 (2026-10-21)
 

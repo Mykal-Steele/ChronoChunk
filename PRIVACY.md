@@ -43,10 +43,10 @@ The bot cannot answer without sending some of what you write to other services:
 ## See or delete your data
 
 - `/info` or `/mydata` shows what the bot has stored about you. Only you see the answer.
-- `/forget` deletes everything stored about you.
+- `/forget` deletes everything stored about you, including the encrypted reply-log rows tied to your user hash.
 - `/forget <text>` deletes the one fact that matches.
 
-Nothing about you is deleted on a timer. Your rows stay until you run `/forget`, or until the person running the bot removes them.
+Your profile, facts and conversations stay until you run `/forget`, or until the person running the bot removes them. The reply log is kept for `REPLY_LOG_KEEP_DAYS` (30 days by default) and then deleted. Its text is encrypted before it is written, and `/forget` deletes your rows sooner.
 
 The bot copies its database once a day, on the same server, so a damaged file does not lose everyone's data. It keeps 7 copies. What you delete with `/forget` is gone from the database at once and from the last copy 7 days later. The copies are not shared with anyone.
 

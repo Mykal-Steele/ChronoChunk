@@ -7,6 +7,11 @@ from src import web_tools
 from src.web_tools import NotPublicError, WebError
 
 
+@pytest.fixture(autouse=True)
+def clear_page_cache():
+    web_tools._page_cache.clear()
+
+
 @pytest.fixture
 def search_key(monkeypatch):
     monkeypatch.setattr(Config, "TAVILY_API_KEY", "tvly-test")
@@ -103,11 +108,45 @@ async def test_read_page_wraps_the_text_in_a_block(monkeypatch, no_search_key):
     assert "cut off" not in block
 
 
-async def test_read_page_cuts_a_long_page(monkeypatch, no_search_key):
-    monkeypatch.setattr(web_tools, "_download", AsyncMock(return_value=("", "z" * (web_tools.MAX_PAGE_CHARS + 50))))
+async def test_read_page_returns_a_long_page_in_parts(monkeypatch, no_search_key):
+    download = AsyncMock(return_value=("", "z" * (web_tools.MAX_PAGE_CHARS + 50)))
+    monkeypatch.setattr(web_tools, "_download", download)
     block = await web_tools.read_page("https://example.com/")
     assert block.count("z") == web_tools.MAX_PAGE_CHARS
-    assert "the rest was cut off" in block
+    assert f"part: characters 0-{web_tools.MAX_PAGE_CHARS} of {web_tools.MAX_PAGE_CHARS + 50}" in block
+    assert f"page continues at character {web_tools.MAX_PAGE_CHARS}" in block
+
+    rest = await web_tools.read_page("https://example.com/", offset=web_tools.MAX_PAGE_CHARS)
+    assert rest.count("z") == 50
+    assert f"part: characters {web_tools.MAX_PAGE_CHARS}-{web_tools.MAX_PAGE_CHARS + 50} of {web_tools.MAX_PAGE_CHARS + 50}" in rest
+    assert "page continues" not in rest
+    download.assert_awaited_once()
+
+
+async def test_a_page_part_ends_at_a_paragraph(monkeypatch, no_search_key):
+    monkeypatch.setattr(web_tools, "_download", AsyncMock(return_value=("", "z" * 11000 + "\n\n" + "y" * 5000)))
+    block = await web_tools.read_page("https://example.com/")
+    assert block.count("z") == 11000
+    assert block.count("y") == 0
+    assert "part: characters 0-11002 of 16002" in block
+
+    rest = await web_tools.read_page("https://example.com/", offset=11002)
+    assert rest.count("y") == 5000
+
+
+async def test_an_offset_past_the_end_says_so(monkeypatch, no_search_key):
+    monkeypatch.setattr(web_tools, "_download", AsyncMock(return_value=("", "short page")))
+    block = await web_tools.read_page("https://example.com/", offset=500)
+    assert "the page has 10 characters; offset 500 is past the end" in block
+
+
+async def test_open_url_passes_the_offset(monkeypatch):
+    from src.tools.web import OpenUrl
+    page = AsyncMock(return_value="part")
+    monkeypatch.setattr("src.tools.web.read_page", page)
+    result = await OpenUrl()._look_up("https://example.com/big", {"url": "https://example.com/big", "offset": 12000})
+    assert result == "part"
+    page.assert_awaited_once_with("https://example.com/big", offset=12000)
 
 
 async def test_a_nearly_empty_page_is_read_through_tavily(monkeypatch, search_key):

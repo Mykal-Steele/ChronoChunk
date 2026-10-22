@@ -62,8 +62,12 @@ class ChronoChunk(commands.Bot):
             intents=intents
         )
         
+        # One reply log shared by the AI handler and /forget, so deleting a person
+        # deletes both their chat data and the encrypted copy of their replies.
+        self.reply_log = ReplyLog()
+
         # Initialize the user data manager
-        self.user_data_manager = UserDataManager()
+        self.user_data_manager = UserDataManager(reply_log=self.reply_log)
         
         # Create game manager
         self.game_manager = GameManager()
@@ -76,7 +80,7 @@ class ChronoChunk(commands.Bot):
             endpoint=AZURE_OPENAI_ENDPOINT,
             api_key=AZURE_OPENAI_KEY,
             deployment=AZURE_OPENAI_DEPLOYMENT,
-            reply_log=ReplyLog(),
+            reply_log=self.reply_log,
         )
         
         # PDFs are described page by page with the same model and budget as chat

@@ -40,6 +40,24 @@ def test_format_strips_bot_prefix(handler):
     assert not result.lower().startswith("bot:")
 
 
+def test_format_removes_planning_before_the_answer(handler):
+    leaked = (
+        "Need no source. Also code formatting background says hates code block but inline code okay. "
+        "We can simply remove source.\n\nThe answer is 42."
+    )
+    result = handler._format_ai_response(leaked)
+    assert "need no source" not in result.lower()
+    assert "code formatting background" not in result.lower()
+    assert "remove source" not in result.lower()
+    assert "answer is 42" in result.lower()
+
+
+def test_format_removes_planning_after_a_role_label(handler):
+    result = handler._format_ai_response("ChronoChunk: Need no source.\n\nThe answer is 42.")
+    assert "need no source" not in result.lower()
+    assert "answer is 42" in result.lower()
+
+
 def test_format_triple_question_marks_preserved(handler):
     # The personality uses "???" for emphasis — formatter keeps it
     result = handler._format_ai_response("really???")
@@ -293,7 +311,7 @@ def built_files(monkeypatch):
     return document, diagram
 
 
-def test_the_debug_log_gets_the_context_and_not_just_the_one_line(handler):
+async def test_the_debug_log_gets_the_context_and_not_just_the_one_line(handler):
     from src.ai_response_handler import Reply
     from src.tools import Turn
     handler.reply_log = MagicMock()
@@ -302,7 +320,7 @@ def test_the_debug_log_gets_the_context_and_not_just_the_one_line(handler):
     request.course_sources = {"10": ("Week 9", "https://example.test/9")}
     request.calls = 2
     request.cost = 0.0123
-    handler._log_reply(request, Reply("it is Teams"))
+    await handler._log_reply(request, Reply("it is Teams"))
     fields = handler.reply_log.record.call_args.kwargs
     assert fields["query"] == "what dev tool"
     assert fields["conversation_history"] == "Alex: earlier"

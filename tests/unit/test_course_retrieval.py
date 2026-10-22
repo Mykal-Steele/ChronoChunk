@@ -198,3 +198,35 @@ def test_a_long_source_line_is_split_between_links_not_through_one():
     assert all(len(line) <= SOURCE_LINE_CHARS + len("-# Source: ") for line in lines)
     assert all(line.count("](") == line.count("(<https://") for line in lines)
     assert "[CBLL lecture 1 Oct 2026" in lines[0] and "[CBLL lecture 39 Oct 2026" in lines[-1]
+
+
+def test_tilde_fences_keep_their_markers_too():
+    reply = "code:\n~~~java\nint[] rows = new int[2];\n~~~\nthat is it [3]"
+    shown = render_sources(reply, SOURCES)
+    assert "int[] rows = new int[2];" in shown
+    assert "LNG320 lecture 2 Oct 2026, 1:51:48" in shown
+
+
+def test_markers_inside_a_nested_link_label_are_not_citations():
+    reply = "see [part [2]](<https://example.test/w9.pdf>) and [3](<https://example.test/w8.mp4>)"
+    assert render_sources(reply, SOURCES) == reply
+
+
+def test_prose_citations_are_named_even_when_a_source_line_exists():
+    shown = render_sources("as [3] says\n-# Source: [2]", SOURCES)
+    assert "as says" in shown
+    assert "LNG320 lecture 2 Oct 2026, 1:51:48" in shown
+    assert "CBLL Week 9, page 47 (9 Oct 2026)" in shown
+
+
+def test_a_citation_after_the_source_line_is_not_lost():
+    shown = render_sources("answer\n-# Source: [2]\nand [3] after", SOURCES)
+    assert "LNG320 lecture 2 Oct 2026, 1:51:48" in shown
+    assert "[3]" not in shown
+
+
+def test_a_known_marker_is_removed_without_taking_an_unknown_neighbour():
+    shown = render_sources("x [2][9]", SOURCES)
+    assert "x [9]" in shown
+    assert "[2]" not in shown
+    assert "CBLL Week 9, page 47 (9 Oct 2026)" in shown

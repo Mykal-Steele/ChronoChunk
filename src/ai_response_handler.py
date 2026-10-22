@@ -1,3 +1,4 @@
+import asyncio
 import difflib
 import hashlib
 import json
@@ -14,6 +15,8 @@ from collections import deque
 from src.course_store import DIMENSIONS
 from src.course_scope import Scope
 from src.document_builder import BuiltFile, plain_math, strip_filler
+from src.exceptions import ReplyLimitError, RequestBusy
+from src.request_governor import RequestGovernor
 from src.usage_guard import BudgetExceededError, UsageGuard, get_usage_guard, guard_client
 from src.tools import Tool, ToolResult, Turn, default_tools
 from src.tools.base import user_content
@@ -170,6 +173,17 @@ REPEAT_MIN_LIKENESS = 0.5
 # before share this much of theirs. The first copy may carry stray text, so less is asked of it.
 REPEAT_LATER_SHARE = 0.75
 REPEAT_EARLIER_SHARE = 0.5
+# gpt-5 sometimes writes its planning into the answer. These are the shapes that have leaked.
+_PLANNING_PREAMBLE = re.compile(
+    r"^(?:"
+    r"need (?:no|a) source|"
+    r"no source (?:is )?needed|"
+    r"(?:also,? )?code formatting (?:background|instructions?|prompt|rules?)[^.\n]*|"
+    r"(?:we|i) can simply (?:remove|drop) (?:the )?source|"
+    r"(?:we|i) (?:should|need to) (?:remove|drop) (?:the )?source"
+    r")\.\s*",
+    re.IGNORECASE,
+)
 # Each side needs this many words, so two short lines of banter that look alike both stay
 REPEAT_MIN_WORDS = 6
 # Words every reply has, which say nothing about whether two stretches say the same
@@ -251,6 +265,19 @@ def _text_length(text: str) -> int:
     text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
     text = re.sub(r'^-# .*$', '', text, flags=re.MULTILINE)
     return len(_VERBATIM.sub('', text).strip())
+
+
+def _without_planning(text: str) -> str:
+    """Drop a planning note the model wrote before its answer, when there is an answer after it."""
+    original = text
+    while True:
+        found = _PLANNING_PREAMBLE.match(text)
+        if not found or not text[found.end():].strip():
+            break
+        text = text[found.end():].lstrip()
+    if text != original:
+        logger.warning("Removed a planning preamble the model wrote before its answer")
+    return text
 
 
 def _without_repeat(text: str) -> str:
@@ -445,9 +472,18 @@ class AIResponseHandler:
         # Who is in a course session, and what was looked up for them
         self.course_sessions = CourseSessions()
 
-        # Every call goes through the budget guard
-        self.ai_client = guard_client(AsyncOpenAI(base_url=endpoint, api_key=api_key))
+        # Every call goes through the budget guard. The SDK's own retry loop is kept
+        # short: a reply has its own deadline and a retry here would spend it twice.
+        self.ai_client = guard_client(AsyncOpenAI(
+            base_url=endpoint, api_key=api_key, timeout=Config.AI_MODEL_TIMEOUT_SECONDS, max_retries=1))
         self.deployment = deployment
+
+        # One queue for every reply, so a burst cannot open unbounded model calls.
+        self.governor = RequestGovernor(
+            max_concurrent=Config.AI_MAX_CONCURRENT_REQUESTS,
+            max_queued=Config.AI_MAX_QUEUED_REQUESTS,
+            queue_timeout=Config.AI_QUEUE_WAIT_SECONDS,
+        )
 
         # What the model can do besides talk. Each tool lives in src/tools.
         self.tools: List[Tool] = default_tools()
@@ -472,6 +508,7 @@ class AIResponseHandler:
             '', ai_response, flags=re.IGNORECASE
         )
 
+        ai_response = _without_planning(ai_response)
         ai_response = _without_repeat(ai_response)
 
         # Code blocks go out exactly as written, only the text around them is cleaned up
@@ -535,6 +572,16 @@ class AIResponseHandler:
 
         return capitalize_sentences(ai_response, capitals)
 
+    @staticmethod
+    def _check_reply_limit(request: Turn) -> None:
+        """Stop one reply from looping tools or spending more than its share."""
+        if request.calls >= Config.AI_MAX_MODEL_CALLS_PER_REPLY:
+            raise ReplyLimitError(
+                f"reply used {request.calls} model calls (limit {Config.AI_MAX_MODEL_CALLS_PER_REPLY})")
+        if request.cost >= Config.AI_MAX_REPLY_COST_USD:
+            raise ReplyLimitError(
+                f"reply cost ${request.cost:.3f} (limit ${Config.AI_MAX_REPLY_COST_USD:.2f})")
+
     async def _chat(self, messages: list, max_tokens: int, tools: Optional[list] = None,
                     reasoning_effort: Optional[str] = None, force_tool: Optional[str] = None,
                     request: Optional[Turn] = None, model: Optional[str] = None):
@@ -542,6 +589,8 @@ class AIResponseHandler:
         Run one chat completion and return the model's message. force_tool makes it
         call that tool. The call and its cost are added to request.
         """
+        if request:
+            self._check_reply_limit(request)
         kwargs = {"model": model or self.deployment, "messages": list(messages), "max_completion_tokens": max_tokens}
         if tools:
             kwargs["tools"] = tools
@@ -563,6 +612,7 @@ class AIResponseHandler:
 
     async def _embed(self, text: str, request: Turn) -> List[float]:
         """The embedding of one text, for a search of the course material. The call and its cost are added to request."""
+        self._check_reply_limit(request)
         called_at = time.monotonic()
         try:
             resp = await self.ai_client.embeddings.create(model=Config.EMBEDDING_DEPLOYMENT, input=[text],
@@ -624,7 +674,7 @@ class AIResponseHandler:
                 Config.AI_COURSE_CHECK_REASONING_EFFORT, COURSE_CHECK_TOOL, request,
                 model=Config.AI_COURSE_CHECK_DEPLOYMENT or None,
             )
-        except BudgetExceededError:
+        except (BudgetExceededError, ReplyLimitError):
             raise
         except Exception as e:
             logger.warning(f"Course routing check failed, using the explicit flag: {e!r}")
@@ -659,7 +709,7 @@ class AIResponseHandler:
             messages.append({"role": "user", "content": gap})
             try:
                 message = await self._chat(messages, max_tokens, None, effort, None, request)
-            except BudgetExceededError:
+            except (BudgetExceededError, ReplyLimitError):
                 raise
             except Exception as e:
                 logger.warning(f"Study continuation failed: {e!r}")
@@ -687,21 +737,46 @@ class AIResponseHandler:
                              emoji_prompt: str = "",
                              course_gate: Optional[Callable[[], None]] = None,
                              session_key: Optional[str] = None) -> Reply:
-        """
-        Generate the bot's reply using Azure OpenAI chat completions.
+        """Generate a reply behind one deadline and one share of the bot's model capacity.
 
-        attached_context is loaded material the message points at (the message being
-        replied to, file contents, channel messages to sum up). images are data URLs.
-        With allow_files the model may also build documents and diagrams, which come
-        back in Reply.files. file_gate is called before each file is made and raises
-        RateLimitError when this user has made too many. web_gate does the same for
-        web searches and opened links, and course_gate for searches of the course
-        material. emoji_prompt names the server emoji this reply may use
-        (EmojiSet.prompt()), empty for none. session_key says who is talking and where
-        ("channel:user"), so a course flag keeps course mode on for their next messages.
-        With none, a flag only counts for the message it is on.
+        The request object is made before waiting, so a busy or timed-out reply can
+        still be logged with the user and channel that asked for it.
         """
         images = images or []
+        request = Turn(
+            query, username, conversation_history or "", attached_context, images,
+            file_gate=file_gate, web_gate=web_gate, course_gate=course_gate,
+            user_id=user_id,
+            channel_id=session_key.split(":", 1)[0] if session_key else None,
+        )
+        timeout = (Config.AI_FILE_REQUEST_TIMEOUT_SECONDS if allow_files
+                   else Config.AI_REQUEST_TIMEOUT_SECONDS)
+        try:
+            async with self.governor.slot():
+                async with asyncio.timeout(timeout):
+                    return await self._generate_reply(
+                        request, query, conversation_history, username, user_id,
+                        allow_files=allow_files, emoji_prompt=emoji_prompt, session_key=session_key)
+        except RequestBusy as e:
+            logger.warning(f"Reply for {username} turned away: {e}")
+            return await self._finish(
+                request, Reply(
+                    f"im juggling too many msgs rn, give me {max(1, round(e.retry_after))} sec and try again",
+                    ok=False),
+                error=f"busy: {e}")
+        except TimeoutError:
+            logger.warning(f"Reply for {username} timed out after {timeout:.0f}s")
+            return await self._finish(
+                request, Reply("that one took too long, so i stopped it. try a shorter ask or send it again", ok=False),
+                error=f"timeout after {timeout:.0f}s")
+
+    async def _generate_reply(self, request: Turn, query: str, conversation_history: str,  # pyright: ignore[reportGeneralTypeIssues]
+                              username: str, user_id: Optional[str],
+                              allow_files: bool, emoji_prompt: str,
+                              session_key: Optional[str]) -> Reply:
+        """The reply itself. Every return path goes through _finish so it is logged."""
+        attached_context = request.attached
+        images = request.images
 
         # Per-user cache, keyed by user identity + query + tail of history + what was attached
         cache_key = f"{user_id or username}|{query}|{conversation_history[-120:] if conversation_history else ''}"
@@ -737,7 +812,7 @@ class AIResponseHandler:
             material: List[str] = []
             if scope and flagged:
                 if scope.unknown and not scope.codes:
-                    return Reply(unknown_course_reply(scope))
+                    return await self._finish(request, Reply(unknown_course_reply(scope)))
                 clean_query = scope.text
                 user_parts[-1] = f'[{username}]: "{clean_query}"'
                 if scope.unknown:
@@ -756,14 +831,14 @@ class AIResponseHandler:
             # study replies are never kept, so they always get a fresh decision.
             if (cache_key in self.response_cache and fresh and not flagged and session is None
                     and not asked_study):
-                return Reply(self.response_cache[cache_key])
+                return await self._finish(request, Reply(self.response_cache[cache_key]))
 
-            # The state every tool for this reply shares. It exists before the routing call,
-            # so that call's cost is counted against the same reply.
-            request = Turn(clean_query, username, conversation_history or "", attached_context, images,
-                           file_gate=file_gate, web_gate=web_gate, course_gate=course_gate, course_codes=codes,
-                           study=bool(study), detail=detail, user_id=user_id,
-                           channel_id=session_key.split(":", 1)[0] if session_key else None)
+            # The request already exists; fill in the parts the routing call decided.
+            request.query = clean_query
+            if codes is not None:
+                request.course_codes = codes
+            request.study = bool(study)
+            request.detail = detail
             request.ask_model = lambda model_messages, limit, effort=None: self._chat(
                 model_messages, limit, reasoning_effort=effort, request=request)
             request.embed = lambda text: self._embed(text, request)
@@ -869,7 +944,7 @@ class AIResponseHandler:
                 redo = None
                 try:
                     message = await self._chat(messages, max_tokens, tools, effort, force_tool, request)
-                except BudgetExceededError:
+                except (BudgetExceededError, ReplyLimitError):
                     raise
                 except Exception as e:
                     # A corrupt or unsupported image fails the whole request, so answer without it
@@ -935,32 +1010,52 @@ class AIResponseHandler:
                             self.response_cache.pop(k, None)
                             self._cached_at.pop(k, None)
 
-            self._log_reply(request, reply)
             if user_id and get_usage_guard().take_daily_warning(user_id):
                 # Discord shows a line that starts with "-# " as small grey text
                 reply.text += "\n-# Heads up, u used 80% of ur ai for today. `/usage` shows whats left"
-            return reply
+            return await self._finish(request, reply)
 
         except BudgetExceededError as e:
             logger.warning(f"AI call skipped: {e}")
-            return Reply(self._budget_response(e), ok=False)
+            return await self._finish(request, Reply(self._budget_response(e), ok=False), error=f"budget: {e}")
+        except ReplyLimitError as e:
+            logger.warning(f"Reply limit hit for {username}: {e}")
+            return await self._finish(
+                request,
+                Reply("that answer hit the limit for one reply. ask for a smaller piece next time", ok=False),
+                error=f"reply limit: {e}")
         except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Error generating AI response: {error_msg}")
-            lowered = error_msg.lower()
-            # A spent quota answers 429 too, and waiting a minute does not fix that one
-            if "insufficient_quota" in lowered or ("quota" in lowered and "rate limit" not in lowered):
-                return Reply("my azure quota ran out, so i cant answer till my dev sorts it. nothing wrong with ur msg", ok=False)
-            # Not just the letters "rate", which are in "generate" and "separate" too
-            if re.search(r"\b429\b|rate.?limit|too many requests", lowered):
-                fallback = self.fallback_responses[0]
-                self.fallback_responses.rotate(1)
-                return Reply(fallback, ok=False)
-            if "content_filter" in error_msg or "content management policy" in lowered:
-                return Reply(self._content_filter_response(error_msg), ok=False)
-            return Reply("something broke on my end, not ur msg. try again in a sec 💀", ok=False)
+            return await self._failed_reply(request, e)
 
-    def _log_reply(self, request: Turn, reply: Reply) -> None:
+    async def _failed_reply(self, request: Turn, exception: Exception) -> Reply:
+        """Turn an unexpected model or tool failure into the right stand-in, and log it."""
+        error_msg = str(exception)
+        logger.error(f"Error generating AI response: {error_msg}")
+        lowered = error_msg.lower()
+        # A spent quota answers 429 too, and waiting a minute does not fix that one
+        if "insufficient_quota" in lowered or ("quota" in lowered and "rate limit" not in lowered):
+            return await self._finish(
+                request,
+                Reply("my azure quota ran out, so i cant answer till my dev sorts it. nothing wrong with ur msg", ok=False),
+                error=error_msg)
+        # Not just the letters "rate", which are in "generate" and "separate" too
+        if re.search(r"\b429\b|rate.?limit|too many requests", lowered):
+            fallback = self.fallback_responses[0]
+            self.fallback_responses.rotate(1)
+            return await self._finish(request, Reply(fallback, ok=False), error=error_msg)
+        if "content_filter" in error_msg or "content management policy" in lowered:
+            return await self._finish(request, Reply(self._content_filter_response(error_msg), ok=False), error=error_msg)
+        return await self._finish(
+            request,
+            Reply("something broke on my end, not ur msg. try again in a sec 💀", ok=False),
+            error=error_msg)
+
+    async def _finish(self, request: Turn, reply: Reply, error: Optional[str] = None) -> Reply:
+        """Record the reply exactly once, then hand it back."""
+        await self._log_reply(request, reply, error=error)
+        return reply
+
+    async def _log_reply(self, request: Turn, reply: Reply, error: Optional[str] = None) -> None:
         """One line on what a reply read, made, cost and how long it took, so a bill or a slow answer can be traced."""
         files_read = len(re.findall(r"^file: ", request.attached, flags=re.MULTILINE))
         took = time.monotonic() - request.started
@@ -973,13 +1068,14 @@ class AIResponseHandler:
             f"{request.tool_seconds:.1f}s in tools)"
         )
         if self.reply_log:
-            self.reply_log.record(
+            await asyncio.to_thread(
+                self.reply_log.record,
                 user_id=request.user_id, username=request.username, channel_id=request.channel_id,
                 query=request.query, conversation_history=request.history, attached_context=request.attached,
                 image_count=len(request.images), routing=request.routing, tool_calls=request.tool_calls,
                 reply=reply.text, files=[built.filename for built in reply.files],
                 sources=request.course_sources, model_calls=request.calls, cost=request.cost,
-                latency_ms=round(took * 1000),
+                latency_ms=round(took * 1000), error=error,
             )
 
     async def generate_response(self, query: str, conversation_history: str,
@@ -1017,7 +1113,7 @@ class AIResponseHandler:
             result = await tool.run(args, turn)
             record["result"] = _shorten(result.text)
             return result
-        except BudgetExceededError:
+        except (BudgetExceededError, ReplyLimitError):
             raise
         except Exception as e:
             # Tools catch their own failures. This is for a bug in a tool, which should not cost them the reply.

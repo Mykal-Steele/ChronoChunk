@@ -272,17 +272,68 @@ _MARK = re.compile(r"\[(\d+|A)\]")
 SOURCE_LINE_CHARS = 900
 
 
+_CODE_SPAN = re.compile(r"(?P<fence>`{3,}|~{3,}).*?(?P=fence)|`[^`\n]*`", re.DOTALL)
+
+
+def _code_spans(text: str) -> List[Tuple[int, int]]:
+    """Ranges of fenced (backtick or tilde) and inline code."""
+    return [(found.start(), found.end()) for found in _CODE_SPAN.finditer(text)]
+
+
+def _link_spans(text: str) -> List[Tuple[int, int]]:
+    """Ranges of Markdown links, with nested brackets in the label allowed."""
+    spans: List[Tuple[int, int]] = []
+    index = 0
+    while index < len(text):
+        if text[index] != "[":
+            index += 1
+            continue
+        depth = 0
+        close = index
+        while close < len(text):
+            if text[close] == "[":
+                depth += 1
+            elif text[close] == "]":
+                depth -= 1
+                if depth == 0:
+                    break
+            close += 1
+        if close >= len(text) or close + 1 >= len(text) or text[close + 1] != "(":
+            index += 1
+            continue
+        end = close + 2
+        parens = 1
+        while end < len(text):
+            if text[end] == "(":
+                parens += 1
+            elif text[end] == ")":
+                parens -= 1
+                if parens == 0:
+                    end += 1
+                    break
+            end += 1
+        if parens:
+            index += 1
+            continue
+        spans.append((index, end))
+        index = end
+    return spans
+
+
+def _protected_spans(text: str) -> List[Tuple[int, int]]:
+    return sorted(_code_spans(text) + _link_spans(text))
+
+
 def _marks_outside_code(text: str) -> List[str]:
-    """Passage numbers in prose, not in code and not an index such as rows[2]."""
+    """Passage numbers in prose, not in code, a link label, or an index such as rows[2]."""
+    protected = _protected_spans(text)
     marks = []
-    for block in re.split(r"(```.*?```|`[^`\n]*`)", text, flags=re.DOTALL)[::2]:
-        for found in _MARK.finditer(block):
-            if found.start() and (block[found.start() - 1].isalnum() or block[found.start() - 1] == "_"):
-                continue
-            # [2](https://...) is link text, not a passage citation
-            if found.end() < len(block) and block[found.end()] == "(":
-                continue
-            marks.append(found.group(1))
+    for found in _MARK.finditer(text):
+        if any(start <= found.start() < end for start, end in protected):
+            continue
+        if found.start() and (text[found.start() - 1].isalnum() or text[found.start() - 1] == "_"):
+            continue
+        marks.append(found.group(1))
     return marks
 
 
@@ -295,21 +346,35 @@ def render_sources(text: str, sources: Dict[str, Tuple[str, str]]) -> str:
     and went on, joins the last one. A reply that names passages but forgets the source
     line still gets one, so the reader never sees bare numbers such as [10] [12] [13].
     """
-    code = [(block.start(), block.end()) for block in re.finditer(r"```.*?```", text, flags=re.DOTALL)]
+    code = _code_spans(text)
     lines = [found for found in _SOURCE_LINE.finditer(text)
-             if not any(opened < found.start() < closed for opened, closed in code)]
+             if not any(opened <= found.start() < closed for opened, closed in code)]
     # A number set in the answer itself says nothing to the person reading it. Code is left as it
     # is, and so is a number glued to a word, since "rows[2]" is an index and not a passage.
     def without_marks(prose: str) -> str:
+        def remove(marks: re.Match) -> str:
+            kept = "".join(f"[{key}]" for key in _MARK.findall(marks.group(1)) if key not in sources)
+            if not kept:
+                return ""
+            return (" " if marks.group(0).startswith(" ") else "") + kept
         return re.sub(r" ?(?<![\w\]])((?:\[(?:\d+|A)\])+)(?![\w(\[])",
-                      lambda marks: "" if all(key in sources for key in _MARK.findall(marks.group(1))) else marks.group(0), prose)
+                      remove, prose)
 
     def clean(prose: str) -> str:
-        pieces = re.split(r"(```.*?```|`[^`\n]*`)", prose, flags=re.DOTALL)
-        return "".join(piece if index % 2 else without_marks(piece) for index, piece in enumerate(pieces))
+        spans = _protected_spans(prose)
+        parts: List[str] = []
+        last = 0
+        for start, end in spans:
+            parts.append(without_marks(prose[last:start]))
+            parts.append(prose[start:end])
+            last = end
+        parts.append(without_marks(prose[last:]))
+        return "".join(parts)
     if lines:
         line = lines[-1]
         marks = [key for found in lines for key in _MARK.findall(found.group(1))]
+        prose = text[:line.start()] + " " + text[line.end():]
+        marks = _marks_outside_code(prose) + marks
         before = text[:line.start()]
         if len(lines) > 1:
             before = "".join(text[end:start] for end, start in

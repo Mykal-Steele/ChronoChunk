@@ -178,6 +178,13 @@ async def test_forget_user_deletes_everything_stored(udm, fake_openai_response, 
     udm.forget_user("999")  # someone the bot never saw
 
 
+def test_forget_user_also_deletes_their_reply_log(udm):
+    from unittest.mock import MagicMock
+    udm.reply_log = MagicMock()
+    udm.forget_user(USER_ID)
+    udm.reply_log.delete_user.assert_called_once_with(USER_ID)
+
+
 async def test_a_forget_during_fact_extraction_is_not_undone(udm, mock_openai_client, fake_openai_response):
     # Extraction reads the user, waits for the model, then saves. A /forget in between must win.
     model_called, let_model_answer = asyncio.Event(), asyncio.Event()
