@@ -22,7 +22,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - The bot knows its own setup in chat: its version, Azure region and VM size, OS image, zone, container, CPU count and load, memory in use and its cap, Python and discord.py versions, start time, uptime, aggregate server and member counts, the models it uses, and whether web search and course material are on. It can answer "what are u", "where do u run" and "what model are u" instead of denying it is a bot. The facts are the same public kind as `/setup`; the VM name, subscription, resource group, ids, paths, addresses, keys and anyone's name are never included.
 - A question about how a named app, website or UI setting works can be grounded with one automatic web search before the answer. The routing call decides when this is needed, and the answer is told to use the result or say it could not verify it.
 - "Latest lecture" reads the newest lecture and the two before it, newest first. An announcement can sit in the previous class, so one day was too narrow. The material says which days were read.
-- The encrypted reply log has a reader: `python -m src.reply_log --tail 20 [--json] [--user ID]`. It reports where the file is, how many rows it holds, the key source and the retention window at startup, and a broken log no longer stops the bot from starting or answering.
+- The encrypted reply log has a reader: `python -m src.reply_log --tail 20 [--json] [--user ID]`. It reports where the file is, how many rows it holds, the key source and the retention window at startup, and a broken log no longer stops the bot from starting or answering. `--tail` asks SQLite for only the newest rows instead of decrypting the whole file.
 
 ### Fixed
 

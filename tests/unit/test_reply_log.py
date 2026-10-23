@@ -75,6 +75,15 @@ def test_deleting_a_user_removes_only_their_rows(tmp_path):
     assert log.delete_user("404") == 0
 
 
+def test_entries_can_read_only_the_newest_rows(tmp_path):
+    log = _log(tmp_path / "replies.sqlite3")
+    for question in ("first", "second", "third"):
+        log.record(user_id="42", username="Kruskal", query=question, reply="answer")
+    assert [entry["query"] for entry in log.entries(limit=2)] == ["second", "third"]
+    assert [entry["query"] for entry in log.entries(user_id="42", limit=1)] == ["third"]
+    assert list(log.entries(limit=0)) == []
+
+
 def test_the_command_line_reads_the_newest_rows(tmp_path, monkeypatch, capsys):
     path = tmp_path / "replies.sqlite3"
     monkeypatch.setenv("REPLY_LOG_KEY", Fernet.generate_key().decode())

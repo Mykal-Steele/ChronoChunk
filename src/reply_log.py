@@ -206,17 +206,23 @@ class ReplyLog:
             rows = db.execute("SELECT COUNT(*) FROM replies").fetchone()[0]
         return {"path": self.path, "keep_days": self.keep_days, "rows": rows, "key_source": self._key_source}
 
-    def entries(self, user_id: Optional[str] = None) -> Iterator[Dict[str, Any]]:
-        """Decrypt every kept row, oldest first. Use user_id to read one person's rows."""
+    def entries(self, user_id: Optional[str] = None, limit: Optional[int] = None) -> Iterator[Dict[str, Any]]:
+        """Decrypt rows oldest first. Use user_id to read one person's rows, limit for the newest N."""
         sql = ("SELECT id, created_at, image_count, model_calls, cost, latency_ms, payload "
                "FROM replies")
         params: tuple = ()
         if user_id is not None:
             sql += " WHERE user_hash = ?"
             params = (self._user_hash(user_id),)
-        sql += " ORDER BY id"
+        if limit is None:
+            sql += " ORDER BY id"
+        else:
+            sql += " ORDER BY id DESC LIMIT ?"
+            params += (limit,)
         with closing(self._connect()) as db:
             rows = db.execute(sql, params).fetchall()
+        if limit is not None:
+            rows.reverse()
         for row in rows:
             try:
                 payload = json.loads(self._fernet.decrypt(row["payload"]).decode("utf-8"))
@@ -295,9 +301,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
     log = ReplyLog(path=args.path)
     total = log.describe()["rows"]
-    entries = list(log.entries(user_id=args.user))
-    if args.tail > 0:
-        entries = entries[-args.tail:]
+    entries = list(log.entries(user_id=args.user, limit=args.tail if args.tail > 0 else None))
     if not entries:
         if total and not args.user:
             print(f"could not decrypt any of the {total} rows at {log.path}; is the key the one that wrote it?")
