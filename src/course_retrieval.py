@@ -474,14 +474,14 @@ def format_hits(query: str, hits: List[Hit], names: dict, rows: Sequence[str] = 
 
 def _recent_day_hits(store: CourseStore, words: str, vector: List[float], codes: Sequence[str]) -> List[Hit]:
     """The best passages of each course's newest lecture, then the two before it, newest first."""
-    per_course: List[List[Hit]] = []
+    per_course: List[List[List[Hit]]] = []
     for code in codes:
         days = store.days(code, ("transcript", "slide"), RECENT_DAYS)
         if not days:
             continue
         found = store.search(words, vector, code, None, since=days[-1], limit=RESULTS * 2)
         seen = set()
-        course_hits: List[Hit] = []
+        course_days: List[List[Hit]] = []
         for index, day in enumerate(days):
             per_day = LATEST_SEARCHED if index == 0 else RECENT_SEARCHED
             day_hits = [hit for hit in found if hit.date == day and _key(hit) not in seen][:per_day]
@@ -490,24 +490,27 @@ def _recent_day_hits(store: CourseStore, words: str, vector: List[float], codes:
                             if _key(hit) not in seen][:per_day]
             for hit in day_hits:
                 seen.add(_key(hit))
-            course_hits += day_hits
-            if len(course_hits) >= RESULTS:
-                break
-        per_course.append(course_hits)
+            course_days.append(day_hits)
+        per_course.append(course_days)
 
-    # One course with matches on three days could take every slot before the next course
-    # is looked at, so take one result from each course in turn.
+    # One result for each course-day pair first, so a newer day in one course cannot take
+    # every slot before the other courses and days are considered.
     hits: List[Hit] = []
-    while len(hits) < RESULTS and any(per_course):
-        for course_hits in per_course:
-            if course_hits and len(hits) < RESULTS:
-                hits.append(course_hits.pop(0))
+    for day_index in range(RECENT_DAYS):
+        for course_days in per_course:
+            if day_index < len(course_days) and course_days[day_index] and len(hits) < RESULTS:
+                hits.append(course_days[day_index].pop(0))
+    # Then fill what is left, newest day first.
+    for day_index in range(RECENT_DAYS):
+        for course_days in per_course:
+            while day_index < len(course_days) and course_days[day_index] and len(hits) < RESULTS:
+                hits.append(course_days[day_index].pop(0))
     return hits
 
 
 def _key(hit: Hit) -> tuple:
-    """What makes two results the same passage."""
-    return (hit.course, hit.kind, hit.title, hit.locator)
+    """What makes two results the same passage. The locator is only unique within its day."""
+    return (hit.course, hit.kind, hit.title, hit.locator, hit.date)
 
 
 async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[float]]], words: str, codes: Sequence[str],

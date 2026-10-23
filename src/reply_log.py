@@ -142,6 +142,14 @@ class ReplyLog:
 
         db.execute("BEGIN IMMEDIATE")
         try:
+            # Another process may have finished the migration while this one waited for the lock.
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(replies)")}
+            leftover = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'replies_plaintext'"
+            ).fetchone() is not None
+            if not leftover and (not columns or "payload" in columns):
+                db.rollback()
+                return
             if leftover:
                 self._finish_plaintext_migration(db, columns)
             else:

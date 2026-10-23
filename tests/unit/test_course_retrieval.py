@@ -309,3 +309,10 @@ def test_each_requested_course_keeps_a_result_slot(tmp_path):
         store.close()
     assert len(hits) == RESULTS
     assert {hit.course for hit in hits} == {"CSC345", "LNG320"}
+    assert {hit.date for hit in hits} == {"2026-10-19", "2026-10-13", "2026-09-22"}
+
+
+def test_the_same_locator_on_two_days_is_two_passages():
+    from src.course_retrieval import _key
+
+    assert _key(_hit(day="2026-10-09")) != _key(_hit(day="2026-10-02"))
