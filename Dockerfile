@@ -32,6 +32,12 @@ FROM base AS test
 COPY requirements-dev.txt .
 RUN pip install --no-cache-dir -r requirements-dev.txt
 
+# pyright runs on Node. Its [nodejs] extra still ships Node 24.19.0, which has
+# CVE-2026-111497 and has no fixed wheel yet, so the type check gets a patched LTS.
+ARG NODE_VERSION=24.22.1
+RUN python -m nodeenv --node="${NODE_VERSION}" /opt/node
+ENV PATH="/opt/node/bin:${PATH}"
+
 
 # The image the bot runs from. It is the last stage, so a plain `docker build .` makes it.
 FROM base

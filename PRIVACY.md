@@ -14,9 +14,9 @@ It uses these to remember you between conversations: the facts and your last 3 e
 
 ## What the bot reads but does not store
 
-- Other messages in a channel. The bot holds the last 50 per channel in memory so it can follow the conversation. They are never written to disk and are gone when the bot restarts.
+- Other messages in a channel. The bot holds the last 50 per channel in memory so it can follow the conversation. They are not saved to your profile, but the recent messages sent to the model are kept, encrypted, in the reply log described below for up to `REPLY_LOG_KEEP_DAYS` (30 days by default).
 - A message you did not address to the bot, when someone called it in that channel in the last 30 seconds. The bot may answer it. The message goes to the AI model like the rest of the recent channel messages, and nothing about you is saved.
-- Images, PDFs and files you point it at, and web pages it opens. They are read for the answer and not saved.
+- Images, PDFs and files you point it at, and web pages it opens. The files themselves are not saved. The text the bot read from them, and the answer it wrote, are kept in the reply log described below, encrypted, for up to `REPLY_LOG_KEEP_DAYS`.
 - For a PDF, the bot writes a description of each page so it can answer about charts and tables. It keeps those descriptions in its database for 7 days after they were last used, so follow-up questions are fast and the same file does not have to be read again. A description is stored under a fingerprint of the file, with no filename and no link to who sent it. The PDF itself is not kept.
 - Course material. The bot holds a copy of the class files, lecture transcripts and assignments of the courses its owner syncs from Microsoft Teams. Names that Teams marks in a lecture transcript are taken out, which misses a name written like any other word. An assignment is kept as course material only: nothing about who handed in what, no grades and no class members. This copy is the same for everyone and holds nothing about the people who ask.
 - Course mode. When you end a message with `-c` or a course code, the bot keeps what it looked up for you in memory for an hour, so you can keep asking. It is never written to disk, and it is gone after the hour or when the bot restarts.
@@ -24,7 +24,7 @@ It uses these to remember you between conversations: the facts and your last 3 e
 
 ## Logs
 
-The bot writes a log on its server. It records your display name, the time, what each answer cost, the web searches and links it looked up for you, and the songs you asked for. It does not record what you wrote in chat. Log files are deleted after 30 days.
+The bot writes a log on its server. It records your display name, the time, what each answer cost, the web searches and links it looked up for you, and the songs you asked for. This rotating text log does not record what you wrote in chat. A separate encrypted reply log does, as described under "See or delete your data". Log files are deleted after 30 days.
 
 ## Who else receives your content
 
@@ -46,7 +46,7 @@ The bot cannot answer without sending some of what you write to other services:
 - `/forget` deletes everything stored about you, including the encrypted reply-log rows tied to your user hash.
 - `/forget <text>` deletes the one fact that matches.
 
-Your profile, facts and conversations stay until you run `/forget`, or until the person running the bot removes them. The reply log is kept for `REPLY_LOG_KEEP_DAYS` (30 days by default) and then deleted. Its text is encrypted before it is written, and `/forget` deletes your rows sooner.
+Your profile, facts and conversations stay until you run `/forget`, or until the person running the bot removes them. The encrypted reply log is kept for `REPLY_LOG_KEEP_DAYS` (30 days by default) and then deleted. Each row holds the message that asked for a reply, the recent channel messages that went to the model, any file, PDF or web-page text the bot read, and the reply. `/forget` deletes the rows tied to your user hash, so a message of yours that appears inside someone else's row stays until that row expires. By default the encryption key is stored next to the database, so the encryption protects the database file on its own, not someone who can read the whole server.
 
 The bot copies its database once a day, on the same server, so a damaged file does not lose everyone's data. It keeps 7 copies. What you delete with `/forget` is gone from the database at once and from the last copy 7 days later. The copies are not shared with anyone.
 

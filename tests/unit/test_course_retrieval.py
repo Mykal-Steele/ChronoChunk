@@ -261,3 +261,51 @@ def test_a_known_marker_is_removed_without_taking_an_unknown_neighbour():
     assert "x [9]" in shown
     assert "[2]" not in shown
     assert "CBLL Week 9, page 47 (9 Oct 2026)" in shown
+
+
+def test_an_index_with_two_subscripts_is_not_a_citation():
+    reply = "the value in matrix[2][3] is zero"
+    assert render_sources(reply, SOURCES) == reply
+
+
+def test_the_spread_fallback_asks_for_a_whole_day_sample():
+    from src.course_retrieval import LATEST_SEARCHED, _recent_day_hits
+
+    calls = []
+
+    class Store:
+        def days(self, code, kinds, count):
+            return ["2026-10-19"]
+
+        def search(self, *args, **kwargs):
+            return []
+
+        def spread(self, code, day, kinds=("transcript", "slide"), count=6):
+            calls.append((code, day, count))
+            return [_hit(locator=f"page {number}") for number in range(count)]
+
+    _recent_day_hits(Store(), "pca", [1.0], ["CSC345"])
+    assert calls == [("CSC345", "2026-10-19", LATEST_SEARCHED)]
+
+
+def test_each_requested_course_keeps_a_result_slot(tmp_path):
+    from src.course_retrieval import RESULTS, _recent_day_hits
+    from src.course_store import CourseStore
+    from tests.unit.test_course_store import direction
+
+    store = CourseStore.create(str(tmp_path / "courses.db"))
+    store.add_course("CSC345", "Data Science")
+    store.add_course("LNG320", "Language")
+    for course in ("CSC345", "LNG320"):
+        for day in ("2026-10-19", "2026-10-13", "2026-09-22"):
+            for number in range(2):
+                source = store.add_source(course, "transcript", f"{course}-{day}-{number}", date=day)
+                for position in range(2):
+                    store.add_chunk(source, position, f"{position}", f"topic {position}", direction(pca=1))
+    store.save()
+    try:
+        hits = _recent_day_hits(store, "pca", direction(pca=1), ["CSC345", "LNG320"])
+    finally:
+        store.close()
+    assert len(hits) == RESULTS
+    assert {hit.course for hit in hits} == {"CSC345", "LNG320"}

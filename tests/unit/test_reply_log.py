@@ -167,3 +167,53 @@ def test_a_plaintext_log_from_before_encryption_is_migrated(tmp_path):
         assert b"old q" not in db.execute("SELECT payload FROM replies").fetchone()[0]
         indexes = {row[1] for row in db.execute("PRAGMA index_list(replies)")}
         assert {"replies_created_at", "replies_user_hash"} <= indexes
+
+
+_LEGACY_SCHEMA = """CREATE TABLE replies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, user_id TEXT,
+    username TEXT, channel_id TEXT, query TEXT, conversation_history TEXT,
+    attached_context TEXT, image_count INTEGER, routing TEXT, tool_calls TEXT,
+    reply TEXT, files TEXT, sources TEXT, model_calls INTEGER, cost REAL,
+    latency_ms INTEGER, error TEXT)"""
+
+_LEGACY_COLUMNS = ("created_at, user_id, username, query, reply, image_count, model_calls, cost")
+
+
+def _legacy_row(db, created_at, reply, table="replies"):
+    db.execute(
+        f"INSERT INTO {table} ({_LEGACY_COLUMNS}) VALUES (?, '42', 'Kruskal', ?, ?, 0, 1, 0.1)",
+        (created_at, f"q {reply}", reply),
+    )
+
+
+def test_a_migration_that_stopped_before_the_drop_is_finished(tmp_path):
+    path = tmp_path / "replies.sqlite3"
+    key = Fernet.generate_key()
+    with sqlite3.connect(path) as db:
+        db.execute(_LEGACY_SCHEMA)
+        _legacy_row(db, "2026-10-01T00:00:00+00:00", "old a")
+    ReplyLog(str(path), key=key)
+    # What the old, non-atomic migration could leave behind: the encrypted table has one
+    # row, and the renamed plaintext table still has that row plus one not yet copied.
+    with sqlite3.connect(path) as db:
+        db.execute(_LEGACY_SCHEMA.replace("replies", "replies_plaintext"))
+        _legacy_row(db, "2026-10-01T00:00:00+00:00", "old a", table="replies_plaintext")
+        _legacy_row(db, "2026-10-01T00:01:00+00:00", "old b", table="replies_plaintext")
+    log = ReplyLog(str(path), key=key)
+    assert [entry["reply"] for entry in log.entries()] == ["old a", "old b"]
+    with sqlite3.connect(path) as db:
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert "replies_plaintext" not in tables
+
+
+def test_a_migration_without_the_new_table_is_finished(tmp_path):
+    path = tmp_path / "replies.sqlite3"
+    key = Fernet.generate_key()
+    with sqlite3.connect(path) as db:
+        db.execute(_LEGACY_SCHEMA.replace("replies", "replies_plaintext"))
+        _legacy_row(db, "2026-10-01T00:00:00+00:00", "old a", table="replies_plaintext")
+    log = ReplyLog(str(path), key=key)
+    assert [entry["reply"] for entry in log.entries()] == ["old a"]
+    with sqlite3.connect(path) as db:
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert "replies_plaintext" not in tables

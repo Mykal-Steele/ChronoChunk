@@ -196,7 +196,7 @@ _PLANNING_PREAMBLE = re.compile(
     r"^(?:"
     r"need (?:no|a) source|"
     r"no source (?:is )?needed|"
-    r"(?:also,? )?code formatting (?:background|instructions?|prompt|rules?)[^.\n]*|"
+    r"(?:also,? )?code formatting (?:background|instructions?|prompt|rules?) (?:says?|states?|hates?|mentions?)[^.\n]*|"
     r"(?:we|i) can simply (?:remove|drop) (?:the )?source|"
     r"(?:we|i) (?:should|need to) (?:remove|drop) (?:the )?source"
     r")\.\s*",

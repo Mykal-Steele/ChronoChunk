@@ -37,6 +37,14 @@ CREATE TABLE IF NOT EXISTS replies (
 CREATE INDEX IF NOT EXISTS replies_created_at ON replies(created_at);
 CREATE INDEX IF NOT EXISTS replies_user_hash ON replies(user_hash);
 """
+# executescript() commits any open transaction, which would make a half-finished
+# migration permanent. The statements are run one by one so the copy stays atomic.
+_SCHEMA_STATEMENTS = [statement.strip() for statement in _SCHEMA.split(";") if statement.strip()]
+
+
+def _apply_schema(db: sqlite3.Connection) -> None:
+    for statement in _SCHEMA_STATEMENTS:
+        db.execute(statement)
 
 
 class ReplyLog:
@@ -55,7 +63,7 @@ class ReplyLog:
         self._hmac_key = base64.urlsafe_b64decode(self._key)
         with closing(self._connect()) as db:
             self._migrate_plaintext(db)
-            db.executescript(_SCHEMA)
+            _apply_schema(db)
             db.commit()
         try:
             os.chmod(self.path, 0o600)
@@ -119,22 +127,72 @@ class ReplyLog:
         return db
 
     def _migrate_plaintext(self, db: sqlite3.Connection) -> None:
-        """Move rows written before encryption into the encrypted payload column."""
+        """Move rows written before encryption into the encrypted payload column.
+
+        The whole copy is one transaction, so a failure leaves the old table in place and
+        the next start tries again. A plaintext table left by an older, non-atomic version
+        is finished rather than left outside retention and /forget.
+        """
         columns = {row["name"] for row in db.execute("PRAGMA table_info(replies)")}
-        if not columns or "payload" in columns:
+        leftover = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'replies_plaintext'"
+        ).fetchone() is not None
+        if not leftover and (not columns or "payload" in columns):
             return
+
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            if leftover:
+                self._finish_plaintext_migration(db, columns)
+            else:
+                self._copy_plaintext_rows(db)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    def _copy_plaintext_rows(self, db: sqlite3.Connection) -> None:
+        """Rename the old table, build the encrypted one, and copy every row into it."""
         rows = [dict(row) for row in db.execute("SELECT * FROM replies")]
         db.execute("ALTER TABLE replies RENAME TO replies_plaintext")
         db.execute("DROP INDEX IF EXISTS replies_created_at")
         db.execute("DROP INDEX IF EXISTS replies_user_id")
-        db.executescript(_SCHEMA)
+        _apply_schema(db)
         for row in rows:
-            self._insert(db, self._payload_from_old(row), row.get("user_id"), row.get("image_count", 0),
-                         row.get("model_calls", 0), row.get("cost", 0.0), row.get("latency_ms"),
+            self._insert(db, self._payload_from_old(row), row.get("user_id"), row.get("image_count", 0) or 0,
+                         row.get("model_calls", 0) or 0, row.get("cost", 0.0) or 0.0, row.get("latency_ms"),
                          row.get("created_at"))
         db.execute("DROP TABLE replies_plaintext")
-        db.commit()
-        db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    def _finish_plaintext_migration(self, db: sqlite3.Connection, columns: set) -> None:
+        """Complete a migration that stopped after the old table was renamed."""
+        if not columns:
+            # The rename was committed, then the new table was never created.
+            _apply_schema(db)
+            moved = set()
+        elif "payload" not in columns:
+            # Unexpected, but never throw rows away: fold the second plaintext table in.
+            old = [row["name"] for row in db.execute("PRAGMA table_info(replies)") if row["name"] != "id"]
+            current = {row["name"] for row in db.execute("PRAGMA table_info(replies_plaintext)")}
+            shared = [name for name in old if name in current]
+            if shared:
+                names = ", ".join(shared)
+                db.execute(f"INSERT INTO replies_plaintext ({names}) SELECT {names} FROM replies")
+            db.execute("DROP TABLE replies")
+            _apply_schema(db)
+            moved = set()
+        else:
+            # Some rows may have been copied before the old attempt failed.
+            moved = {(row["created_at"], row["user_hash"])
+                     for row in db.execute("SELECT created_at, user_hash FROM replies")}
+        for row in (dict(row) for row in db.execute("SELECT * FROM replies_plaintext")):
+            if (row["created_at"], self._user_hash(row.get("user_id"))) in moved:
+                continue
+            self._insert(db, self._payload_from_old(row), row.get("user_id"), row.get("image_count", 0) or 0,
+                         row.get("model_calls", 0) or 0, row.get("cost", 0.0) or 0.0, row.get("latency_ms"),
+                         row.get("created_at"))
+        db.execute("DROP TABLE replies_plaintext")
 
     def _payload_from_old(self, row: Dict[str, Any]) -> Dict[str, Any]:
         return {

@@ -7,9 +7,9 @@
 iniconfig==2.3.1
     # via pytest
 nodeenv==1.11.0
-    # via pyright
-nodejs-wheel-binaries==24.19.0
-    # via pyright
+    # via
+    #   -r requirements-dev.in
+    #   pyright
 packaging==26.3
     # via pytest
 pluggy==1.6.0

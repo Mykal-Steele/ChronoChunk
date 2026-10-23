@@ -1,3 +1,4 @@
+import asyncio
 import io
 import logging
 import discord
@@ -47,9 +48,10 @@ class SlashCommandManager:
         if not limiter:
             return True
         try:
+            # The person's own cap first: a rejected retry must not spend the guild's budget.
+            limiter.check_rate_limit(str(interaction.user.id), action)
             if action == "music" and interaction.guild_id is not None:
                 limiter.check_rate_limit(f"guild:{interaction.guild_id}", "music_guild")
-            limiter.check_rate_limit(str(interaction.user.id), action)
         except RateLimitError as e:
             await interaction.response.send_message(
                 f"slow down a bit, try again in {max(1, round(e.retry_after))} sec", ephemeral=True)
@@ -196,8 +198,9 @@ class SlashCommandManager:
             
             try:
                 if not fact:
-                    # Clear all user data
-                    self.user_data_manager.forget_user(user_id)
+                    # Clear all user data. forget_user opens and writes sqlite, so keep it
+                    # off the event loop; the reply log may be locked by a background write.
+                    await asyncio.to_thread(self.user_data_manager.forget_user, user_id)
                     await interaction.response.send_message("bet, wiped all your data. fresh start 💀", ephemeral=True)
                 else:
                     # Try to remove specific fact
@@ -477,12 +480,13 @@ class SlashCommandManager:
         @app_commands.describe(query="YouTube/Spotify URL or search term")
         async def music(interaction: discord.Interaction, query: str):
             usage_context.set_user(interaction.user.id)
-            if not await self._music_allowed(interaction, "music"):
-                return
-            # Only a server member has a voice state. In a DM there is none.
+            # Only a server member has a voice state. In a DM there is none. Checked before
+            # the limiter, so a request that cannot play does not spend the guild's budget.
             voice = getattr(interaction.user, "voice", None)
             if not voice or not interaction.guild_id:
                 await interaction.response.send_message("yo, u gotta be in a voice channel to play music")
+                return
+            if not await self._music_allowed(interaction, "music"):
                 return
             
             # Join the user's voice channel
@@ -636,10 +640,10 @@ class SlashCommandManager:
         @self.bot.tree.command(name="relate", description="Play a song related to the current one based on YouTube recommendations")
         async def relate(interaction: discord.Interaction):
             usage_context.set_user(interaction.user.id)
-            if not await self._music_allowed(interaction, "music"):
-                return
             if not getattr(interaction.user, "voice", None) or not interaction.guild_id:
                 await interaction.response.send_message("yo, u gotta be in a voice channel to play related music")
+                return
+            if not await self._music_allowed(interaction, "music"):
                 return
             
             try:

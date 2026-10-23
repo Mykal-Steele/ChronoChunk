@@ -272,6 +272,9 @@ def outline_text(store: CourseStore, codes: Sequence[str] = ()) -> str:
 # The model sometimes puts it at the end of its last sentence instead of on a line of its own
 _SOURCE_LINE = re.compile(r"(?:^|(?<=\s))-# Source:(.*)$", re.MULTILINE | re.IGNORECASE)
 _MARK = re.compile(r"\[(\d+|A)\]")
+# One expression for both reading and removing bare markers, so anything counted as a
+# citation is also removed, and an index such as matrix[2][3] is neither.
+_BARE_MARKS = re.compile(r" ?(?<![\w\]])((?:\[(?:\d+|A)\])+)(?![\w(\[])")
 
 # Under the chunk size, so even a full line plus the reply has room before Discord splits it.
 SOURCE_LINE_CHARS = 900
@@ -340,12 +343,10 @@ def _marks_outside_code(text: str) -> List[str]:
     """Passage numbers in prose, not in code, a link label, or an index such as rows[2]."""
     protected = _protected_spans(text)
     marks = []
-    for found in _MARK.finditer(text):
-        if any(start <= found.start() < end for start, end in protected):
+    for found in _BARE_MARKS.finditer(text):
+        if any(start <= found.start(1) < end for start, end in protected):
             continue
-        if found.start() and (text[found.start() - 1].isalnum() or text[found.start() - 1] == "_"):
-            continue
-        marks.append(found.group(1))
+        marks.extend(_MARK.findall(found.group(1)))
     return marks
 
 
@@ -369,8 +370,7 @@ def render_sources(text: str, sources: Dict[str, Tuple[str, str]]) -> str:
             if not kept:
                 return ""
             return (" " if marks.group(0).startswith(" ") else "") + kept
-        return re.sub(r" ?(?<![\w\]])((?:\[(?:\d+|A)\])+)(?![\w(\[])",
-                      remove, prose)
+        return _BARE_MARKS.sub(remove, prose)
 
     def clean(prose: str) -> str:
         spans = _protected_spans(prose)
@@ -474,26 +474,35 @@ def format_hits(query: str, hits: List[Hit], names: dict, rows: Sequence[str] = 
 
 def _recent_day_hits(store: CourseStore, words: str, vector: List[float], codes: Sequence[str]) -> List[Hit]:
     """The best passages of each course's newest lecture, then the two before it, newest first."""
-    hits: List[Hit] = []
+    per_course: List[List[Hit]] = []
     for code in codes:
         days = store.days(code, ("transcript", "slide"), RECENT_DAYS)
         if not days:
             continue
         found = store.search(words, vector, code, None, since=days[-1], limit=RESULTS * 2)
         seen = set()
+        course_hits: List[Hit] = []
         for index, day in enumerate(days):
             per_day = LATEST_SEARCHED if index == 0 else RECENT_SEARCHED
             day_hits = [hit for hit in found if hit.date == day and _key(hit) not in seen][:per_day]
             if not day_hits:
-                day_hits = [hit for hit in store.spread(code, day) if _key(hit) not in seen][:per_day]
+                day_hits = [hit for hit in store.spread(code, day, count=per_day)
+                            if _key(hit) not in seen][:per_day]
             for hit in day_hits:
                 seen.add(_key(hit))
-            hits += day_hits
-            if len(hits) >= RESULTS:
+            course_hits += day_hits
+            if len(course_hits) >= RESULTS:
                 break
-        if len(hits) >= RESULTS:
-            break
-    return hits[:RESULTS]
+        per_course.append(course_hits)
+
+    # One course with matches on three days could take every slot before the next course
+    # is looked at, so take one result from each course in turn.
+    hits: List[Hit] = []
+    while len(hits) < RESULTS and any(per_course):
+        for course_hits in per_course:
+            if course_hits and len(hits) < RESULTS:
+                hits.append(course_hits.pop(0))
+    return hits
 
 
 def _key(hit: Hit) -> tuple:

@@ -1299,3 +1299,10 @@ async def test_a_detail_request_gets_room_without_a_study_shape(handler, mock_op
     assert call["max_completion_tokens"] == Config.AI_DETAIL_MAX_TOKENS
     system = call["messages"][0]["content"]
     assert "FULL ANSWER" in system and "STUDY MATERIAL" not in system
+
+
+def test_a_normal_answer_that_starts_with_code_formatting_is_not_removed(handler):
+    answer = "Code formatting rules in Python follow PEP 8. Use 4 spaces per indent and keep lines short."
+    result = handler._format_ai_response(answer)
+    assert result.lower() == answer.lower()
+    assert "code formatting rules" in result.lower()

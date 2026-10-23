@@ -53,6 +53,26 @@ async def test_a_music_request_counts_against_the_person_and_the_guild():
 
     assert await manager._music_allowed(interaction) is True
     limiter.check_rate_limit.assert_has_calls([
-        call("guild:7", "music_guild"),
         call("42", "music"),
+        call("guild:7", "music_guild"),
     ])
+
+
+async def test_a_rejected_music_request_does_not_spend_the_guild_budget():
+    from src.exceptions import RateLimitError
+    from src.slash_commands import SlashCommandManager
+
+    limiter = MagicMock()
+    limiter.check_rate_limit.side_effect = RateLimitError(5)
+    bot = MagicMock()
+    bot.rate_limiter = limiter
+    manager = SlashCommandManager(
+        bot, game_manager=MagicMock(), user_data_manager=MagicMock(), ai_handler=MagicMock(),
+        message_handler=MagicMock(), music_manager=MagicMock())
+    interaction = MagicMock()
+    interaction.user.id = 42
+    interaction.guild_id = 7
+    interaction.response.send_message = AsyncMock()
+
+    assert await manager._music_allowed(interaction) is False
+    limiter.check_rate_limit.assert_called_once_with("42", "music")
