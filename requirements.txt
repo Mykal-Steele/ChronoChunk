@@ -20,18 +20,23 @@ anyio==4.14.2
     #   openai
 attrs==26.1.0
     # via aiohttp
-brotli==1.2.0
-    # via fonttools
+brotli==1.2.1
+    # via
+    #   -r requirements.in
+    #   fonttools
 certifi==2026.7.22
     # via requests
 cffi==2.1.1
     # via
+    #   cryptography
     #   pynacl
     #   weasyprint
 charset-normalizer==3.5.2
     # via requests
 cssselect2==0.10.1
     # via weasyprint
+cryptography==50.0.1
+    # via -r requirements.in
 davey==0.1.6
     # via discord-py
 discord-py==2.7.1

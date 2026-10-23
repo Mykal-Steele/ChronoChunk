@@ -54,6 +54,17 @@ class Turn:
     course_sources: dict = field(default_factory=dict)
     # The passages the model was already shown, by the number each has
     course_seen: dict = field(default_factory=dict)
+    # The Discord channel and user, and the routing call's answer, for the local debug log
+    user_id: Optional[str] = None
+    channel_id: Optional[str] = None
+    routing: Optional[dict] = None
+    # True when the routing call asked for a web lookup before the answer
+    needs_web: bool = False
+    # What produced this reply, for the local debug log
+    model: str = ""
+    effort: str = ""
+    # Every tool call made for this reply, with its arguments and the text the model read back
+    tool_calls: List[dict] = field(default_factory=list)
     calls: int = 0
     cost: float = 0.0
     started: float = field(default_factory=time.monotonic)

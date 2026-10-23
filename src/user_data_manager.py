@@ -9,6 +9,7 @@ from openai import AsyncOpenAI
 from config.config import Config
 from src import usage_context
 from src.usage_guard import BudgetExceededError, guard_client
+from src.reply_log import ReplyLog
 from src.user_store import UserStore, clean_user_id
 
 logger = logging.getLogger(__name__)
@@ -70,8 +71,9 @@ _SINGLE_VALUED = {
 class UserDataManager:
     """Remembers people: stores their data through UserStore and extracts facts with the AI."""
 
-    def __init__(self, store: Optional[UserStore] = None):
+    def __init__(self, store: Optional[UserStore] = None, reply_log: Optional[ReplyLog] = None):
         self.store = store or UserStore()
+        self.reply_log = reply_log
         try:
             endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
             api_key = os.environ.get("AZURE_OPENAI_KEY", "")
@@ -93,6 +95,8 @@ class UserDataManager:
     def forget_user(self, user_id: str) -> None:
         """Delete everything stored about a user: facts, topics and saved conversations."""
         self.store.forget(user_id)
+        if self.reply_log:
+            self.reply_log.delete_user(user_id)
         logger.info(f"Deleted all stored data for {clean_user_id(user_id)}")
 
     async def add_conversation(self, user_id: str, message_content: str, bot_response: str, username: Optional[str] = None) -> None:

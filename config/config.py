@@ -25,6 +25,10 @@ class Config:
     
     # Game settings
     MAX_GAME_ATTEMPTS = 10  # Maximum number of attempts in the guessing game
+
+    # Music queue ceilings, so one person or one server cannot fill the bot's memory
+    MUSIC_MAX_QUEUE_PER_GUILD = int(os.getenv("MUSIC_MAX_QUEUE_PER_GUILD", 10))
+    MUSIC_MAX_SONGS_PER_USER = int(os.getenv("MUSIC_MAX_SONGS_PER_USER", 3))
     
     # Paths
     BASE_DIR = Path(__file__).parent.parent
@@ -32,6 +36,11 @@ class Config:
     LOG_DIR = os.path.join(BASE_DIR, "logs")
     LOG_RETENTION_DAYS = int(os.getenv("LOG_RETENTION_DAYS", 30))  # daily log files older than this are deleted
     STATE_DIR = os.path.join(BASE_DIR, "state")  # small files that must survive a restart
+    # A local sqlite copy of every chat reply, so a bad answer can be traced back to the context that made it.
+    REPLY_LOG_PATH = os.getenv("REPLY_LOG_PATH", os.path.join(STATE_DIR, "replies.sqlite3"))
+    REPLY_LOG_KEEP_DAYS = int(os.getenv("REPLY_LOG_KEEP_DAYS", 30))
+    # The key file generated when REPLY_LOG_KEY is not set. Keep it with the database.
+    REPLY_LOG_KEY_PATH = os.getenv("REPLY_LOG_KEY_PATH", os.path.join(STATE_DIR, "reply_log.key"))
 
     # AI spending caps. Once a cap is hit the bot stops calling the model until it resets.
     # $20 is the whole Azure budget for a month. The daily cap stops one bad day from
@@ -39,6 +48,18 @@ class Config:
     AI_MONTHLY_BUDGET_USD = float(os.getenv("AI_MONTHLY_BUDGET_USD", 20))
     AI_DAILY_BUDGET_USD = float(os.getenv("AI_DAILY_BUDGET_USD", 2.50))
     AI_BUDGET_RESET_DAY = int(os.getenv("AI_BUDGET_RESET_DAY", 14))  # the Azure credit renews on the 14th
+
+    # One reply gets a hard deadline and a share of the bot's model capacity. The
+    # queue is deliberately short: waiting longer than this is worse than a retry.
+    AI_REQUEST_TIMEOUT_SECONDS = float(os.getenv("AI_REQUEST_TIMEOUT_SECONDS", 90))
+    AI_MODEL_TIMEOUT_SECONDS = float(os.getenv("AI_MODEL_TIMEOUT_SECONDS", 45))
+    AI_FILE_REQUEST_TIMEOUT_SECONDS = float(os.getenv("AI_FILE_REQUEST_TIMEOUT_SECONDS", 180))
+    AI_MAX_CONCURRENT_REQUESTS = int(os.getenv("AI_MAX_CONCURRENT_REQUESTS", 4))
+    AI_MAX_QUEUED_REQUESTS = int(os.getenv("AI_MAX_QUEUED_REQUESTS", 20))
+    AI_QUEUE_WAIT_SECONDS = float(os.getenv("AI_QUEUE_WAIT_SECONDS", 10))
+    # A single reply cannot loop tools or spend forever, even if the prompt asks it to.
+    AI_MAX_MODEL_CALLS_PER_REPLY = int(os.getenv("AI_MAX_MODEL_CALLS_PER_REPLY", 24))
+    AI_MAX_REPLY_COST_USD = float(os.getenv("AI_MAX_REPLY_COST_USD", 0.25))
 
     # What one person may spend, so nobody can use up the bot for everyone. One 30-question
     # study reply is a few cents, and a heavy study day is under a dollar. Three students
@@ -137,6 +158,9 @@ class Config:
         "pdf": (30, 86400),    # 30 PDFs described page by page per day. One already described is free.
         "web": (20, 86400),    # 20 web searches or opened links per day
         "course": (120, 86400),# 120 searches of the course material per day
+        "music": (5, 600),     # 5 song requests per 10 minutes
+        "music_guild": (10, 600),  # 10 song requests per server per 10 minutes
+        "music_control": (20, 600),  # 20 playback controls per 10 minutes
     }
     
     # Dynamic settings like directories are initialized in a method rather than duplicated

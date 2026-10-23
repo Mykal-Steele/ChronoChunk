@@ -1,5 +1,6 @@
 """Unit tests for AIResponseHandler — Gemini client is mocked."""
 import re
+import sqlite3
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -38,6 +39,24 @@ def test_format_strips_chronochunk_prefix(handler):
 def test_format_strips_bot_prefix(handler):
     result = handler._format_ai_response("Bot: hello there")
     assert not result.lower().startswith("bot:")
+
+
+def test_format_removes_planning_before_the_answer(handler):
+    leaked = (
+        "Need no source. Also code formatting background says hates code block but inline code okay. "
+        "We can simply remove source.\n\nThe answer is 42."
+    )
+    result = handler._format_ai_response(leaked)
+    assert "need no source" not in result.lower()
+    assert "code formatting background" not in result.lower()
+    assert "remove source" not in result.lower()
+    assert "answer is 42" in result.lower()
+
+
+def test_format_removes_planning_after_a_role_label(handler):
+    result = handler._format_ai_response("ChronoChunk: Need no source.\n\nThe answer is 42.")
+    assert "need no source" not in result.lower()
+    assert "answer is 42" in result.lower()
 
 
 def test_format_triple_question_marks_preserved(handler):
@@ -236,6 +255,19 @@ async def test_bad_image_falls_back_to_a_text_only_request(handler, mock_openai_
     assert "images failed to load" in retry_content
 
 
+async def test_accuracy_rules_are_added_only_when_the_reply_can_be_wrong(handler, mock_openai_client, caplog):
+    await handler.generate_response("yo", "", "Kruskal", "123")
+    plain = mock_openai_client.chat.completions.create.call_args[1]["messages"][0]["content"]
+    assert "ACCURACY CHECK FOR THIS REPLY" not in plain
+
+    await handler.generate_reply("what is this", "", "Kruskal", "123",
+                                 attached_context="file: shot.png", images=["data:image/png;base64,AAAA"])
+    risky = mock_openai_client.chat.completions.create.call_args[1]["messages"][0]["content"]
+    assert "ACCURACY CHECK FOR THIS REPLY" in risky
+    assert "never infer what it does from its name" in risky
+    assert "screenshot" in risky
+
+
 async def test_system_prompt_covers_replies_and_staying_on_topic(handler):
     from src.ai_response_handler import _SYSTEM_PROMPT
     assert "MESSAGE THEY REPLIED TO" in _SYSTEM_PROMPT
@@ -293,6 +325,26 @@ def built_files(monkeypatch):
     return document, diagram
 
 
+async def test_the_debug_log_gets_the_context_and_not_just_the_one_line(handler):
+    from src.ai_response_handler import Reply
+    from src.tools import Turn
+    handler.reply_log = MagicMock()
+    request = Turn("what dev tool", "Kruskal", "Alex: earlier", "file: notes.md", ["img"],
+                   user_id="42", channel_id="99", routing={"course": False})
+    request.course_sources = {"10": ("Week 9", "https://example.test/9")}
+    request.calls = 2
+    request.cost = 0.0123
+    await handler._log_reply(request, Reply("it is Teams"))
+    fields = handler.reply_log.record.call_args.kwargs
+    assert fields["query"] == "what dev tool"
+    assert fields["conversation_history"] == "Alex: earlier"
+    assert fields["attached_context"] == "file: notes.md"
+    assert fields["channel_id"] == "99" and fields["user_id"] == "42"
+    assert fields["routing"] == {"course": False}
+    assert fields["sources"]["10"][0] == "Week 9"
+    assert fields["model_calls"] == 2 and fields["cost"] == 0.0123
+
+
 async def test_each_reply_logs_what_it_read_and_what_it_cost(handler, mock_openai_client, caplog):
     from types import SimpleNamespace
     response = _message(content="its a cat")
@@ -306,6 +358,13 @@ async def test_each_reply_logs_what_it_read_and_what_it_cost(handler, mock_opena
     assert "read 1 images and 1 files" in line
     assert "1 model calls, about $0.2500, sent 0 files" in line
     assert re.search(r"took \d+\.\ds \(\d+\.\ds waiting for the model, \d+\.\ds in tools\)$", line)
+
+
+async def test_a_broken_reply_log_does_not_cost_the_user_their_answer(handler, mock_openai_client):
+    handler.reply_log = MagicMock()
+    handler.reply_log.record.side_effect = sqlite3.OperationalError("database is locked")
+    reply = await handler.generate_reply("still answer me", "", "Kruskal", "1")
+    assert reply.ok and reply.text
 
 
 async def test_tools_are_only_offered_when_files_are_allowed(handler, mock_openai_client):
@@ -657,6 +716,24 @@ async def test_model_cannot_loop_on_tools_forever(handler, mock_openai_client, b
     assert "tools" not in mock_openai_client.chat.completions.create.call_args[1]
 
 
+async def test_a_request_for_five_files_gets_enough_rounds_to_make_them(handler, mock_openai_client, built_files):
+    from src.tools.documents import MAX_FILES_PER_REPLY
+    _, diagram = built_files
+    calls = [
+        _message(tool_calls=[_tool_call(
+            "create_diagram",
+            {"title": f"Flow {n}", "mermaid": "flowchart TD\n  A --> B"},
+            f"call_{n}",
+        )])
+        for n in range(MAX_FILES_PER_REPLY)
+    ]
+    mock_openai_client.chat.completions.create.side_effect = calls + [_message(content="five diagrams attached")]
+    reply = await handler.generate_reply("/make five diagrams", "", "Kruskal", "1", allow_files=True)
+    assert reply.text == "five diagrams attached"
+    assert len(reply.files) == MAX_FILES_PER_REPLY
+    assert diagram.await_count == MAX_FILES_PER_REPLY
+
+
 async def test_same_document_is_not_built_twice_in_one_reply(handler, mock_openai_client, built_files):
     document, _ = built_files
     gate = MagicMock()
@@ -996,6 +1073,22 @@ def test_a_reply_with_lines_that_look_alike_is_not_cut(handler, reply):
     assert handler._format_ai_response(reply).lower() == reply.lower()
 
 
+def test_a_reworded_copy_with_an_extra_sentence_is_cut():
+    """The failure from 22 Oct: the later copy shared 68% of its words, under the old 75% line."""
+    from src.ai_response_handler import _without_repeat
+    first = ("Yeah, **in principle** you can test different feature combinations and keep the best one, "
+             "but trying every subset gets huge fast: 10 features already means 1,023 combinations. "
+             "Start with a few sensible comparisons, like adding `CryoSleep`, then check the winner on "
+             "data you didn’t use to choose it so you don’t just overfit the score.")
+    second = ("Yeah, in principle, trying different feature combinations can help you find a better score. "
+              "But every subset adds up fast: 10 features means 1,023 combinations.\n\n"
+              "Start by testing sensible additions like `CryoSleep`. Choose based on validation results, "
+              "then check the final model on untouched test data so you don’t just overfit to the score.")
+    out = _without_repeat(first + "\n" + second)
+    assert out.startswith("Yeah, in principle, trying different feature combinations")
+    assert "you can test different feature combinations and keep the best one" not in out
+
+
 def test_none_of_the_example_replies_is_cut(handler):
     from config.ai_config import load_voice_examples
     from src.ai_response_handler import _without_repeat
@@ -1206,3 +1299,10 @@ async def test_a_detail_request_gets_room_without_a_study_shape(handler, mock_op
     assert call["max_completion_tokens"] == Config.AI_DETAIL_MAX_TOKENS
     system = call["messages"][0]["content"]
     assert "FULL ANSWER" in system and "STUDY MATERIAL" not in system
+
+
+def test_a_normal_answer_that_starts_with_code_formatting_is_not_removed(handler):
+    answer = "Code formatting rules in Python follow PEP 8. Use 4 spaces per indent and keep lines short."
+    result = handler._format_ai_response(answer)
+    assert result.lower() == answer.lower()
+    assert "code formatting rules" in result.lower()

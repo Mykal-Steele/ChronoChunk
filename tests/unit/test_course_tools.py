@@ -354,12 +354,14 @@ async def test_the_daily_limit_is_told_to_the_model_instead_of_a_lookup(handler,
     mock_openai_client.embeddings.create.assert_not_awaited()
 
 
-async def test_a_question_about_the_latest_lecture_only_reads_the_newest_one(course_file):
+async def test_a_question_about_the_latest_lecture_reads_the_recent_ones(course_file):
     _fill(course_file, older_lecture=True)
     turn = _turn(direction(filler=1))
     text = await lookup_for(turn, Scope("what did the latest data science lecture cover", True, ["CSC345"]))
     assert "Naive Bayes" in text
-    assert "what a lecture is about" not in text
+    # An announcement can sit in the lecture before the newest one, so the last few are read.
+    assert "what a lecture is about" in text
+    assert "most recent lecture days" in text
 
 
 async def test_a_question_without_latest_still_reads_every_lecture(course_file):
@@ -680,12 +682,14 @@ async def test_the_routing_call_sees_the_catalog_and_returns_what_they_want(hand
         "study_kind": "quiz",
         "study_items": 10,
         "wants_detail": False,
+        "needs_web": True,
     })])
     need = await router.original(handler, "make 10 mcqs on pca -csc340", "", "", ["CSC340"], True,
                                  _turn(direction(pca=1)))
     assert need == CourseNeed(True, ["CSC340"], "principal component analysis",
                               "They want a quiz on PCA for CSC340, using the course slides.", False,
-                              "quiz", 10, False)
+                              "quiz", 10, True, False)
+    assert need.needs_web is True
     call = mock_openai_client.chat.completions.create.call_args[1]
     assert call["tool_choice"] == {"type": "function", "function": {"name": "check_course_need"}}
     system = call["messages"][0]["content"]
@@ -693,6 +697,43 @@ async def test_the_routing_call_sees_the_catalog_and_returns_what_they_want(hand
     assert "COURSE MODE: on for CSC340" in system
     asked = call["messages"][1]["content"]
     assert 'CURRENT MESSAGE:\n"make 10 mcqs on pca -csc340"' in asked
+
+
+def test_the_routing_prompt_covers_product_and_ui_questions():
+    from src.course_need import check_prompt
+    text = check_prompt("", "")
+    assert "needs_web" in text
+    assert "named app" in text and "UI setting" in text
+
+
+async def test_a_product_question_is_grounded_with_a_web_lookup(handler, mock_openai_client, material, router, monkeypatch):
+    from config.config import Config
+    from src.tools import web as web_tools
+    monkeypatch.setattr(Config, "TAVILY_API_KEY", "tvly-test")
+    search = AsyncMock(return_value="=== WEB SEARCH RESULTS ===\nOrange Impute Drop removes rows\n=== END ===")
+    monkeypatch.setattr(web_tools, "search_web", search)
+    router.decide = lambda query: CourseNeed(needs_web=True)
+    mock_openai_client.chat.completions.create.return_value = _message(content="Drop removes rows")
+    reply = await handler.generate_reply("/what does drop do in orange", "", "Kruskal", "1", allow_files=True)
+    assert "drop removes rows" in reply.text.lower()
+    call = mock_openai_client.chat.completions.create.call_args[1]
+    system = call["messages"][0]["content"]
+    user = call["messages"][-1]["content"]
+    assert "ACCURACY CHECK FOR THIS REPLY" in system
+    assert "Orange Impute Drop removes rows" in user
+    assert user.index("web result below was just looked up") < user.index("Orange Impute Drop removes rows")
+    search.assert_awaited_once()
+
+
+async def test_a_product_question_without_web_search_is_told_to_say_it_could_not_verify(handler, mock_openai_client, material, router, monkeypatch):
+    from config.config import Config
+    monkeypatch.setattr(Config, "TAVILY_API_KEY", "")
+    router.decide = lambda query: CourseNeed(needs_web=True)
+    mock_openai_client.chat.completions.create.return_value = _message(content="i could not verify that")
+    await handler.generate_reply("/what does drop do in orange", "", "Kruskal", "1", allow_files=True)
+    user = mock_openai_client.chat.completions.create.call_args[1]["messages"][-1]["content"]
+    assert "web search is unavailable" in user
+    assert "do not guess" in user
 
 
 async def test_a_cached_plain_answer_does_not_pay_for_the_routing_call_again(handler, mock_openai_client, router):

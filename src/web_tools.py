@@ -4,6 +4,8 @@ import ipaddress
 import logging
 import re
 import socket
+import time
+from collections import OrderedDict
 from html.parser import HTMLParser
 from typing import List, Optional, Tuple
 from urllib.parse import urljoin, urlsplit
@@ -19,8 +21,11 @@ logger = logging.getLogger(__name__)
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 TAVILY_EXTRACT_URL = "https://api.tavily.com/extract"
 
-# A page is cut here before the model reads it. About 3,000 tokens.
+# A page is sent to the model in parts of this size. About 3,000 tokens a part.
 MAX_PAGE_CHARS = 12000
+# A downloaded page is kept this long so the next part does not download it again.
+PAGE_CACHE_TTL_SECONDS = 300
+PAGE_CACHE_MAX_PAGES = 8
 # Stop downloading a page after this much
 MAX_PAGE_BYTES = 3_000_000
 MAX_REDIRECTS = 5
@@ -30,6 +35,8 @@ MAX_SEARCH_RESULTS = 5
 MAX_SNIPPET_CHARS = 700
 # A page with less text than this probably needs JavaScript to show anything, so Tavily reads it instead
 THIN_PAGE_CHARS = 300
+
+_page_cache: "OrderedDict[str, Tuple[float, str, str]]" = OrderedDict()
 
 SEARCH_TOPICS = ("general", "news")
 SEARCH_TIME_RANGES = ("day", "week", "month", "year")
@@ -229,9 +236,44 @@ async def _tavily_extract(url: str) -> Tuple[str, str]:
     return str(first.get("title") or ""), _tidy(str(first.get("raw_content") or ""))
 
 
-async def read_page(url: str) -> str:
+def _cached_page(url: str) -> Optional[Tuple[str, str]]:
+    """A page downloaded in the last few minutes, with its title, or None."""
+    cached = _page_cache.get(url)
+    if not cached:
+        return None
+    expires_at, title, text = cached
+    if expires_at <= time.monotonic():
+        _page_cache.pop(url, None)
+        return None
+    _page_cache.move_to_end(url)
+    return title, text
+
+
+def _remember_page(url: str, title: str, text: str) -> None:
+    """Keep a downloaded page so opening its next part does not download it again."""
+    _page_cache[url] = (time.monotonic() + PAGE_CACHE_TTL_SECONDS, title, text)
+    _page_cache.move_to_end(url)
+    while len(_page_cache) > PAGE_CACHE_MAX_PAGES:
+        _page_cache.popitem(last=False)
+
+
+def _part_end(text: str, start: int) -> int:
+    """Where the part that starts at start ends, at a break near the size limit when it can."""
+    limit = start + MAX_PAGE_CHARS
+    if limit >= len(text):
+        return len(text)
+    earliest = max(start + 1, limit - max(200, MAX_PAGE_CHARS // 5))
+    for marker in ("\n\n", "\n", ". ", " "):
+        cut = text.rfind(marker, earliest, limit)
+        if cut > start:
+            return cut + len(marker)
+    return limit
+
+
+async def read_page(url: str, offset: int = 0) -> str:
     """
-    Open a web link and return its text in a === block for the model. The page is
+    Open a web link and return its text in a === block for the model. A long page is
+    returned in parts: the block says where the next part starts. The page is
     downloaded from this machine first. When that fails or comes back nearly empty,
     Tavily reads it instead.
     """
@@ -239,35 +281,52 @@ async def read_page(url: str) -> str:
     if not re.match(r"^https?://", url, flags=re.IGNORECASE):
         url = "https://" + url
     _check_url(url)
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        raise WebError("the page offset must be a whole number starting at 0")
 
-    title, text, problem = "", "", ""
-    try:
-        title, text = await _download(url)
-    except NotPublicError:
-        raise
-    except WebError as e:
-        problem = str(e)
-    except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
-        logger.info(f"Could not download {url}: {e!r}")
-        problem = "the site did not answer"
-
-    if len(text) < THIN_PAGE_CHARS and search_available():
+    cached = _cached_page(url)
+    if cached:
+        title, text = cached
+    else:
+        title, text, problem = "", "", ""
         try:
-            other_title, other_text = await _tavily_extract(url)
-            if len(other_text) > len(text):
-                title, text = other_title or title, other_text
+            title, text = await _download(url)
+        except NotPublicError:
+            raise
         except WebError as e:
-            logger.info(f"Tavily could not read {url} either: {e}")
+            problem = str(e)
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+            logger.info(f"Could not download {url}: {e!r}")
+            problem = "the site did not answer"
 
-    if not text:
-        raise WebError(problem or "the page has no readable text")
+        if len(text) < THIN_PAGE_CHARS and search_available():
+            try:
+                other_title, other_text = await _tavily_extract(url)
+                if len(other_text) > len(text):
+                    title, text = other_title or title, other_text
+            except WebError as e:
+                logger.info(f"Tavily could not read {url} either: {e}")
 
+        if not text:
+            raise WebError(problem or "the page has no readable text")
+        _remember_page(url, title, text)
+
+    total = len(text)
     lines = [f"=== WEB PAGE {url} ==="]
     if title:
         lines.append(f"title: {title}")
-    lines.append(text[:MAX_PAGE_CHARS])
-    if len(text) > MAX_PAGE_CHARS:
-        lines.append("(the page is longer than this, the rest was cut off)")
+    if offset >= total:
+        lines.append(f"(the page has {total} characters; offset {offset} is past the end)")
+        lines.append("=== END ===")
+        return "\n".join(lines)
+
+    end = _part_end(text, offset)
+    if offset or end < total:
+        lines.append(f"part: characters {offset}-{end} of {total}")
+    lines.append(text[offset:end])
+    if end < total:
+        lines.append(
+            f"(page continues at character {end}. call open_url again with the same url and offset {end} if u need the rest)")
     lines.append("=== END ===")
     return "\n".join(lines)
 

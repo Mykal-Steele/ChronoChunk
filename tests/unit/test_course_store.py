@@ -57,6 +57,14 @@ def test_a_new_file_can_be_opened_read_only(store, path):
     reader.close()
 
 
+def test_chunk_counts_are_cached_for_a_read_only_file(store, path):
+    reader = CourseStore.open(path)
+    first = reader.chunk_counts()
+    reader.chunk_counts()["CSC340"] = 999
+    assert reader.chunk_counts() == first
+    reader.close()
+
+
 def test_create_does_not_write_over_an_existing_file(store, path):
     with pytest.raises(FileExistsError):
         CourseStore.create(path)
@@ -122,6 +130,15 @@ def test_newest_leaves_out_sources_with_no_date(store):
     store.add_source("CSC345", "slide", "Undated handout.pdf")
     store.add_source("CSC345", "post", "Welcome")
     assert store.newest()["CSC345"] == {"transcript": "2026-10-06"}
+
+
+def test_days_gives_the_newest_dated_days_of_one_course(store):
+    store.add_source("CSC345", "transcript", "Lecture 10", date="2026-10-19")
+    store.add_source("CSC345", "slide", "Week 8", date="2026-10-13")
+    store.add_source("CSC345", "transcript", "Lecture 7", date="2026-09-22")
+    store.add_source("CSC345", "post", "Undated", date="")
+    assert store.days("CSC345", limit=2) == ["2026-10-19", "2026-10-13"]
+    assert store.days("CSC345", limit=0) == []
 
 
 def test_assignments_come_back_by_due_day_with_what_they_ask_for(store):

@@ -107,9 +107,23 @@ Everything else uses the default from `config/config.py` unless `.env` sets it:
 | `AI_USER_DAILY_BUDGET_USD` | 0.50 | What one person may use in a day |
 | `AI_USER_WEEKLY_BUDGET_USD` | 1.50 | What one person may use over 7 days |
 | `AI_UNLIMITED_USER_IDS` | empty | Discord user ids the two limits above skip, separated by commas |
+| `AI_REQUEST_TIMEOUT_SECONDS` | 90 | Hard deadline for one chat reply |
+| `AI_FILE_REQUEST_TIMEOUT_SECONDS` | 180 | Hard deadline for a reply that may build files |
+| `AI_MODEL_TIMEOUT_SECONDS` | 45 | Timeout for one model call; retries are kept to one |
+| `AI_MAX_CONCURRENT_REQUESTS` | 4 | Replies that may call the model at the same time |
+| `AI_MAX_QUEUED_REQUESTS` | 20 | Replies that may wait for a model slot before the rest are turned away |
+| `AI_QUEUE_WAIT_SECONDS` | 10 | How long a reply waits for a slot before it is turned away |
+| `AI_MAX_MODEL_CALLS_PER_REPLY` | 24 | Model calls one reply may make |
+| `AI_MAX_REPLY_COST_USD` | 0.25 | Model spend one reply may reach |
+| `MUSIC_MAX_QUEUE_PER_GUILD` | 10 | Songs one server may queue |
+| `MUSIC_MAX_SONGS_PER_USER` | 3 | Songs one person may have queued |
 | `PDF_PAGE_NOTES` | `auto` | `auto`, `on` or `off`: whether the bot describes PDF pages from pictures of them |
 | `PDF_NOTES_KEEP_DAYS` | 7 | Days a PDF's page descriptions are kept |
 | `LOG_RETENTION_DAYS` | 30 | Days a log file is kept |
+| `REPLY_LOG_PATH` | `state/replies.sqlite3` | Local encrypted SQLite copy of each reply, for tracing a bad answer |
+| `REPLY_LOG_KEEP_DAYS` | 30 | Days a reply log row is kept |
+| `REPLY_LOG_KEY` | empty | Fernet key for the reply log. When empty, a key is made at `REPLY_LOG_KEY_PATH` |
+| `REPLY_LOG_KEY_PATH` | `state/reply_log.key` | Where the generated reply-log key is kept, mode 0600 |
 | `JOIN_IN_SECONDS` | 30 | Seconds after a call in which the bot may answer a message nobody addressed to it. 0 turns it off. |
 | `JOIN_IN_CHANCE` | 0.5 | How likely the bot is to take that chance, from 0 to 1. It is decided once per call, before the model is asked. |
 | `COURSES_FILE` | `state/courses.db` | The course material the bot searches. See [Course material](#course-material). |
@@ -128,6 +142,7 @@ ssh azureuser@<server address> /opt/chronochunk/update.sh
 ```
 
 4. Check it came back: `docker logs --tail 50 chronochunk`, or `/setup` in Discord, which shows the new version and a fresh uptime.
+5. Check the reply log started too: `docker logs chronochunk | grep "Reply log ready"`, then `docker compose exec bot python -m src.reply_log --tail 1`.
 
 ### Setting up a new server
 
@@ -219,7 +234,7 @@ The bot can open links and search the web.
 - Ask for a file in the same message and the document is written from what it found: `/search X and make a one page pdf`.
 - Search uses [Tavily](https://tavily.com). Put the key in `.env` as `TAVILY_API_KEY`. Without a key the bot cannot search, and it opens ordinary pages only: PDF links and pages that need JavaScript are read through Tavily.
 - A page is downloaded from the bot's own server. When that fails or the page comes back nearly empty, Tavily reads it instead. That covers PDFs and most pages that need JavaScript.
-- One reply makes at most 4 lookups and each page is cut at 12,000 characters. The numbers are at the top of `src/web_tools.py` and `src/ai_response_handler.py`.
+- One reply makes at most 6 lookups. A long page comes back in parts of about 12,000 characters, and the bot asks for the next part only when it needs it. The numbers are at the top of `src/web_tools.py` and `src/tools/web.py`.
 - Links to the server itself, private networks and the cloud metadata address are refused.
 - The bot cannot log in to sites. Pages behind a login or a paywall mostly come back empty.
 
@@ -261,6 +276,12 @@ The bot stops calling the model when it reaches its spending cap, and starts aga
 | `AI_USER_DAILY_BUDGET_USD` | 0.50 | What one person may spend per day |
 | `AI_USER_WEEKLY_BUDGET_USD` | 1.50 | What one person may spend over any 7 days |
 | `AI_UNLIMITED_USER_IDS` | empty | Discord user ids, separated by commas, with no personal limit |
+| `AI_REQUEST_TIMEOUT_SECONDS` | 90 | Hard deadline for one chat reply |
+| `AI_FILE_REQUEST_TIMEOUT_SECONDS` | 180 | Hard deadline when the reply may build files |
+| `AI_MAX_CONCURRENT_REQUESTS` | 4 | Replies allowed to call the model at once |
+| `AI_MAX_QUEUED_REQUESTS` | 20 | Replies allowed to wait for a slot |
+| `AI_MAX_MODEL_CALLS_PER_REPLY` | 24 | Model calls one reply may make |
+| `AI_MAX_REPLY_COST_USD` | 0.25 | Model spend one reply may reach |
 | `AI_CHAT_REASONING_EFFORT` | low | Reasoning effort for chat replies. Must be `none` for gpt-6-luna and gpt-5.6-luna, which do not take tool calls with reasoning on |
 | `AI_STUDY_REASONING_EFFORT` | medium | Reasoning for study material, when the reply has no tools. If tools are offered on a model that needs `none`, the chat setting wins |
 | `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` | empty | A cheaper deployment, such as gpt-5-nano, for picking facts out of messages. Empty uses the main one |
@@ -283,6 +304,8 @@ The bot plays music in the voice channel you are in. A Spotify link is looked up
 - `/queue` - Show the current queue
 - `/volume <0-100>` - Set the volume
 - `/relate` - Play a song related to the current one (YouTube recommendations)
+
+`/skip`, `/pause`, `/resume`, `/stop` and `/volume` need the Manage Server permission. A server may queue 10 songs, and one person may have 3 in the queue. Song requests and controls are rate limited.
 
 Examples:
 
@@ -311,9 +334,17 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/app -w /app c
 - GitHub Actions runs the linter, the type checker and the tests on every pull request and on every push to `main` (`.github/workflows/tests.yml`).
 - Changes are made on a branch, such as `feature/web-search` or `fix/spotify-links`, and reach `main` through a pull request once the tests pass. The server runs `main`.
 - Packages are pinned. `requirements.in` lists what the bot imports and `requirements.txt` is built from it. To change a version, edit `requirements.in` and run the command at the top of that file. `requirements-dev.in` works the same way for the test packages.
-- Data is in one SQLite file, `state/chronochunk.db`. To look inside: `sqlite3 state/chronochunk.db ".tables"`. The schema is the `MIGRATIONS` list in `src/database.py`. To change it, add a new entry at the end.
+- Data is in two SQLite files: `state/chronochunk.db` for the bot's memory and `state/replies.sqlite3` for the encrypted reply log. To look inside: `sqlite3 state/chronochunk.db ".tables"`. The schema is the `MIGRATIONS` list in `src/database.py`. To change it, add a new entry at the end. The reply log is not included in the database backups below.
 - The bot copies that file to `state/backups/chronochunk-<day>.db` at startup and once a day, and keeps 7 copies. To go back to one: stop the bot, delete `state/chronochunk.db-wal` and `state/chronochunk.db-shm` if they exist, copy the backup over `state/chronochunk.db`, and start the bot.
 - Logs go to `logs/chronochunk.log`. A new file starts each day and files older than 30 days are deleted.
+- Every answer also writes an encrypted row to `state/replies.sqlite3`: who and where, the message, the conversation history, the attached context, the routing answer, every tool call and what it returned, the reply, files, sources, model, reasoning effort, cost and latency. Rows older than `REPLY_LOG_KEEP_DAYS` are deleted. The payload is a Fernet token; the database stores only a keyed user hash and non-text metadata. Set `REPLY_LOG_KEY` or keep the generated `state/reply_log.key` (mode 0600) to read it.
+- Read the reply log on the server with the built-in command:
+  ```bash
+  docker compose exec bot python -m src.reply_log --tail 20
+  docker compose exec bot python -m src.reply_log --tail 20 --json
+  docker compose exec bot python -m src.reply_log --user 123456789 --tail 50
+  ```
+  The file and key live in the mounted `state/` folder, so they survive a rebuild. On startup the log prints `Reply log ready at ...`; if that line is missing, the bot says why and keeps answering without the debug log.
 - Every answer writes an `Answered <name> in ...` line to the log with the seconds each step took: history, context, model and tools, and send. Start there when a reply was slow.
 
 ### Project structure

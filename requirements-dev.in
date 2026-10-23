@@ -4,6 +4,8 @@
 -c requirements.txt
 pytest==9.1.1
 pytest-asyncio==1.4.0
-# The [nodejs] extra brings the Node runtime pyright runs on, so it downloads nothing when it starts
-pyright[nodejs]==1.1.414
+# pyright's [nodejs] extra pins nodejs-wheel-binaries, whose newest release (24.19.0) still
+# has CVE-2026-111497. The test image installs a patched Node with nodeenv instead.
+pyright==1.1.414
+nodeenv==1.11.0
 ruff==0.17.0

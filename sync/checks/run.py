@@ -139,10 +139,10 @@ async def run(cases: List[Dict], courses_file: str, label: str, deployment: str)
     costs: Dict[str, float] = {"total": 0.0, "last": 0.0, "calls": 0}
     log_reply = AIResponseHandler._log_reply
 
-    def counted_log(request, reply):
+    async def counted_log(self, request, reply, error=None):
         costs["last"], costs["calls"] = request.cost, request.calls
-        log_reply(request, reply)
-    AIResponseHandler._log_reply = staticmethod(counted_log)  # type: ignore[method-assign]
+        await log_reply(self, request, reply, error)
+    AIResponseHandler._log_reply = counted_log  # type: ignore[method-assign]
 
     class Watch(logging.Handler):
         def emit(self, record: logging.LogRecord) -> None:

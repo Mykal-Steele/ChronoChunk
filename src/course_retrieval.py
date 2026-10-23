@@ -80,7 +80,8 @@ class Found:
     hits: List[Hit]
     # How many assignments the dated list holds
     rows: int
-    # strong, unsure or nothing. For the log and the check. The model is not told: it reads the passages itself.
+    # strong, unsure or nothing. The log keeps it, and an unsure lookup tells the model
+    # to check the passages rather than treat them as confirmed answers.
     label: str
     # What each number in the text stands for: number -> (name, link). "A" is the assignment list.
     sources: Dict[str, Tuple[str, str]] = field(default_factory=dict)
@@ -98,6 +99,10 @@ _NAMED_DAY = re.compile(r"\b\d{4}-\d{2}-\d{2}\b|\b(?:jan|feb|mar|apr|may|jun|jul
                         r"\b\d{1,2} ?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|\b\d{1,2}/\d{1,2}\b", re.IGNORECASE)
 # How many passages of a "latest" lookup come from the search. The rest are spread through that day.
 LATEST_SEARCHED = 3
+# "Latest" means the newest class, then the classes just before it. An announcement can sit
+# in the previous lecture, so one day is too narrow.
+RECENT_DAYS = 3
+RECENT_SEARCHED = 2
 
 
 def about_latest(message: str) -> bool:
@@ -267,9 +272,82 @@ def outline_text(store: CourseStore, codes: Sequence[str] = ()) -> str:
 # The model sometimes puts it at the end of its last sentence instead of on a line of its own
 _SOURCE_LINE = re.compile(r"(?:^|(?<=\s))-# Source:(.*)$", re.MULTILINE | re.IGNORECASE)
 _MARK = re.compile(r"\[(\d+|A)\]")
+# One expression for both reading and removing bare markers, so anything counted as a
+# citation is also removed, and an index such as matrix[2][3] is neither.
+_BARE_MARKS = re.compile(r" ?(?<![\w\]])((?:\[(?:\d+|A)\])+)(?![\w(\[])")
 
 # Under the chunk size, so even a full line plus the reply has room before Discord splits it.
 SOURCE_LINE_CHARS = 900
+
+
+_CODE_SPAN = re.compile(r"(?P<fence>`{3,}|~{3,}).*?(?P=fence)|`[^`\n]*`", re.DOTALL)
+
+
+def _code_spans(text: str) -> List[Tuple[int, int]]:
+    """Ranges of fenced (backtick or tilde) and inline code."""
+    return [(found.start(), found.end()) for found in _CODE_SPAN.finditer(text)]
+
+
+def _link_spans(text: str) -> List[Tuple[int, int]]:
+    """Ranges of Markdown links, with nested brackets in the label allowed."""
+    spans: List[Tuple[int, int]] = []
+    index = 0
+    while index < len(text):
+        if text[index] != "[":
+            index += 1
+            continue
+        depth = 0
+        close = index
+        while close < len(text):
+            if text[close] == "[":
+                depth += 1
+            elif text[close] == "]":
+                depth -= 1
+                if depth == 0:
+                    break
+            close += 1
+        if close >= len(text) or close + 1 >= len(text) or text[close + 1] != "(":
+            index += 1
+            continue
+        end = close + 2
+        parens = 1
+        while end < len(text):
+            if text[end] == "(":
+                parens += 1
+            elif text[end] == ")":
+                parens -= 1
+                if parens == 0:
+                    end += 1
+                    break
+            end += 1
+        if parens:
+            index += 1
+            continue
+        spans.append((index, end))
+        index = end
+    return spans
+
+
+def _protected_spans(text: str) -> List[Tuple[int, int]]:
+    """Code and link ranges, merged so a link inside code (or code inside a link) is one range."""
+    merged: List[Tuple[int, int]] = []
+    for start, end in sorted(_code_spans(text) + _link_spans(text)):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _marks_outside_code(text: str) -> List[str]:
+    """Passage numbers in prose, not in code, a link label, or an index such as rows[2]."""
+    protected = _protected_spans(text)
+    marks = []
+    for found in _BARE_MARKS.finditer(text):
+        if any(start <= found.start(1) < end for start, end in protected):
+            continue
+        marks.extend(_MARK.findall(found.group(1)))
+    return marks
 
 
 def render_sources(text: str, sources: Dict[str, Tuple[str, str]]) -> str:
@@ -278,29 +356,51 @@ def render_sources(text: str, sources: Dict[str, Tuple[str, str]]) -> str:
     types a link: it names the passages it used, and their names, dates and links are
     filled in here. A number that stands for nothing is dropped, and a line left with
     nothing goes. A source line in the middle of the reply, where the model ended an answer
-    and went on, joins the last one.
+    and went on, joins the last one. A reply that names passages but forgets the source
+    line still gets one, so the reader never sees bare numbers such as [10] [12] [13].
     """
-    code = [(block.start(), block.end()) for block in re.finditer(r"```.*?```", text, flags=re.DOTALL)]
+    code = _code_spans(text)
     lines = [found for found in _SOURCE_LINE.finditer(text)
-             if not any(opened < found.start() < closed for opened, closed in code)]
-    if not lines:
-        return text
-    line = lines[-1]
-    marks = [key for found in lines for key in _MARK.findall(found.group(1))]
-    named = [sources[key] for key in dict.fromkeys(marks) if key in sources]
+             if not any(opened <= found.start() < closed for opened, closed in code)]
     # A number set in the answer itself says nothing to the person reading it. Code is left as it
     # is, and so is a number glued to a word, since "rows[2]" is an index and not a passage.
     def without_marks(prose: str) -> str:
-        return re.sub(r" ?(?<![\w\]])((?:\[(?:\d+|A)\])+)(?![\w(\[])",
-                      lambda marks: "" if all(key in sources for key in _MARK.findall(marks.group(1))) else marks.group(0), prose)
-    before = text[:line.start()]
-    if len(lines) > 1:
-        before = "".join(text[end:start] for end, start in
-                         zip([0] + [found.end() for found in lines[:-1]], [found.start() for found in lines], strict=True))
-        before = re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]+\n", "\n", before))
-    pieces = re.split(r"(```.*?```|`[^`\n]*`)", before, flags=re.DOTALL)
-    body = "".join(piece if index % 2 else without_marks(piece) for index, piece in enumerate(pieces))
-    rest = text[line.end():]
+        def remove(marks: re.Match) -> str:
+            kept = "".join(f"[{key}]" for key in _MARK.findall(marks.group(1)) if key not in sources)
+            if not kept:
+                return ""
+            return (" " if marks.group(0).startswith(" ") else "") + kept
+        return _BARE_MARKS.sub(remove, prose)
+
+    def clean(prose: str) -> str:
+        spans = _protected_spans(prose)
+        parts: List[str] = []
+        last = 0
+        for start, end in spans:
+            parts.append(without_marks(prose[last:start]))
+            parts.append(prose[start:end])
+            last = end
+        parts.append(without_marks(prose[last:]))
+        return "".join(parts)
+    if lines:
+        line = lines[-1]
+        marks = [key for found in lines for key in _MARK.findall(found.group(1))]
+        prose = text[:line.start()] + " " + text[line.end():]
+        marks = _marks_outside_code(prose) + marks
+        before = text[:line.start()]
+        if len(lines) > 1:
+            before = "".join(text[end:start] for end, start in
+                             zip([0] + [found.end() for found in lines[:-1]], [found.start() for found in lines], strict=True))
+            before = re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]+\n", "\n", before))
+        rest = clean(text[line.end():])
+    else:
+        # The model forgot the "-# Source:" line. Keep the numbers it used in the answer,
+        # since those are the only record of which passages it read.
+        marks = _marks_outside_code(text)
+        before = text
+        rest = ""
+    named = [sources[key] for key in dict.fromkeys(marks) if key in sources]
+    body = clean(before)
     if not named:
         return (body.rstrip() + rest).rstrip()
     # One source line can outgrow what Discord accepts in a single chunk. Wrapping it
@@ -320,7 +420,8 @@ def render_sources(text: str, sources: Dict[str, Tuple[str, str]]) -> str:
 
 
 def format_hits(query: str, hits: List[Hit], names: dict, rows: Sequence[str] = (), today: Optional[date] = None,
-                searched: bool = True, start: int = 1, repeats: Sequence[str] = ()) -> str:
+                searched: bool = True, start: int = 1, repeats: Sequence[str] = (),
+                label: str = "", note: str = "") -> str:
     """
     A lookup in a === block for the model: each passage under a numbered line that says
     where it is from, then the dated list. searched is False when the list alone
@@ -329,6 +430,11 @@ def format_hits(query: str, hits: List[Hit], names: dict, rows: Sequence[str] = 
     are the numbers of passages this search found that were shown before: they are named, not sent again.
     """
     lines = [f'=== COURSE MATERIAL for "{query}" ===']
+    if hits and label == "unsure":
+        lines.append("these passages are related matches, not confirmed answers. check that each one answers "
+                     "the question; if none does, say what you checked and give the closest one.")
+    if note:
+        lines.append(note)
     shown = " ".join(f"[{number}]" for number in repeats)
     if repeats and not hits:
         lines.append(f"nothing new: this search found only what was already shown as {shown}. answer from those, "
@@ -366,24 +472,45 @@ def format_hits(query: str, hits: List[Hit], names: dict, rows: Sequence[str] = 
     return "\n".join(lines)
 
 
-def _newest_day_hits(store: CourseStore, words: str, vector: List[float], codes: Sequence[str]) -> List[Hit]:
-    """The best passages of each course's newest lecture or slides, then passages spread through that day."""
-    newest = store.newest()
-    hits: List[Hit] = []
+def _recent_day_hits(store: CourseStore, words: str, vector: List[float], codes: Sequence[str]) -> List[Hit]:
+    """The best passages of each course's newest lecture, then the two before it, newest first."""
+    per_course: List[List[List[Hit]]] = []
     for code in codes:
-        day = max((newest.get(code, {}).get(kind, "") for kind in ("transcript", "slide")), default="")
-        if not day:
+        days = store.days(code, ("transcript", "slide"), RECENT_DAYS)
+        if not days:
             continue
-        found = [hit for hit in store.search(words, vector, code, None, day) if hit.date == day][:LATEST_SEARCHED]
-        keys = {_key(hit) for hit in found}
-        found += [hit for hit in store.spread(code, day) if _key(hit) not in keys][:RESULTS - len(found)]
-        hits += found
+        found = store.search(words, vector, code, None, since=days[-1], limit=RESULTS * 2)
+        seen = set()
+        course_days: List[List[Hit]] = []
+        for index, day in enumerate(days):
+            per_day = LATEST_SEARCHED if index == 0 else RECENT_SEARCHED
+            day_hits = [hit for hit in found if hit.date == day and _key(hit) not in seen][:per_day]
+            if not day_hits:
+                day_hits = [hit for hit in store.spread(code, day, count=per_day)
+                            if _key(hit) not in seen][:per_day]
+            for hit in day_hits:
+                seen.add(_key(hit))
+            course_days.append(day_hits)
+        per_course.append(course_days)
+
+    # One result for each course-day pair first, so a newer day in one course cannot take
+    # every slot before the other courses and days are considered.
+    hits: List[Hit] = []
+    for day_index in range(RECENT_DAYS):
+        for course_days in per_course:
+            if day_index < len(course_days) and course_days[day_index] and len(hits) < RESULTS:
+                hits.append(course_days[day_index].pop(0))
+    # Then fill what is left, newest day first.
+    for day_index in range(RECENT_DAYS):
+        for course_days in per_course:
+            while day_index < len(course_days) and course_days[day_index] and len(hits) < RESULTS:
+                hits.append(course_days[day_index].pop(0))
     return hits
 
 
 def _key(hit: Hit) -> tuple:
-    """What makes two results the same passage."""
-    return (hit.course, hit.kind, hit.title, hit.locator)
+    """What makes two results the same passage. The locator is only unique within its day."""
+    return (hit.course, hit.kind, hit.title, hit.locator, hit.date)
 
 
 async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[float]]], words: str, codes: Sequence[str],
@@ -398,7 +525,8 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
     the list is wanted for. first_number is the number the first passage gets. seen
     holds the passages this conversation was already shown, by the number each has.
     latest is for a question about the newest lecture or slides: each course in codes is
-    searched on its newest day only, and passages spread through that day fill the rest.
+    searched on its newest day, then the two before it, and passages spread through those
+    days fill the rest.
     many is for a study request: wider results and more from each source.
     """
     asked = asked or words
@@ -437,7 +565,7 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
                 hits.append(hit)
         hits = sorted(hits, key=lambda hit: (bool(kind) and hit.kind != kind, -hit.similarity))[:limit]
         if latest and codes and not since:
-            hits = await asyncio.to_thread(_newest_day_hits, store, words, vector, codes)
+            hits = await asyncio.to_thread(_recent_day_hits, store, words, vector, codes)
 
     rows: List[str] = []
     count = 0
@@ -447,6 +575,12 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
         rows = [f"- none posted{' for ' + ', '.join(codes) if codes else ''}"]
     names = {course["code"]: course["name"] for course in store.courses()}
     label = label_of(hits)
+    note = ""
+    if latest and codes and not since and hits:
+        days = sorted({hit.date for hit in hits if hit.date}, reverse=True)
+        if len(days) > 1:
+            note = (f"these passages cover the {len(days)} most recent lecture days, newest first: "
+                    + ", ".join(days))
     # A passage shown earlier in the conversation keeps its number and is not sent again
     seen = seen if seen is not None else {}
     repeats = list(dict.fromkeys(seen[_key(hit)] for hit in hits if _key(hit) in seen))
@@ -456,5 +590,6 @@ async def retrieve(store: CourseStore, embed: Callable[[str], Awaitable[List[flo
     if dated:
         none = f": none posted{' for ' + ', '.join(codes) if codes else ''}" if not items else " list"
         sources["A"] = (f"teams assignments{none}", "")
-    return Found(format_hits(words, hits, names, rows, today, searched, first_number, repeats), hits, count, label, sources)
+    return Found(format_hits(words, hits, names, rows, today, searched, first_number, repeats, label, note),
+                 hits, count, label, sources)
 

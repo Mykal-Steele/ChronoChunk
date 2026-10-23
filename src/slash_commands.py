@@ -1,3 +1,4 @@
+import asyncio
 import io
 import logging
 import discord
@@ -40,7 +41,31 @@ class SlashCommandManager:
             self.music_manager = MusicManager()
         else:
             self.music_manager = music_manager
-            
+
+    async def _music_allowed(self, interaction: discord.Interaction, action: str = "music") -> bool:
+        """Apply the shared rate limiter before doing any music work."""
+        limiter = getattr(self.bot, "rate_limiter", None)
+        if not limiter:
+            return True
+        try:
+            # The person's own cap first: a rejected retry must not spend the guild's budget.
+            limiter.check_rate_limit(str(interaction.user.id), action)
+            if action == "music" and interaction.guild_id is not None:
+                limiter.check_rate_limit(f"guild:{interaction.guild_id}", "music_guild")
+        except RateLimitError as e:
+            await interaction.response.send_message(
+                f"slow down a bit, try again in {max(1, round(e.retry_after))} sec", ephemeral=True)
+            return False
+        return True
+
+    async def _music_controller(self, interaction: discord.Interaction) -> bool:
+        """Only a server manager may change what everyone is listening to."""
+        permissions = getattr(interaction.user, "guild_permissions", None)
+        if not getattr(permissions, "manage_guild", False):
+            await interaction.response.send_message(
+                "only a server manager can control the music", ephemeral=True)
+            return False
+        return await self._music_allowed(interaction, "music_control")
 
     async def register_commands(self):
         """Register all slash commands with Discord"""
@@ -173,8 +198,9 @@ class SlashCommandManager:
             
             try:
                 if not fact:
-                    # Clear all user data
-                    self.user_data_manager.forget_user(user_id)
+                    # Clear all user data. forget_user opens and writes sqlite, so keep it
+                    # off the event loop; the reply log may be locked by a background write.
+                    await asyncio.to_thread(self.user_data_manager.forget_user, user_id)
                     await interaction.response.send_message("bet, wiped all your data. fresh start 💀", ephemeral=True)
                 else:
                     # Try to remove specific fact
@@ -454,10 +480,13 @@ class SlashCommandManager:
         @app_commands.describe(query="YouTube/Spotify URL or search term")
         async def music(interaction: discord.Interaction, query: str):
             usage_context.set_user(interaction.user.id)
-            # Only a server member has a voice state. In a DM there is none.
+            # Only a server member has a voice state. In a DM there is none. Checked before
+            # the limiter, so a request that cannot play does not spend the guild's budget.
             voice = getattr(interaction.user, "voice", None)
             if not voice or not interaction.guild_id:
                 await interaction.response.send_message("yo, u gotta be in a voice channel to play music")
+                return
+            if not await self._music_allowed(interaction, "music"):
                 return
             
             # Join the user's voice channel
@@ -474,7 +503,8 @@ class SlashCommandManager:
                 success, response = await self.music_manager.play(
                     interaction.guild_id, 
                     query, 
-                    interaction.user.display_name
+                    interaction.user.display_name,
+                    str(interaction.user.id),
                 )
                 
                 await interaction.followup.send(response)
@@ -486,42 +516,54 @@ class SlashCommandManager:
     async def _register_skip_command(self):
         """Register the skip command"""
         @self.bot.tree.command(name="skip", description="Skip to the next song in queue")
+        @app_commands.default_permissions(manage_guild=True)
         async def skip(interaction: discord.Interaction):
             if not interaction.guild_id:
                 await interaction.response.send_message("this only works in servers not dms")
                 return
-                
+            if not await self._music_controller(interaction):
+                return
+
             success, response = await self.music_manager.skip(interaction.guild_id)
             await interaction.response.send_message(response)
 
     async def _register_pause_command(self):
         """Register the pause command"""
         @self.bot.tree.command(name="pause", description="Pause the current song")
+        @app_commands.default_permissions(manage_guild=True)
         async def pause(interaction: discord.Interaction):
             if not interaction.guild_id:
                 await interaction.response.send_message("this only works in servers not dms")
                 return
-                
+            if not await self._music_controller(interaction):
+                return
+
             success, response = await self.music_manager.pause(interaction.guild_id)
             await interaction.response.send_message(response)
 
     async def _register_resume_command(self):
         """Register the resume command"""
         @self.bot.tree.command(name="resume", description="Resume playback")
+        @app_commands.default_permissions(manage_guild=True)
         async def resume(interaction: discord.Interaction):
             if not interaction.guild_id:
                 await interaction.response.send_message("this only works in servers not dms")
                 return
-                
+            if not await self._music_controller(interaction):
+                return
+
             success, response = await self.music_manager.resume(interaction.guild_id)
             await interaction.response.send_message(response)
 
     async def _register_stop_command(self):
         """Register the stop command"""
         @self.bot.tree.command(name="stop", description="Stop playback and clear the queue")
+        @app_commands.default_permissions(manage_guild=True)
         async def stop(interaction: discord.Interaction):
             if not interaction.guild_id:
                 await interaction.response.send_message("this only works in servers not dms")
+                return
+            if not await self._music_controller(interaction):
                 return
             
             # Clear the queue
@@ -570,10 +612,13 @@ class SlashCommandManager:
     async def _register_volume_command(self):
         """Register the volume command"""
         @self.bot.tree.command(name="volume", description="Set the volume (0-100)")
+        @app_commands.default_permissions(manage_guild=True)
         @app_commands.describe(level="Volume level (0-100)")
         async def volume(interaction: discord.Interaction, level: int):
             if not interaction.guild_id:
                 await interaction.response.send_message("this only works in servers not dms")
+                return
+            if not await self._music_controller(interaction):
                 return
                 
             try:
@@ -598,6 +643,8 @@ class SlashCommandManager:
             if not getattr(interaction.user, "voice", None) or not interaction.guild_id:
                 await interaction.response.send_message("yo, u gotta be in a voice channel to play related music")
                 return
+            if not await self._music_allowed(interaction, "music"):
+                return
             
             try:
                 # Defer response for longer processing
@@ -606,7 +653,8 @@ class SlashCommandManager:
                 # Get a related song
                 success, response = await self.music_manager.get_related_song(
                     interaction.guild_id,
-                    interaction.user.display_name
+                    interaction.user.display_name,
+                    str(interaction.user.id),
                 )
                 
                 await interaction.followup.send(response)

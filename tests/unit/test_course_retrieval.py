@@ -105,6 +105,25 @@ def test_a_reply_with_no_source_line_is_left_alone():
     assert render_sources("use list[2] to get the third item", {}) == "use list[2] to get the third item"
 
 
+def test_link_text_that_looks_like_a_passage_number_is_not_a_citation():
+    reply = "see [2](<https://example.test/w9.pdf>) and [3](<https://example.test/w8.mp4>)"
+    assert render_sources(reply, SOURCES) == reply
+
+
+def test_bare_numbers_after_the_source_line_are_removed_too():
+    reply = "answer [2]\n-# Source: [2]\nthen [2] again"
+    assert render_sources(reply, SOURCES) == (
+        "answer\n-# Source: [CBLL Week 9, page 47 (9 Oct 2026)](<https://example.test/w9.pdf>)\nthen again")
+
+
+def test_bare_passage_numbers_get_a_source_line_instead_of_showing_as_numbers():
+    reply = "Spark is the familiar one. [2][3][2]"
+    assert render_sources(reply, SOURCES) == (
+        "Spark is the familiar one.\n"
+        "-# Source: [CBLL Week 9, page 47 (9 Oct 2026)](<https://example.test/w9.pdf>), "
+        "[LNG320 lecture 2 Oct 2026, 1:51:48](<https://example.test/w8.mp4>)")
+
+
 def test_passages_can_be_numbered_on_from_an_earlier_lookup():
     text = format_hits("homework", [_hit(), _hit(locator="page 48")], {"LNG320": "Content-based Language Learning"}, start=4)
     assert "[4] LNG320 Content-based Language Learning" in text and "[5] LNG320" in text and "[1]" not in text
@@ -122,6 +141,33 @@ def test_code_in_an_answer_keeps_its_brackets():
     assert render_sources("take list[2] and matrix[3]\n-# Source: [2]", SOURCES).startswith("take list[2] and matrix[3]\n")
 
 
+def test_a_link_inside_code_and_code_inside_a_link_are_kept_once():
+    fenced = "```\nsee [docs](https://example.com)\n```"
+    assert render_sources(fenced, {}) == fenced
+    inline = "see [`src/foo.py`](https://example.com)"
+    assert render_sources(inline, {}) == inline
+
+
+def test_a_latest_lookup_still_stops_at_the_normal_number_of_passages(tmp_path):
+    from src.course_retrieval import RESULTS, _recent_day_hits
+    from src.course_store import CourseStore
+    from tests.unit.test_course_store import direction
+
+    store = CourseStore.create(str(tmp_path / "courses.db"))
+    store.add_course("CSC345", "Data Science")
+    for day in ("2026-10-19", "2026-10-13", "2026-09-22"):
+        for number in range(2):
+            source = store.add_source("CSC345", "transcript", f"{day}-{number}", date=day)
+            for position in range(2):
+                store.add_chunk(source, position, f"{position}", f"topic {position}", direction(pca=1))
+    store.save()
+    try:
+        hits = _recent_day_hits(store, "pca", direction(pca=1), ["CSC345"])
+    finally:
+        store.close()
+    assert len(hits) == RESULTS
+
+
 def test_a_score_only_says_strong_when_it_is_high_enough_to_mean_it():
     from src.course_retrieval import label_of
     # Measured on 300 passages a judge read: from 0.55 up, 3 in 48 were off the topic. Under it, about 1 in 3.
@@ -129,8 +175,12 @@ def test_a_score_only_says_strong_when_it_is_high_enough_to_mean_it():
     weak = _hit()
     weak.similarity = 0.54
     assert label_of([weak]) == "unsure" and label_of([]) == "nothing"
-    # A weaker score is no reason to tell the model its passages are off: a third of them answer the question
-    assert "loosely" not in format_hits("homework", [weak], {})
+    # A weaker score is no reason to tell the model its passages are off: a third of them answer the question.
+    # It is told to check them instead of treating them as confirmed.
+    text = format_hits("homework", [weak], {}, label="unsure")
+    assert "related matches, not confirmed answers" in text
+    assert "loosely" not in text
+    assert "related matches" not in format_hits("homework", [_hit()], {}, label="strong")
 
 
 def test_a_source_line_written_at_the_end_of_a_sentence_is_still_filled_in():
@@ -179,3 +229,90 @@ def test_a_long_source_line_is_split_between_links_not_through_one():
     assert all(len(line) <= SOURCE_LINE_CHARS + len("-# Source: ") for line in lines)
     assert all(line.count("](") == line.count("(<https://") for line in lines)
     assert "[CBLL lecture 1 Oct 2026" in lines[0] and "[CBLL lecture 39 Oct 2026" in lines[-1]
+
+
+def test_tilde_fences_keep_their_markers_too():
+    reply = "code:\n~~~java\nint[] rows = new int[2];\n~~~\nthat is it [3]"
+    shown = render_sources(reply, SOURCES)
+    assert "int[] rows = new int[2];" in shown
+    assert "LNG320 lecture 2 Oct 2026, 1:51:48" in shown
+
+
+def test_markers_inside_a_nested_link_label_are_not_citations():
+    reply = "see [part [2]](<https://example.test/w9.pdf>) and [3](<https://example.test/w8.mp4>)"
+    assert render_sources(reply, SOURCES) == reply
+
+
+def test_prose_citations_are_named_even_when_a_source_line_exists():
+    shown = render_sources("as [3] says\n-# Source: [2]", SOURCES)
+    assert "as says" in shown
+    assert "LNG320 lecture 2 Oct 2026, 1:51:48" in shown
+    assert "CBLL Week 9, page 47 (9 Oct 2026)" in shown
+
+
+def test_a_citation_after_the_source_line_is_not_lost():
+    shown = render_sources("answer\n-# Source: [2]\nand [3] after", SOURCES)
+    assert "LNG320 lecture 2 Oct 2026, 1:51:48" in shown
+    assert "[3]" not in shown
+
+
+def test_a_known_marker_is_removed_without_taking_an_unknown_neighbour():
+    shown = render_sources("x [2][9]", SOURCES)
+    assert "x [9]" in shown
+    assert "[2]" not in shown
+    assert "CBLL Week 9, page 47 (9 Oct 2026)" in shown
+
+
+def test_an_index_with_two_subscripts_is_not_a_citation():
+    reply = "the value in matrix[2][3] is zero"
+    assert render_sources(reply, SOURCES) == reply
+
+
+def test_the_spread_fallback_asks_for_a_whole_day_sample():
+    from src.course_retrieval import LATEST_SEARCHED, _recent_day_hits
+
+    calls = []
+
+    class Store:
+        def days(self, code, kinds, count):
+            return ["2026-10-19"]
+
+        def search(self, *args, **kwargs):
+            return []
+
+        def spread(self, code, day, kinds=("transcript", "slide"), count=6):
+            calls.append((code, day, count))
+            return [_hit(locator=f"page {number}") for number in range(count)]
+
+    _recent_day_hits(Store(), "pca", [1.0], ["CSC345"])
+    assert calls == [("CSC345", "2026-10-19", LATEST_SEARCHED)]
+
+
+def test_each_requested_course_keeps_a_result_slot(tmp_path):
+    from src.course_retrieval import RESULTS, _recent_day_hits
+    from src.course_store import CourseStore
+    from tests.unit.test_course_store import direction
+
+    store = CourseStore.create(str(tmp_path / "courses.db"))
+    store.add_course("CSC345", "Data Science")
+    store.add_course("LNG320", "Language")
+    for course in ("CSC345", "LNG320"):
+        for day in ("2026-10-19", "2026-10-13", "2026-09-22"):
+            for number in range(2):
+                source = store.add_source(course, "transcript", f"{course}-{day}-{number}", date=day)
+                for position in range(2):
+                    store.add_chunk(source, position, f"{position}", f"topic {position}", direction(pca=1))
+    store.save()
+    try:
+        hits = _recent_day_hits(store, "pca", direction(pca=1), ["CSC345", "LNG320"])
+    finally:
+        store.close()
+    assert len(hits) == RESULTS
+    assert {hit.course for hit in hits} == {"CSC345", "LNG320"}
+    assert {hit.date for hit in hits} == {"2026-10-19", "2026-10-13", "2026-09-22"}
+
+
+def test_the_same_locator_on_two_days_is_two_passages():
+    from src.course_retrieval import _key
+
+    assert _key(_hit(day="2026-10-09")) != _key(_hit(day="2026-10-02"))

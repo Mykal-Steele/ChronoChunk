@@ -10,6 +10,30 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.21.0 (2026-10-22)
+
+### Added
+
+- Every answer is recorded in `state/replies.sqlite3`: the user and channel, the message, the conversation history, the attached context, the routing answer, every tool call and what it returned, the reply, files, sources, model, reasoning effort and whether a web lookup was needed, model calls, cost and latency. The text is encrypted before it reaches disk, and `/forget` deletes the user's rows. Rows older than 30 days are deleted. `REPLY_LOG_PATH`, `REPLY_LOG_KEEP_DAYS`, `REPLY_LOG_KEY` and `REPLY_LOG_KEY_PATH` change where it goes, how long it is kept, and which key protects it.
+- A request that asks for several files gets up to five tool rounds, so "make five diagrams" can make all five. Ordinary chat and one-file requests keep the lower round limit.
+- Every model reply runs behind one deadline and one share of the bot's capacity. A bounded queue turns extra work away quickly, and each reply has a model-call and cost ceiling.
+- Music requests are capped per guild and per person, destructive controls need Manage Server, and yt-dlp verifies TLS and retries less.
+- A long web page is read in parts of about 12,000 characters. The answer says where the next part starts, and the bot opens it only when it needs the rest.
+- The bot knows its own setup in chat: its version, Azure region and VM size, OS image, zone, container, CPU count and load, memory in use and its cap, Python and discord.py versions, start time, uptime, aggregate server and member counts, the models it uses, and whether web search and course material are on. It can answer "what are u", "where do u run" and "what model are u" instead of denying it is a bot. The facts are the same public kind as `/setup`; the VM name, subscription, resource group, ids, paths, addresses, keys and anyone's name are never included.
+- A question about how a named app, website or UI setting works can be grounded with one automatic web search before the answer. The routing call decides when this is needed, and the answer is told to use the result or say it could not verify it.
+- "Latest lecture" reads the newest lecture and the two before it, newest first. An announcement can sit in the previous class, so one day was too narrow. The material says which days were read.
+- The encrypted reply log has a reader: `python -m src.reply_log --tail 20 [--json] [--user ID]`. It reports where the file is, how many rows it holds, the key source and the retention window at startup, and a broken log no longer stops the bot from starting or answering. `--tail` asks SQLite for only the newest rows instead of decrypting the whole file.
+
+### Fixed
+
+- A reply that named passages but forgot its `-# Source:` line showed bare numbers such as `[10] [12] [13]`. The source line is now written from those numbers, and the bare numbers are removed.
+- GPT-5 sometimes wrote a planning note before its answer. That note is now removed, and the prompt tells the model to write only the message.
+- A reworded second answer that added a sentence slipped past the duplicate check because the whole-copy word share fell under 75%. The check now compares the later copy at paragraph and sentence level, so the extra sentence no longer hides it.
+- A weak course lookup is no longer shown to the model as a pile of confirmed answers. It is told the passages are related matches and must be checked, and a product or UI claim is never inferred from a setting's name.
+- `/forget` no longer says the data is gone when the encrypted reply log could not be deleted; the command reports that it failed.
+- A link inside a code block, or code inside a link label, is no longer duplicated when a source line is written.
+- A request that waited for a slot no longer keeps the queue marked as full while it runs, so a short burst does not turn away the next message.
+
 ## 3.20.0 (2026-10-21)
 
 ### Added
