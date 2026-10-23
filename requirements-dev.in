@@ -8,4 +8,4 @@ pytest-asyncio==1.4.0
 # has CVE-2026-111497. The test image installs a patched Node with nodeenv instead.
 pyright==1.1.414
 nodeenv==1.11.0
-ruff==0.17.0
+ruff==0.17.1
