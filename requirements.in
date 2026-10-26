@@ -9,11 +9,11 @@ brotli==1.2.1
 # Encrypts the local reply log before it reaches disk
 cryptography==50.0.2
 discord.py[voice]==2.7.1
-openai==3.35.1
+openai==3.37.0
 pillow==13.0.0
 # discord.py 2.7.1 only allows PyNaCl below 1.6, so this stays until discord.py moves
 PyNaCl==1.5.0
-pypdf==6.21.1
+pypdf==6.21.2
 # Turns PDF pages into pictures, so the model can describe slides, charts and tables
 pypdfium2==5.14.0
 python-dotenv==1.2.4
@@ -22,4 +22,4 @@ requests==2.34.2
 # Vector search inside SQLite, for the course material
 sqlite-vec==0.1.9
 weasyprint==70.0
-yt-dlp==2026.8.19
+yt-dlp==2026.10.21
