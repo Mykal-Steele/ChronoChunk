@@ -2,10 +2,10 @@
 #   docker run --rm -v "$PWD":/work -w /work python:3.12-slim sh -c \
 #     "pip install -q pip-tools && pip-compile -q --strip-extras requirements-dev.in"
 -c requirements.txt
-pytest==9.1.1
-pytest-asyncio==1.4.0
+pytest==9.2.0
+pytest-asyncio==1.4.1
 # pyright's [nodejs] extra pins nodejs-wheel-binaries, whose newest release (24.19.0) still
 # has CVE-2026-111497. The test image installs a patched Node with nodeenv instead.
 pyright==1.1.414
-nodeenv==1.11.0
-ruff==0.17.1
+nodeenv==1.11.1
+ruff==0.17.3
