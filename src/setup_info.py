@@ -23,21 +23,103 @@ REPO_URL = "https://github.com/Mykal-Steele/ChronoChunk"
 # Every Azure VM can ask this address about itself. It answers only from inside the VM and needs no key.
 AZURE_METADATA_URL = "http://169.254.169.254/metadata/instance/compute?api-version=2021-02-01"
 AZURE_METADATA_TIMEOUT_SECONDS = 3
+# Every Google Cloud VM can ask this address about itself, with this header. Like Azure's, it
+# answers only from inside the VM. The answer carries the same header, which is how a router
+# or anything else on that address is told apart from Google.
+GOOGLE_METADATA_URL = "http://metadata.google.internal/computeMetadata/v1/instance/?recursive=true"
+# The newest entry is what the bot knows about its own latest update (moves, resets, fixes)
+CHANGELOG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "CHANGELOG.md")
+CHANGELOG_LIMIT = 2400
+CHANGELOG_RECENT_DAYS = 14
+
+
+def _today():
+    return datetime.now(timezone.utc).date()
+
+PROVIDER_NAMES = {
+    "vertex": "gemini on google vertex ai",
+    "azure": "azure openai",
+    "openai": "an openai-compatible api",
+}
+
+
+def latest_changes() -> str:
+    """
+    What changed lately, from CHANGELOG.md: every entry from the last two weeks, newest
+    first, or just the newest one when nothing is that recent. Each entry is its heading,
+    "3.22.0 (2026-11-17)", then its bullets, cut to CHANGELOG_LIMIT characters in all.
+    """
+    try:
+        with open(CHANGELOG_PATH, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return ""
+    entries = []
+    for section in re.split(r"^## ", text, flags=re.MULTILINE)[1:]:
+        title, _, body = section.partition("\n")
+        found = re.search(r"\((\d{4}-\d{2}-\d{2})\)", title)
+        if not found:
+            continue
+        bullets = [line.strip()[2:] for line in body.splitlines() if line.strip().startswith("- ")]
+        entries.append((datetime.strptime(found.group(1), "%Y-%m-%d").date(), title.strip(), bullets))
+    if not entries:
+        return ""
+    recent = [e for e in entries if (_today() - e[0]).days <= CHANGELOG_RECENT_DAYS] or entries[:1]
+    lines, size = [], 0
+    for _, title, bullets in recent:
+        if size + len(title) > CHANGELOG_LIMIT:
+            break
+        lines.append(title)
+        size += len(title)
+        for bullet in bullets:
+            if size + len(bullet) > CHANGELOG_LIMIT:
+                break
+            lines.append(f"  - {bullet}")
+            size += len(bullet)
+    return "\n".join(lines)
+
 
 _started = time.monotonic()
 _started_at = datetime.now(timezone.utc)
 # Set by the bot once it is running. Gives aggregate server and member counts, never names or ids.
 _population: Optional[Callable[[], Tuple[Optional[int], Optional[int]]]] = None
-# Filled in once at startup by find_host. None means the bot is not on an Azure VM, or has not asked yet.
+# Filled in once at startup by find_host. None means no cloud answered, or it has not asked yet.
 _host: Optional[str] = None
 # The Azure fields the bot may repeat. Deliberately not the name, vm id, subscription, resource
 # group, resource id, tags, addresses or anything from the request: those aid reconnaissance.
 _azure: dict = {}
 AZURE_SAFE_FIELDS = ("location", "vmSize", "zone", "osType", "publisher", "offer", "sku")
+# The Google fields the bot may repeat: the last part of each, never the project, name,
+# hostname, id, service account or addresses.
+_google: dict = {}
 
 
 async def find_host() -> None:
-    """Ask Azure which VM this is, so /setup can name it. Anywhere else the question just fails."""
+    """Ask Azure, then Google, which VM this is, so /setup can name it. Anywhere else both just fail."""
+    await _find_azure()
+    if _host is None:
+        await _find_google()
+
+
+async def _find_google() -> None:
+    global _host, _google
+    try:
+        timeout = aiohttp.ClientTimeout(total=AZURE_METADATA_TIMEOUT_SECONDS)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(GOOGLE_METADATA_URL, headers={"Metadata-Flavor": "Google"}) as response:
+                if response.status != 200 or response.headers.get("Metadata-Flavor") != "Google":
+                    return
+                vm = await response.json(content_type=None)
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, OSError):
+        return
+    if not isinstance(vm, dict) or not vm.get("machineType"):
+        return
+    _google = {key: str(vm[key]).rsplit("/", 1)[-1] for key in ("machineType", "zone", "image") if vm.get(key)}
+    _host = "Google Cloud VM, " + ", ".join(_google[key] for key in ("machineType", "zone") if key in _google)
+    logger.info(f"Running on {_host}")
+
+
+async def _find_azure() -> None:
     global _host, _azure
     try:
         timeout = aiohttp.ClientTimeout(total=AZURE_METADATA_TIMEOUT_SECONDS)
@@ -151,9 +233,11 @@ def _courses() -> str:
 
 
 def _azure_line() -> str:
-    """Where the VM is, in public terms. Empty off Azure."""
+    """Where the VM is, in public terms."""
+    if _google:
+        return "google cloud vm, " + ", ".join(_google[key] for key in ("machineType", "zone", "image") if key in _google)
     if not _azure:
-        return "a dev machine (not azure)"
+        return "a machine u cant identify (no cloud answered when u asked at startup)"
     parts = [part for part in (_azure.get("vmSize"), _azure.get("location")) if part]
     if _azure.get("zone"):
         parts.append(f"zone {_azure['zone']}")
@@ -172,6 +256,10 @@ def self_prompt(chat_model: str) -> str:
     background = Config.AI_BACKGROUND_DEPLOYMENT or chat_model
     background_note = ("the same model picks facts out of messages" if background == chat_model
                        else f"{background} picks facts out of messages")
+    heavy = Config.AI_HEAVY_MODEL
+    heavy_note = f"{heavy} writes study sets, detailed answers, rewrites and documents. " if heavy else ""
+    provider = PROVIDER_NAMES.get((os.environ.get("AI_PROVIDER") or "azure").strip().lower(), "an unknown provider")
+    changes = latest_changes()
     runtime = f"python {platform.python_version()}, discord.py {discord.__version__}"
     in_docker = " in docker" if os.path.exists("/.dockerenv") else ""
     hardware = ", ".join(part for part in (_load(), _memory()) if part)
@@ -182,8 +270,10 @@ def self_prompt(chat_model: str) -> str:
         + (f", {hardware}" if hardware else "")
         + f", up {_uptime()} (started {_started_at:%d %b %Y %H:%M} UTC). {runtime}",
         *([f"u are {population}, counts only, u dont know their names"] if population else []),
-        f"ur chat model is {chat_model} (reasoning {Config.AI_CHAT_REASONING_EFFORT}), "
-        f"{background_note}, and {Config.EMBEDDING_DEPLOYMENT} embeds the course material",
+        f"ur models come from {provider}. ur chat model is {chat_model} (reasoning {Config.AI_CHAT_REASONING_EFFORT}). "
+        f"{heavy_note}{background_note}, and {Config.EMBEDDING_DEPLOYMENT} embeds the course material",
+        *([f"ur recent updates, newest first (this is what happened to u lately: moves, outages, resets. "
+           f"use it when someone asks where u were, what changed or why u forgot them):\n{changes}"] if changes else []),
         f"web search is {'on' if Config.TAVILY_API_KEY else 'off'}. course material: {_courses()}",
         "if someone asks what u are, say it straight in ur voice: a discord bot. dont deny it and dont turn into a help desk",
         "only bring this up when someone asks about u, ur setup, where u run or what model u are. never recite it unprompted",
@@ -205,7 +295,7 @@ def setup_summary(chat_model: str) -> str:
     memory = _memory()
     rows = [
         ("version", __version__),
-        ("host", _host or "not an Azure VM (a dev machine?)"),
+        ("host", _host or "unknown, no cloud metadata answered"),
         ("runs in", runtime),
         ("up for", _uptime() + (f", using {memory}" if memory else "")),
         ("", ""),

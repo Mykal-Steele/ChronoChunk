@@ -14,6 +14,7 @@ from src.version import __version__
 def no_host(monkeypatch):
     monkeypatch.setattr(setup_info, "_host", None)
     monkeypatch.setattr(setup_info, "_azure", {})
+    monkeypatch.setattr(setup_info, "_google", {})
     monkeypatch.setattr(setup_info, "_population", None)
 
 
@@ -65,8 +66,10 @@ def test_web_search_reads_as_off_without_a_key(monkeypatch):
     assert "web search  off, no search key" in setup_info.setup_summary("gpt-6-luna")
 
 
-def test_off_azure_the_host_line_says_so():
-    assert "host        not an Azure VM" in setup_info.setup_summary("gpt-6-luna")
+def test_off_any_cloud_the_host_line_says_it_is_unknown():
+    # Changed 2026-11-17: it used to say "not an Azure VM (a dev machine?)", which the model
+    # repeated as fact after the move to Google Cloud.
+    assert "host        unknown, no cloud metadata answered" in setup_info.setup_summary("gpt-6-luna")
 
 
 async def test_on_azure_the_host_line_names_the_vm(monkeypatch):
@@ -148,8 +151,11 @@ def test_the_self_prompt_names_the_version_and_the_models(monkeypatch):
     assert "a discord bot" in text
 
 
-def test_off_azure_the_self_prompt_says_it_is_a_dev_machine():
-    assert "a dev machine (not azure)" in setup_info.self_prompt("gpt-6-luna")
+def test_off_any_cloud_the_self_prompt_says_it_cannot_tell_where_it_runs():
+    # Changed 2026-11-17: "a dev machine (not azure)" made the bot claim it lived on a dev machine
+    text = setup_info.self_prompt("gpt-6-luna")
+    assert "a machine u cant identify" in text
+    assert "dev machine" not in text
 
 
 async def test_the_self_prompt_names_azure_but_not_the_account(monkeypatch):
@@ -196,7 +202,8 @@ def test_the_self_prompt_leaves_out_every_secret(monkeypatch):
 
 
 def test_the_self_prompt_stays_short():
-    assert len(setup_info.self_prompt("gpt-6-luna")) < 1600
+    # Raised from 1600 on 2026-11-17: the prompt now carries the last two weeks of changelog too
+    assert len(setup_info.self_prompt("gpt-6-luna")) < 4200
 
 
 def test_the_self_prompt_counts_servers_and_people(monkeypatch):
@@ -233,3 +240,130 @@ def test_memory_falls_back_to_the_machine_total(monkeypatch):
 
     monkeypatch.setattr(setup_info, "_read", fake)
     assert setup_info._memory() == "96 MB of 4 GB"
+
+
+
+# ── Google Cloud, the provider and the latest update (2026-11-17) ────────────
+
+
+async def _serve_google(monkeypatch, handler):
+    """Stand in for Google's metadata server, with Azure's address answering nothing."""
+    app = web.Application()
+    app.router.add_get("/computeMetadata/v1/instance/", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = runner.addresses[0][1]
+    monkeypatch.setattr(setup_info, "AZURE_METADATA_URL", "http://127.0.0.1:9/metadata")
+    monkeypatch.setattr(setup_info, "GOOGLE_METADATA_URL",
+                        f"http://127.0.0.1:{port}/computeMetadata/v1/instance/?recursive=true")
+    return runner
+
+
+GOOGLE_VM = {
+    "machineType": "projects/827690319645/machineTypes/e2-micro",
+    "zone": "projects/827690319645/zones/us-central1-a",
+    "image": "projects/ubuntu-os-cloud/global/images/ubuntu-2404-noble-amd64-v20261105",
+    "hostname": "chronochunk.us-central1-a.c.adorio.internal",
+    "name": "chronochunk",
+    "id": "1234567890123",
+    "serviceAccounts": {"default": {"email": "chronochunk-bot@adorio.iam.gserviceaccount.com"}},
+    "networkInterfaces": [{"ip": "10.128.0.2", "accessConfigs": [{"externalIp": "146.148.72.172"}]}],
+}
+
+
+async def test_on_google_cloud_the_bot_names_the_machine_but_not_the_project(monkeypatch):
+    async def metadata(request):
+        assert request.headers["Metadata-Flavor"] == "Google"
+        return web.json_response(GOOGLE_VM, headers={"Metadata-Flavor": "Google"})
+
+    runner = await _serve_google(monkeypatch, metadata)
+    try:
+        await setup_info.find_host()
+    finally:
+        await runner.cleanup()
+    text = setup_info.self_prompt("gemini-3.1-flash-lite")
+    assert "google cloud vm, e2-micro, us-central1-a, ubuntu-2404-noble-amd64-v20261105" in text
+    assert "host        Google Cloud VM, e2-micro, us-central1-a" in setup_info.setup_summary("gemini-3.1-flash-lite")
+    for secret in ("827690319645", "adorio", "chronochunk-bot", "10.128.0.2", "146.148.72.172", "1234567890123"):
+        assert secret not in text
+
+
+async def test_an_answer_without_googles_header_is_not_taken_for_google(monkeypatch):
+    async def imposter(request):
+        return web.json_response(GOOGLE_VM)
+
+    runner = await _serve_google(monkeypatch, imposter)
+    try:
+        await setup_info.find_host()
+    finally:
+        await runner.cleanup()
+    assert setup_info._host is None
+
+
+def test_the_self_prompt_names_the_provider_and_the_heavy_model(monkeypatch):
+    monkeypatch.setenv("AI_PROVIDER", "vertex")
+    monkeypatch.setenv("VERTEX_PROJECT", "adorio")
+    monkeypatch.setattr(Config, "AI_HEAVY_MODEL", "gemini-3.8-flash")
+    text = setup_info.self_prompt("gemini-3.1-flash-lite")
+    assert "gemini on google vertex ai" in text
+    assert "gemini-3.8-flash writes study sets, detailed answers, rewrites and documents" in text
+    assert "adorio" not in text
+
+
+CHANGELOG = """# Changelog
+
+Intro text.
+
+## 9.1.1 (2026-11-18)
+
+### Fixed
+
+- Knows where it runs.
+
+## 9.1.0 (2026-11-17)
+
+### Changed
+
+- Moved to a new host. Memory starts fresh.
+
+## 9.0.0 (2026-10-01)
+
+### Added
+
+- Something old that must not show.
+"""
+
+
+def test_the_self_prompt_carries_every_update_from_the_last_two_weeks(monkeypatch, tmp_path):
+    from datetime import date
+    path = tmp_path / "CHANGELOG.md"
+    path.write_text(CHANGELOG)
+    monkeypatch.setattr(setup_info, "CHANGELOG_PATH", str(path))
+    monkeypatch.setattr(setup_info, "_today", lambda: date(2026, 11, 20))
+    text = setup_info.self_prompt("gemini-3.1-flash-lite")
+    assert "9.1.1 (2026-11-18)" in text and "Knows where it runs." in text
+    assert "9.1.0 (2026-11-17)" in text and "Moved to a new host. Memory starts fresh." in text
+    assert "Something old" not in text
+    assert text.index("9.1.1") < text.index("9.1.0")
+
+
+def test_with_nothing_recent_the_newest_update_still_shows(monkeypatch, tmp_path):
+    from datetime import date
+    path = tmp_path / "CHANGELOG.md"
+    path.write_text(CHANGELOG)
+    monkeypatch.setattr(setup_info, "CHANGELOG_PATH", str(path))
+    monkeypatch.setattr(setup_info, "_today", lambda: date(2027, 3, 1))
+    text = setup_info.self_prompt("gemini-3.1-flash-lite")
+    assert "9.1.1 (2026-11-18)" in text
+    assert "9.1.0" not in text
+
+
+def test_a_missing_changelog_is_not_an_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(setup_info, "CHANGELOG_PATH", str(tmp_path / "nope.md"))
+    assert "ChronoChunk v" in setup_info.self_prompt("gemini-3.1-flash-lite")
+
+
+def test_the_real_changelog_gives_the_running_version():
+    assert setup_info.latest_changes().startswith(f"{__version__} (")
