@@ -144,7 +144,7 @@ webencodings==0.6.1
     #   tinyhtml5
 yarl==1.25.1
     # via aiohttp
-yt-dlp==2026.8.19
+yt-dlp==2026.10.26
     # via -r requirements.in
 zopfli==0.4.3
     # via fonttools

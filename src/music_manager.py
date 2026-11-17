@@ -39,8 +39,11 @@ def spotify_query_from_page(page: str) -> str:
 class Song:
     """Represents a song with metadata"""
     def __init__(self, url: str, title: str, duration: int, requested_by: str,
-                 requested_by_id: Optional[str] = None):
+                 requested_by_id: Optional[str] = None, page_url: str = ""):
+        # url is the direct stream link. YouTube's expire after a few hours, so page_url
+        # (the watch page) is kept to fetch a fresh one when a song waited too long.
         self.url = url
+        self.page_url = page_url
         self.title = title
         self.duration = duration  # in seconds
         self.requested_by = requested_by
@@ -48,6 +51,17 @@ class Song:
         
     def __str__(self):
         return f"{self.title} [{self.format_duration()}] (requested by {self.requested_by})"
+
+    @property
+    def expires_at(self) -> Optional[int]:
+        """When the stream link stops working, from its expire= parameter. None if it has none."""
+        found = re.search(r"[?&]expire=(\d+)", self.url)
+        return int(found.group(1)) if found else None
+
+    def is_stale(self, now: float) -> bool:
+        """True when the link would expire before the song finished, with a minute to spare."""
+        expires = self.expires_at
+        return bool(self.page_url) and expires is not None and now + self.duration + 60 >= expires
     
     def format_duration(self) -> str:
         """Format duration in MM:SS format"""
@@ -197,8 +211,8 @@ class MusicManager:
 
         return spotify_query_from_page(page) or fallback
 
-    async def extract_info(self, url: str, requested_by: Optional[str] = None) -> Tuple[str, str, int]:
-        """Extract audio URL, title and duration from a YouTube or Spotify URL or search query"""
+    async def extract_info(self, url: str, requested_by: Optional[str] = None) -> Tuple[str, str, int, str]:
+        """Stream URL, title, duration and watch page URL for a YouTube or Spotify URL or a search"""
         logger.info(f"Extracting info for: {url}")
         
         # Check if it's a Spotify URL
@@ -275,7 +289,8 @@ class MusicManager:
                     raise ValueError("Could not extract a valid audio URL")
                 
                 logger.info(f"Successfully extracted info for: {title} (duration: {duration}s)")
-                return audio_url, title, duration
+                page_url = info.get('webpage_url') or (search_url if search_url.startswith("http") else "")
+                return audio_url, title, duration, page_url
                 
         except Exception as e:
             logger.error(f"Error extracting info with yt-dlp: {str(e)}")
@@ -308,13 +323,13 @@ class MusicManager:
                     return False, f"u already have {Config.MUSIC_MAX_SONGS_PER_USER} songs in the queue. let one play first"
 
                 logger.info(f"Attempting to play: {url} (requested by {requested_by})")
-                audio_url, title, duration = await self.extract_info(url, requested_by)
+                audio_url, title, duration, page_url = await self.extract_info(url, requested_by)
 
                 # Log the audio URL (truncated for security)
                 logger.info(f"Audio URL obtained (first 50 chars): {audio_url[:50]}...")
 
                 # Create song object
-                song = Song(audio_url, title, duration, requested_by, requested_by_id)
+                song = Song(audio_url, title, duration, requested_by, requested_by_id, page_url=page_url)
 
                 # Add to queue
                 state.queue.append(song)
@@ -361,7 +376,15 @@ class MusicManager:
             if not state.queue:
                 return False, "Queue is empty"
             next_song = state.queue.pop(0)
-        
+
+        # A song that waited in the queue, or one on loop, can outlive its stream link
+        if next_song.is_stale(time.time()):
+            try:
+                next_song.url, _, _, _ = await self.extract_info(next_song.page_url)
+                logger.info(f"Fetched a fresh stream link for {next_song.title}")
+            except Exception as e:
+                logger.warning(f"Could not refresh the stream link for {next_song.title}, trying the old one: {e!r}")
+
         state.current_song = next_song
             
         try:
