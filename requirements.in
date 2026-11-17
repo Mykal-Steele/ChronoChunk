@@ -24,4 +24,4 @@ requests==2.34.2
 # Vector search inside SQLite, for the course material
 sqlite-vec==0.1.9
 weasyprint==70.0
-yt-dlp==2026.8.19
+yt-dlp==2026.10.26
