@@ -9,6 +9,8 @@ brotli==1.2.1
 # Encrypts the local reply log before it reaches disk
 cryptography==50.0.2
 discord.py[voice]==2.7.1
+# Signs in to Vertex AI (Gemini) as the Google VM's service account, see src/ai_provider.py
+google-auth==2.62.2
 openai==3.35.1
 pillow==13.0.0
 # discord.py 2.7.1 only allows PyNaCl below 1.6, so this stays until discord.py moves

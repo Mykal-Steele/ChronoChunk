@@ -10,7 +10,7 @@ from config.config import Config
 
 @pytest.fixture
 def udm(mock_openai_client):
-    with patch("src.user_data_manager.AsyncOpenAI") as mock_cls:
+    with patch("src.ai_provider.AsyncOpenAI") as mock_cls:
         mock_cls.return_value = mock_openai_client
         from src.user_data_manager import UserDataManager
         manager = UserDataManager()
@@ -139,7 +139,7 @@ async def test_facts_are_extracted_with_the_main_model_by_default(udm, mock_open
 
 async def test_facts_use_the_background_model_when_one_is_set(mock_openai_client, fake_openai_response, monkeypatch):
     monkeypatch.setattr(Config, "AI_BACKGROUND_DEPLOYMENT", "gpt-5-nano")
-    with patch("src.user_data_manager.AsyncOpenAI") as mock_cls:
+    with patch("src.ai_provider.AsyncOpenAI") as mock_cls:
         mock_cls.return_value = mock_openai_client
         from src.user_data_manager import UserDataManager
         manager = UserDataManager()

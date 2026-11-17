@@ -1,14 +1,13 @@
 """What the bot remembers about people, and how it picks facts out of what they say."""
 import json
 import logging
-import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from openai import AsyncOpenAI
 
 from config.config import Config
 from src import usage_context
-from src.usage_guard import BudgetExceededError, guard_client
+from src.ai_provider import load_settings, make_client
+from src.usage_guard import BudgetExceededError
 from src.reply_log import ReplyLog
 from src.user_store import UserStore, clean_user_id
 
@@ -75,15 +74,14 @@ class UserDataManager:
         self.store = store or UserStore()
         self.reply_log = reply_log
         try:
-            endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
-            api_key = os.environ.get("AZURE_OPENAI_KEY", "")
-            self.deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5-mini")
+            settings = load_settings()
+            self.deployment = settings.chat_model
             # Fact extraction runs behind the reply. On gpt-5-nano with minimal reasoning it matched
             # gpt-5-mini on a test set, about 3 times faster and 18 times cheaper. Without a
             # background deployment it stays on the main one at low reasoning.
             self.fact_deployment = Config.AI_BACKGROUND_DEPLOYMENT or self.deployment
             self.fact_reasoning_effort = "minimal" if Config.AI_BACKGROUND_DEPLOYMENT else "low"
-            self.ai_client = guard_client(AsyncOpenAI(base_url=endpoint, api_key=api_key))
+            self.ai_client = make_client(settings)
         except Exception as e:
             logger.error(f"Failed to initialize fact extraction model: {e}")
             self.ai_client = None

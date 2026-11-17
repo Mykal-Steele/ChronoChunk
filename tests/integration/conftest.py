@@ -13,7 +13,7 @@ def pipeline(tmp_path, mock_genai_client, mock_bot_user, monkeypatch):
     from src.game_manager import GameManager
     from src.message_processor import MessageProcessor
 
-    with patch("src.user_data_manager.AsyncOpenAI") as mock_cls:
+    with patch("src.ai_provider.AsyncOpenAI") as mock_cls:
         mock_cls.return_value = mock_genai_client
         from src.user_data_manager import UserDataManager
         udm = UserDataManager()

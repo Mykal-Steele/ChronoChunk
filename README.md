@@ -17,7 +17,7 @@ A Discord bot with a personality. It chats, remembers things about the people it
 
 ## Setup
 
-The bot runs in Docker. You need a Discord bot token and an Azure OpenAI deployment.
+The bot runs in Docker. You need a Discord bot token and a model that speaks the OpenAI Chat Completions API: Gemini on Google Vertex AI, Azure OpenAI, or any other OpenAI-compatible service. `AI_PROVIDER` picks which one, see [Choosing the AI provider](#choosing-the-ai-provider).
 
 1. Clone the repo:
 
@@ -30,9 +30,8 @@ cd ChronoChunk
 
 ```
 DISCORD_TOKEN=your_discord_token
-AZURE_OPENAI_KEY=your_azure_openai_key
-AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/openai/v1
-AZURE_OPENAI_DEPLOYMENT=gpt-5-mini
+AI_PROVIDER=vertex
+VERTEX_PROJECT=your-google-cloud-project
 TAVILY_API_KEY=your_tavily_key
 ```
 
@@ -47,23 +46,34 @@ docker build -t chronochunk .
 docker run -d --name chronochunk --env-file .env chronochunk
 ```
 
-To run it on a server and keep its data between rebuilds, use `deployment/docker-compose.yml`. The comments at the top of that file say where each file goes. `deployment/cloud-init.yml` sets up a fresh Azure VM for it.
+On a laptop with `AI_PROVIDER=vertex`, the container also needs your Google credentials, because it cannot see the ones `gcloud` keeps on your machine. Create them once with `gcloud auth application-default login`, then pass the file in read-only. The container runs as user 1000, so that user has to be able to read it:
+
+```bash
+docker run -d --name chronochunk --env-file .env \
+  -v ~/.config/gcloud/application_default_credentials.json:/gcloud/adc.json:ro \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/gcloud/adc.json chronochunk
+```
+
+On a Google Cloud VM none of this is needed: the bot signs in as the VM's service account.
+
+To run it on a server and keep its data between rebuilds, use `deployment/docker-compose.yml`. The comments at the top of that file say where each file goes. `deployment/cloud-init.yml` sets up a fresh Ubuntu VM for it.
 
 The bot runs inside the container as user 1000, not root. The folders mounted for `user_data`, `logs` and `state` must belong to that user: `sudo chown -R 1000:1000 data`.
 
 ## Where it runs
 
-The live bot runs on one small Azure VM. Type `/setup` in Discord to see the same facts from the running bot, with the values it is using right now.
+The live bot runs on one small Google Cloud VM, inside Google's free tier. It ran on an Azure VM until November 2026. Type `/setup` in Discord to see the same facts from the running bot, with the values it is using right now.
 
 | What | Value |
 | --- | --- |
-| Host | Azure VM `chronochunk-vm`, size `Standard_B2ats_v2` (1 GiB of RAM), region `southeastasia`, Ubuntu 24.04 |
+| Host | Google Cloud VM `chronochunk`, type `e2-micro` (1 GiB of RAM), zone `us-central1-a`, Ubuntu 24.04, project `adorio`. Runs as the service account `chronochunk-bot`, which may only call Vertex AI |
 | Swap | 2 GiB, because image builds need more than 1 GiB |
 | Runs in | Docker Compose, from `deployment/docker-compose.yml`. One container named `chronochunk`. |
 | Container limits | 640 MB of memory, 256 processes, user 1000, no Linux capabilities. It restarts by itself unless stopped. |
 | Health check | `http://localhost:8080/health` once a minute. `/status` on the same port gives the version and uptime as JSON. |
-| Chat model | Azure OpenAI deployment `gpt-6-luna`, with reasoning switched off (`none`) |
-| Background model | `gpt-5-nano`, which picks facts out of messages after the answer is sent |
+| Chat model | Gemini `gemini-3.1-flash-lite` on Vertex AI, reasoning `low`. It also picks facts out of messages after the answer is sent |
+| Heavy model | `gemini-3.8-flash`, for study sets, detailed answers, rewrites and documents |
+| Safety filters | Every adjustable Gemini safety category is set to `OFF` |
 | Data | One SQLite file, `state/chronochunk.db`, kept on the host so a rebuild does not touch it |
 | Backups | A copy of that file in `state/backups` at startup and once a day. The newest 7 are kept. They are on the same disk, so they do not cover losing the VM. |
 | Deploys from | The `main` branch |
@@ -84,17 +94,19 @@ Secrets go in `.env` on the server:
 | Name | What it is |
 | --- | --- |
 | `DISCORD_TOKEN` | The bot's Discord token |
-| `AZURE_OPENAI_KEY` | Key for the Azure OpenAI resource |
-| `AZURE_OPENAI_ENDPOINT` | The resource's address, ending in `/openai/v1` |
 | `TAVILY_API_KEY` | Key for web search. Optional. |
 
-These four are set in `docker-compose.yml`, which wins over `.env`:
+Vertex needs no key: the bot signs in as the VM's service account. Only for `AI_PROVIDER=azure` do `AZURE_OPENAI_KEY` and `AZURE_OPENAI_ENDPOINT` go here, and only for `AI_PROVIDER=openai` do `AI_API_KEY` and `AI_BASE_URL`.
+
+These are set in `docker-compose.yml`, which wins over `.env`:
 
 | Name | Value on the server |
 | --- | --- |
-| `AZURE_OPENAI_DEPLOYMENT` | `gpt-6-luna` |
-| `AI_CHAT_REASONING_EFFORT` | `none` |
-| `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` | `gpt-5-nano` |
+| `AI_PROVIDER` | `vertex` |
+| `VERTEX_PROJECT` | `adorio` |
+| `AI_CHAT_MODEL` | `gemini-3.1-flash-lite` |
+| `AI_HEAVY_MODEL` | `gemini-3.8-flash` |
+| `AI_CHAT_REASONING_EFFORT` | `low` |
 | `EMBEDDING_DEPLOYMENT` | `text-embedding-3-small` |
 
 Everything else uses the default from `config/config.py` unless `.env` sets it:
@@ -131,6 +143,20 @@ Everything else uses the default from `config/config.py` unless `.env` sets it:
 
 The message, file, PDF, web, course search and recap limits are in `RATE_LIMITS` in the same file.
 
+### Choosing the AI provider
+
+The bot talks to its model through the OpenAI Chat Completions API, so moving between providers is a settings change. `src/ai_provider.py` reads these and builds the one client every part of the bot uses.
+
+| `AI_PROVIDER` | Also set | Notes |
+| --- | --- | --- |
+| `vertex` | `VERTEX_PROJECT`, optional `VERTEX_LOCATION` (default `global`) | Gemini on Google Vertex AI. Signs in with Google's default credentials: the VM's service account on Google Cloud, or `gcloud auth application-default login` on a laptop. Every adjustable safety filter is sent as `OFF`. |
+| `azure` | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_KEY` | Azure OpenAI. This is the default when `AI_PROVIDER` is not set, so an old `.env` keeps working. |
+| `openai` | `AI_BASE_URL`, `AI_API_KEY` | Any other service with an OpenAI-compatible API. |
+
+Course search embeds questions with `EMBEDDING_DEPLOYMENT` (`text-embedding-3-small`), an OpenAI model that Vertex does not serve. On Vertex the course library would have to be embedded again with a Vertex embedding model of the same length, so for now course search tells people it could not search. The live server has no course library yet, so nothing calls it.
+
+To go back to Azure, set the Azure endpoint and key in `.env` and use the commented Azure block in `deployment/docker-compose.yml` instead of the Vertex one. The model names (`AI_CHAT_MODEL`, `AI_HEAVY_MODEL`, `AI_BACKGROUND_MODEL`) work the same way for every provider.
+
 ### Deploying a change
 
 1. Merge the pull request into `main`.
@@ -138,7 +164,7 @@ The message, file, PDF, web, course search and recap limits are in `RATE_LIMITS`
 3. Run the update script on the server. It pulls `main`, rebuilds the image and restarts the container:
 
 ```bash
-ssh azureuser@<server address> /opt/chronochunk/update.sh
+ssh oakar@146.148.72.172 /opt/chronochunk/update.sh
 ```
 
 4. Check it came back: `docker logs --tail 50 chronochunk`, or `/setup` in Discord, which shows the new version and a fresh uptime.
@@ -146,12 +172,17 @@ ssh azureuser@<server address> /opt/chronochunk/update.sh
 
 ### Setting up a new server
 
-1. Create the VM with the first-boot file. It installs Docker, adds the swap file, makes the folders and clones the repo:
+1. Create the VM with the first-boot file. It installs Docker, adds the swap file, makes the folders and clones the repo. On Google Cloud, with a service account that has the Vertex AI User role:
 
 ```bash
-az vm create -g ChronoChunk -n chronochunk-vm --image Ubuntu2404 --size Standard_B2ats_v2 \
-  --admin-username azureuser --generate-ssh-keys --custom-data deployment/cloud-init.yml
+gcloud compute instances create chronochunk --project adorio --zone us-central1-a \
+  --machine-type e2-micro --image-family ubuntu-2404-lts-amd64 --image-project ubuntu-os-cloud \
+  --boot-disk-size 30GB --boot-disk-type pd-standard \
+  --service-account chronochunk-bot@adorio.iam.gserviceaccount.com --scopes cloud-platform \
+  --metadata-from-file user-data=deployment/cloud-init.yml --metadata "ssh-keys=oakar:$(cat ~/.ssh/id_ed25519.pub)"
 ```
+
+`e2-micro` in us-west1, us-central1 or us-east1 with a 30 GB standard disk is inside Google's free tier. Any other Ubuntu VM works too: pass the same file as its cloud-init user data.
 
 2. Copy `deployment/docker-compose.yml` and `deployment/update.sh` to `/opt/chronochunk/`, and create `/opt/chronochunk/.env` with the secrets above.
 3. Give the data folders to the container's user: `sudo chown -R 1000:1000 /opt/chronochunk/data`.
@@ -272,7 +303,8 @@ The bot stops calling the model when it reaches its spending cap, and starts aga
 | `AI_MONTHLY_BUDGET_USD` | 20 | Hard cap per billing cycle |
 | `AI_DAILY_BUDGET_USD` | 2.50 | Hard cap per day |
 | `AI_BUDGET_RESET_DAY` | 14 | Day of the month the cycle restarts |
-| `AZURE_OPENAI_DEPLOYMENT` | gpt-5-mini | The chat model. `deployment/docker-compose.yml` sets it to gpt-6-luna |
+| `AI_CHAT_MODEL` | depends on the provider | The chat model. `gemini-3.1-flash-lite` on Vertex, `gpt-5-mini` otherwise. On Azure the old name `AZURE_OPENAI_DEPLOYMENT` still works |
+| `AI_HEAVY_MODEL` | empty | A stronger model for study sets, detailed answers, rewrites and documents. Empty uses the chat model |
 | `AI_USER_DAILY_BUDGET_USD` | 0.50 | What one person may spend per day |
 | `AI_USER_WEEKLY_BUDGET_USD` | 1.50 | What one person may spend over any 7 days |
 | `AI_UNLIMITED_USER_IDS` | empty | Discord user ids, separated by commas, with no personal limit |
@@ -282,9 +314,9 @@ The bot stops calling the model when it reaches its spending cap, and starts aga
 | `AI_MAX_QUEUED_REQUESTS` | 20 | Replies allowed to wait for a slot |
 | `AI_MAX_MODEL_CALLS_PER_REPLY` | 24 | Model calls one reply may make |
 | `AI_MAX_REPLY_COST_USD` | 0.25 | Model spend one reply may reach |
-| `AI_CHAT_REASONING_EFFORT` | low | Reasoning effort for chat replies. Must be `none` for gpt-6-luna and gpt-5.6-luna, which do not take tool calls with reasoning on |
+| `AI_CHAT_REASONING_EFFORT` | low | Reasoning effort for chat replies. Must be `none` for gpt-6-luna and gpt-5.6-luna, which do not take tool calls with reasoning on. On Vertex, `none` and `minimal` are sent as `low`, the lightest level Gemini accepts |
 | `AI_STUDY_REASONING_EFFORT` | medium | Reasoning for study material, when the reply has no tools. If tools are offered on a model that needs `none`, the chat setting wins |
-| `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` | empty | A cheaper deployment, such as gpt-5-nano, for picking facts out of messages. Empty uses the main one |
+| `AI_BACKGROUND_MODEL` | empty | A cheaper model for picking facts out of messages. Empty uses the chat model. On Azure the old name `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` still works |
 | `AI_COURSE_CHECK_DEPLOYMENT` | empty | The model for the routing call that decides whether a message needs course material. Empty uses the chat model |
 | `AI_COURSE_CHECK_REASONING_EFFORT` | chat setting | Reasoning effort for the routing call. Production's chat setting is `none`, which its tool-calling model requires |
 

@@ -136,6 +136,7 @@ class MessageHandler:
         "rate limiting me",
         "hit the rate limit",
         "azure quota",
+        "my ai quota ran out",
         "something went wrong",
         "something just broke",
     )

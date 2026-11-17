@@ -641,21 +641,17 @@ Response: Warframe We All Lift Together soundtrack
 Request: "{query}"
 """
 
-            import os
             from dotenv import load_dotenv
-            from openai import AsyncOpenAI
-            from src.usage_guard import guard_client
+            from src.ai_provider import load_settings, make_client
 
             load_dotenv()
-            api_key = os.getenv("AZURE_OPENAI_KEY", "")
-            endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
-            deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-5-mini")
-
-            if not api_key or not endpoint:
-                logger.warning("Azure OpenAI credentials not found for AI search enhancement")
+            settings = load_settings()
+            if not settings.base_url:
+                logger.warning("No AI provider is set up for AI search enhancement")
                 return query
 
-            client = guard_client(AsyncOpenAI(base_url=endpoint, api_key=api_key))
+            client = make_client(settings)
+            deployment = settings.chat_model
 
             with usage_context.feature("music"):
                 resp = await asyncio.wait_for(

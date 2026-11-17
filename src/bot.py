@@ -23,6 +23,7 @@ from src.rate_limiter import RateLimiter
 from src.user_data_manager import UserDataManager
 
 # Import refactored modules
+from src.ai_provider import load_settings
 from src.ai_response_handler import AIResponseHandler
 from src.reply_log import ReplyLog
 from src.message_handler import MessageHandler
@@ -42,9 +43,6 @@ logging.getLogger('discord.ext.commands.bot').setLevel(logging.WARNING)
 # Load environment variables
 load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
-AZURE_OPENAI_KEY = os.getenv('AZURE_OPENAI_KEY', '')
-AZURE_OPENAI_ENDPOINT = os.getenv('AZURE_OPENAI_ENDPOINT', '')
-AZURE_OPENAI_DEPLOYMENT = os.getenv('AZURE_OPENAI_DEPLOYMENT', 'gpt-5-mini')
 
 class ChronoChunk(commands.Bot):
     """Main bot class that ties everything together"""
@@ -84,10 +82,9 @@ class ChronoChunk(commands.Bot):
         self.message_handler = MessageHandler(self)
         
         # Create AI response handler
+        # AI_PROVIDER picks Azure, Vertex (Gemini) or any OpenAI-compatible API, see src/ai_provider.py
         self.ai_response_handler = AIResponseHandler(
-            endpoint=AZURE_OPENAI_ENDPOINT,
-            api_key=AZURE_OPENAI_KEY,
-            deployment=AZURE_OPENAI_DEPLOYMENT,
+            settings=load_settings(),
             reply_log=self.reply_log,
         )
         

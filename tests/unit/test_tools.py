@@ -41,7 +41,7 @@ class Hidden(Dice):
 
 @pytest.fixture
 def handler(mock_openai_client):
-    with patch("src.ai_response_handler.AsyncOpenAI") as mock_cls:
+    with patch("src.ai_provider.AsyncOpenAI") as mock_cls:
         mock_cls.return_value = mock_openai_client
         from src.ai_response_handler import AIResponseHandler
         h = AIResponseHandler(endpoint="https://fake.openai.azure.com/openai/v1", api_key="fake_key", deployment="gpt-5-mini")

@@ -292,3 +292,12 @@ def test_the_worn_out_note_says_it_is_about_wording_only(handler):
     _say(handler, "x", "skill issue tbh", bot=True)
     context = handler.build_conversation_context(CHANNEL_ID, {})
     assert "BANNED this response" in context and "never change or dodge a fact, a name or a number" in context
+
+
+def test_the_spent_quota_reply_stays_out_of_context(handler):
+    assert handler._is_excluded_bot_message(
+        "my ai quota ran out, so i cant answer till my dev sorts it. nothing wrong with ur msg")
+
+
+def test_an_answer_that_mentions_a_quota_stays_in_context(handler):
+    assert not handler._is_excluded_bot_message("ur ai quota on that plan is 100 requests a day")

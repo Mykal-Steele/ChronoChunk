@@ -3,7 +3,7 @@ import logging
 import sqlite3
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from config.config import Config
 from src import usage_context
@@ -255,12 +255,16 @@ class UsageGuard:
 class _GuardedCalls:
     """One kind of model call, chat completions or embeddings. Both are made with create and report their usage."""
 
-    def __init__(self, calls, guard: UsageGuard):
+    def __init__(self, calls, guard: UsageGuard, prepare: Optional[Callable[[dict], dict]] = None):
         self._calls = calls
         self._guard = guard
+        # Shapes each call for the provider, see src/ai_provider.py
+        self._prepare = prepare
 
     async def create(self, **kwargs):
         self._guard.check()
+        if self._prepare:
+            kwargs = self._prepare(kwargs)
         response = await self._calls.create(**kwargs)
         model = getattr(response, "model", None)
         self._guard.record(getattr(response, "usage", None), model if isinstance(model, str) else kwargs.get("model"))
@@ -273,8 +277,8 @@ class GuardedClient:
     budget first and record the cost after.
     """
 
-    def __init__(self, client, guard: UsageGuard):
-        self.chat = SimpleNamespace(completions=_GuardedCalls(client.chat.completions, guard))
+    def __init__(self, client, guard: UsageGuard, prepare: Optional[Callable[[dict], dict]] = None):
+        self.chat = SimpleNamespace(completions=_GuardedCalls(client.chat.completions, guard, prepare))
         self.embeddings = _GuardedCalls(client.embeddings, guard)
 
 
@@ -289,6 +293,9 @@ def get_usage_guard() -> UsageGuard:
     return _shared_guard
 
 
-def guard_client(client) -> GuardedClient:
-    """Wrap an AsyncOpenAI client so all its chat completions and embeddings obey the shared budget."""
-    return GuardedClient(client, get_usage_guard())
+def guard_client(client, prepare: Optional[Callable[[dict], dict]] = None) -> GuardedClient:
+    """
+    Wrap an AsyncOpenAI client so all its chat completions and embeddings obey the shared
+    budget. prepare, when given, reshapes each chat completion before it is sent.
+    """
+    return GuardedClient(client, get_usage_guard(), prepare)

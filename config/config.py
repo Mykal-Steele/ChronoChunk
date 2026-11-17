@@ -9,6 +9,20 @@ from pathlib import Path
 # load the secret stuff from .env
 load_dotenv()
 
+
+def background_model(env) -> str:
+    """
+    The model for jobs behind the reply. AI_BACKGROUND_MODEL works for any provider. The
+    old AZURE_OPENAI_BACKGROUND_DEPLOYMENT only counts on Azure, so a value left in .env
+    is not sent to Vertex as a model name. Empty means the chat model.
+    """
+    model = (env.get("AI_BACKGROUND_MODEL") or "").strip()
+    if model:
+        return model
+    if (env.get("AI_PROVIDER") or "azure").strip().lower() == "azure":
+        return (env.get("AZURE_OPENAI_BACKGROUND_DEPLOYMENT") or "").strip()
+    return ""
+
 class Config:
     """main configuration settings for the bot"""
     
@@ -108,6 +122,11 @@ class Config:
         "gpt-6-luna": (0.10, 0.01, 0.50, 0.125),
         "gpt-5.6-luna": (0.20, 0.02, 1.20, 0.25),
         "text-embedding-3-small": (0.02, 0.02, 0.0),
+        # Vertex AI list prices for the global endpoint, from the Cloud Billing catalog in
+        # November 2026. Cached input is a tenth of input, and Gemini has no cache-write charge.
+        "gemini-3.8-flash": (1.50, 0.15, 7.50),
+        "gemini-3.5-flash-lite": (0.30, 0.03, 2.50),
+        "gemini-3.1-flash-lite": (0.25, 0.025, 1.50),
     }
 
     # How PDFs that someone attaches, replies to or links are read. "auto" describes every page
@@ -120,7 +139,10 @@ class Config:
 
     # A cheaper deployment for jobs that run behind the reply, such as picking facts out of a
     # message. Empty means those jobs use the main deployment.
-    AI_BACKGROUND_DEPLOYMENT = os.getenv("AZURE_OPENAI_BACKGROUND_DEPLOYMENT", "").strip()
+    AI_BACKGROUND_DEPLOYMENT = background_model(os.environ)
+    # A stronger model for the replies where quality matters most: study sets, detailed
+    # answers, rewrites and documents. Empty means they use the chat model too.
+    AI_HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", "").strip()
 
     # For testing the live bot. The bot ignores every other bot, except this one bot's messages in
     # this one channel. Both are Discord ids and both must be set. Empty means no bot is answered.
@@ -143,7 +165,8 @@ class Config:
     COURSE_SESSION_SECONDS = int(os.getenv("COURSE_SESSION_SECONDS", 3600))
     # The deployment that embeds a course question. It has to carry the name of the model the sync
     # embedded the material with, and the sync reads the same setting.
-    EMBEDDING_DEPLOYMENT = os.getenv("EMBEDDING_DEPLOYMENT", "text-embedding-3-small").strip()
+    EMBEDDING_DEPLOYMENT = (os.getenv("AI_EMBEDDING_MODEL", "").strip()
+                            or os.getenv("EMBEDDING_DEPLOYMENT", "text-embedding-3-small").strip())
     
     # Rate limit settings by action type
     RATE_LIMITS = {

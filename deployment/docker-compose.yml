@@ -1,4 +1,4 @@
-# Runs the bot on the Azure VM.
+# Runs the bot on its VM (a Google e2-micro since 2026-11, an Azure VM before).
 # On the host this file sits at /opt/chronochunk/docker-compose.yml, next to
 # .env and the git checkout in ./app. User data, logs and the AI spending
 # ledger stay in ./data so a rebuild never touches them.
@@ -11,12 +11,20 @@ services:
     env_file: .env
     # These win over the same names in .env
     environment:
-      # The chat model. gpt-6-luna only takes tool calls with reasoning switched off.
-      AZURE_OPENAI_DEPLOYMENT: gpt-6-luna
-      AI_CHAT_REASONING_EFFORT: none
-      # The cheap model for jobs that run behind the reply. Remove this line if the Azure
-      # resource has no gpt-5-nano deployment.
-      AZURE_OPENAI_BACKGROUND_DEPLOYMENT: gpt-5-nano
+      # Gemini on Vertex AI. The bot signs in as the VM's service account, so no key is stored.
+      AI_PROVIDER: vertex
+      VERTEX_PROJECT: adorio
+      # Normal chat and the jobs behind the reply
+      AI_CHAT_MODEL: gemini-3.1-flash-lite
+      # Study sets, detailed answers, rewrites and documents
+      AI_HEAVY_MODEL: gemini-3.8-flash
+      AI_CHAT_REASONING_EFFORT: low
+      # To go back to Azure, put AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_KEY in .env and use
+      # these lines instead of the ones above:
+      #   AI_PROVIDER: azure
+      #   AZURE_OPENAI_DEPLOYMENT: gpt-6-luna
+      #   AZURE_OPENAI_BACKGROUND_DEPLOYMENT: gpt-5-nano
+      #   AI_CHAT_REASONING_EFFORT: none
       # Embeds a question about the course material. The sync embeds the material with the same
       # model. Without a courses.db in ./data/state the bot never calls it.
       EMBEDDING_DEPLOYMENT: text-embedding-3-small
