@@ -140,3 +140,23 @@ async def test_the_client_shapes_each_chat_call_for_the_provider(monkeypatch):
     assert sent["model"] == "google/gemini-3.1-flash-lite"
     assert sent["reasoning_effort"] == "low"
     assert "safety_settings" in sent["extra_body"]["extra_body"]["google"]
+
+
+# ── the background model ─────────────────────────────────────────────────────
+
+def test_a_leftover_azure_background_deployment_is_ignored_on_vertex():
+    from config.config import background_model
+    env = {"AI_PROVIDER": "vertex", "VERTEX_PROJECT": "adorio", "AZURE_OPENAI_BACKGROUND_DEPLOYMENT": "gpt-5-nano"}
+    assert background_model(env) == ""
+    assert load_settings(env).background_model == ""
+
+
+def test_the_azure_background_deployment_still_works_on_azure():
+    from config.config import background_model
+    assert background_model(AZURE_ENV) == "gpt-5-nano"
+    assert background_model({**AZURE_ENV, "AI_PROVIDER": "azure"}) == "gpt-5-nano"
+
+
+def test_ai_background_model_works_for_any_provider():
+    from config.config import background_model
+    assert background_model({"AI_PROVIDER": "vertex", "AI_BACKGROUND_MODEL": "gemini-3.1-flash-lite"}) == "gemini-3.1-flash-lite"

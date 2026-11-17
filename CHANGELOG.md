@@ -29,6 +29,9 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 ### Fixed
 
 - Each tool call goes back to the model with the `thought_signature` Gemini attached to it. Without it Gemini refuses the next call in a tool round.
+- An answer from the model with no message in it gets the in-character "try again" line instead of an error. Gemini did this twice in ten tries on one model.
+- A leftover `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` is ignored when the provider is not Azure, so it is never sent to Vertex as a model name.
+- Only the bot's own "quota ran out" line is kept out of later context, not any answer that mentions a quota.
 
 ## 3.21.0 (2026-10-22)
 

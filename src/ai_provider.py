@@ -18,6 +18,7 @@ from typing import Awaitable, Callable, Mapping, Optional
 
 from openai import AsyncOpenAI
 
+from config.config import background_model
 from src.usage_guard import GuardedClient, guard_client
 
 PROVIDERS = ("azure", "vertex", "openai")
@@ -72,13 +73,12 @@ def load_settings(env: Optional[Mapping[str, str]] = None) -> AiSettings:
     if provider not in PROVIDERS:
         raise ValueError(f"AI_PROVIDER must be one of {', '.join(PROVIDERS)}, not {provider!r}")
 
-    background = _get(env, "AI_BACKGROUND_MODEL")
+    background = background_model(env)
     heavy = _get(env, "AI_HEAVY_MODEL")
     if provider == "azure":
         return AiSettings(
             provider, _get(env, "AZURE_OPENAI_ENDPOINT"), _get(env, "AZURE_OPENAI_KEY"),
-            _get(env, "AI_CHAT_MODEL", "AZURE_OPENAI_DEPLOYMENT", default="gpt-5-mini"),
-            background or _get(env, "AZURE_OPENAI_BACKGROUND_DEPLOYMENT"), heavy)
+            _get(env, "AI_CHAT_MODEL", "AZURE_OPENAI_DEPLOYMENT", default="gpt-5-mini"), background, heavy)
     if provider == "vertex":
         project = _get(env, "VERTEX_PROJECT")
         if not project:

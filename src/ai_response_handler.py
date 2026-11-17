@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import logging
+from types import SimpleNamespace
 import time
 from datetime import datetime, timedelta, timezone
 from dataclasses import asdict, dataclass, field
@@ -546,6 +547,7 @@ class AIResponseHandler:
             settings = AiSettings("openai", endpoint, api_key, deployment or "gpt-5-mini", "", "")
         self.ai_client = make_client(settings, timeout=Config.AI_MODEL_TIMEOUT_SECONDS, max_retries=1)
         self.deployment = settings.chat_model
+        self._settings_heavy_model = settings.heavy_model
 
         # One queue for every reply, so a burst cannot open unbounded model calls.
         self.governor = RequestGovernor(
@@ -651,6 +653,10 @@ class AIResponseHandler:
             raise ReplyLimitError(
                 f"reply cost ${request.cost:.3f} (limit ${Config.AI_MAX_REPLY_COST_USD:.2f})")
 
+    def _heavy_model(self) -> Optional[str]:
+        """The model for study, detail, rewrites and documents. None means the chat model."""
+        return self._settings_heavy_model or Config.AI_HEAVY_MODEL or None
+
     async def _chat(self, messages: list, max_tokens: int, tools: Optional[list] = None,
                     reasoning_effort: Optional[str] = None, force_tool: Optional[str] = None,
                     request: Optional[Turn] = None, model: Optional[str] = None):
@@ -677,7 +683,10 @@ class AIResponseHandler:
         if request:
             request.calls += 1
             request.cost += UsageGuard.cost_of(getattr(resp, "usage", None), kwargs["model"])
-        return resp.choices[0].message
+        message = resp.choices[0].message
+        # Gemini sometimes answers with no message at all. Treated as an empty answer, so the
+        # reply is the in-character "try again" line instead of an error.
+        return message if message is not None else SimpleNamespace(content="", tool_calls=None)
 
     async def _embed(self, text: str, request: Turn) -> List[float]:
         """The embedding of one text, for a search of the course material. The call and its cost are added to request."""
@@ -778,7 +787,7 @@ class AIResponseHandler:
             messages.append({"role": "user", "content": gap})
             try:
                 message = await self._chat(messages, max_tokens, None, effort, None, request,
-                                           model=Config.AI_HEAVY_MODEL or None)
+                                           model=self._heavy_model())
             except (BudgetExceededError, ReplyLimitError):
                 raise
             except Exception as e:
@@ -913,7 +922,7 @@ class AIResponseHandler:
             # Only the document writer asks the model on its own, so it gets the heavy model
             request.ask_model = lambda model_messages, limit, effort=None: self._chat(
                 model_messages, limit, reasoning_effort=effort, request=request,
-                model=Config.AI_HEAVY_MODEL or None)
+                model=self._heavy_model())
             request.embed = lambda text: self._embed(text, request)
 
             # One call before the answer decides whether the course material is needed at all.
@@ -1016,7 +1025,7 @@ class AIResponseHandler:
                 effort = "none"
             request.effort = effort
             deep = bool(study or detail or rewrite)
-            model = (Config.AI_HEAVY_MODEL or None) if deep else None
+            model = self._heavy_model() if deep else None
             rounds = (Config.AI_STUDY_MAX_TOOL_ROUNDS if deep
                       else Config.AI_COURSE_MAX_TOOL_ROUNDS if in_course
                       else Config.AI_CHAT_MAX_TOOL_ROUNDS)

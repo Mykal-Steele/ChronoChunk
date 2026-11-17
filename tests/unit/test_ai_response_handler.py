@@ -1387,3 +1387,24 @@ async def test_the_spent_quota_reply_names_no_provider(handler, mock_openai_clie
 def test_the_blocked_reply_names_no_provider(handler, category):
     text = handler._content_filter_response(f"{{'{category}': {{'filtered': True}}}}")
     assert "azure" not in text.lower()
+
+
+async def test_an_answer_with_no_message_gets_the_empty_reply_instead_of_crashing(handler, mock_openai_client):
+    # Gemini sometimes returns a choice whose message is null (model pick run, 2026-11-17)
+    from types import SimpleNamespace
+    mock_openai_client.chat.completions.create.return_value = SimpleNamespace(
+        choices=[SimpleNamespace(message=None, finish_reason="stop")], usage=None)
+    reply = await handler.generate_reply("yo", "", "Kruskal", "1")
+    assert reply.text == handler._format_ai_response("")
+
+
+async def test_the_heavy_model_given_in_the_settings_is_used(mock_openai_client, monkeypatch):
+    from config.config import Config
+    from src.ai_provider import AiSettings
+    from src.ai_response_handler import AIResponseHandler
+    monkeypatch.setattr(Config, "AI_HEAVY_MODEL", "")
+    h = AIResponseHandler(settings=AiSettings("openai", "https://x.example/v1", "k", "chat-model", "", "heavy-model"))
+    h.ai_client = mock_openai_client
+    mock_openai_client.chat.completions.create.return_value = _message(content=_quiz_reply(1, 30))
+    await h.generate_reply("make 30 multiple choice for my ai exam", "", "Kruskal", "1")
+    assert mock_openai_client.chat.completions.create.call_args[1]["model"] == "heavy-model"

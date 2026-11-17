@@ -9,6 +9,20 @@ from pathlib import Path
 # load the secret stuff from .env
 load_dotenv()
 
+
+def background_model(env) -> str:
+    """
+    The model for jobs behind the reply. AI_BACKGROUND_MODEL works for any provider. The
+    old AZURE_OPENAI_BACKGROUND_DEPLOYMENT only counts on Azure, so a value left in .env
+    is not sent to Vertex as a model name. Empty means the chat model.
+    """
+    model = (env.get("AI_BACKGROUND_MODEL") or "").strip()
+    if model:
+        return model
+    if (env.get("AI_PROVIDER") or "azure").strip().lower() == "azure":
+        return (env.get("AZURE_OPENAI_BACKGROUND_DEPLOYMENT") or "").strip()
+    return ""
+
 class Config:
     """main configuration settings for the bot"""
     
@@ -125,9 +139,7 @@ class Config:
 
     # A cheaper deployment for jobs that run behind the reply, such as picking facts out of a
     # message. Empty means those jobs use the main deployment.
-    # AI_BACKGROUND_MODEL works for any provider, the Azure name is kept so old setups still work.
-    AI_BACKGROUND_DEPLOYMENT = (os.getenv("AI_BACKGROUND_MODEL", "").strip()
-                                or os.getenv("AZURE_OPENAI_BACKGROUND_DEPLOYMENT", "").strip())
+    AI_BACKGROUND_DEPLOYMENT = background_model(os.environ)
     # A stronger model for the replies where quality matters most: study sets, detailed
     # answers, rewrites and documents. Empty means they use the chat model too.
     AI_HEAVY_MODEL = os.getenv("AI_HEAVY_MODEL", "").strip()

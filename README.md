@@ -46,6 +46,16 @@ docker build -t chronochunk .
 docker run -d --name chronochunk --env-file .env chronochunk
 ```
 
+On a laptop with `AI_PROVIDER=vertex`, the container also needs your Google credentials, because it cannot see the ones `gcloud` keeps on your machine. Create them once with `gcloud auth application-default login`, then pass the file in read-only. The container runs as user 1000, so that user has to be able to read it:
+
+```bash
+docker run -d --name chronochunk --env-file .env \
+  -v ~/.config/gcloud/application_default_credentials.json:/gcloud/adc.json:ro \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/gcloud/adc.json chronochunk
+```
+
+On a Google Cloud VM none of this is needed: the bot signs in as the VM's service account.
+
 To run it on a server and keep its data between rebuilds, use `deployment/docker-compose.yml`. The comments at the top of that file say where each file goes. `deployment/cloud-init.yml` sets up a fresh Ubuntu VM for it.
 
 The bot runs inside the container as user 1000, not root. The folders mounted for `user_data`, `logs` and `state` must belong to that user: `sudo chown -R 1000:1000 data`.
@@ -142,6 +152,8 @@ The bot talks to its model through the OpenAI Chat Completions API, so moving be
 | `vertex` | `VERTEX_PROJECT`, optional `VERTEX_LOCATION` (default `global`) | Gemini on Google Vertex AI. Signs in with Google's default credentials: the VM's service account on Google Cloud, or `gcloud auth application-default login` on a laptop. Every adjustable safety filter is sent as `OFF`. |
 | `azure` | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_KEY` | Azure OpenAI. This is the default when `AI_PROVIDER` is not set, so an old `.env` keeps working. |
 | `openai` | `AI_BASE_URL`, `AI_API_KEY` | Any other service with an OpenAI-compatible API. |
+
+Course search embeds questions with `EMBEDDING_DEPLOYMENT` (`text-embedding-3-small`), an OpenAI model that Vertex does not serve. On Vertex the course library would have to be embedded again with a Vertex embedding model of the same length, so for now course search tells people it could not search. The live server has no course library yet, so nothing calls it.
 
 To go back to Azure, set the Azure endpoint and key in `.env` and use the commented Azure block in `deployment/docker-compose.yml` instead of the Vertex one. The model names (`AI_CHAT_MODEL`, `AI_HEAVY_MODEL`, `AI_BACKGROUND_MODEL`) work the same way for every provider.
 
