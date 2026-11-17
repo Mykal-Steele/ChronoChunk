@@ -10,6 +10,26 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.22.0 (2026-11-17)
+
+### Added
+
+- The bot can run on Gemini through Google Vertex AI, Azure OpenAI, or any OpenAI-compatible API. `AI_PROVIDER` picks one (`vertex`, `azure` or `openai`), and everything else about the bot stays the same. Without `AI_PROVIDER` it reads the old Azure settings, so going back to Azure is a settings change.
+- On Vertex the bot signs in as the VM's service account, so no AI key is stored on the server. Every adjustable Gemini safety filter is sent as `OFF`.
+- `AI_HEAVY_MODEL` gives study sets, detailed answers, rewrites and documents a stronger model than normal chat. On the server that is `gemini-3.8-flash`, while chat uses `gemini-3.1-flash-lite`.
+- `AI_CHAT_MODEL`, `AI_BACKGROUND_MODEL` and `AI_EMBEDDING_MODEL` name the models for any provider. The Azure names still work.
+- Gemini prices in the spending guard, so the monthly cap still counts real cost.
+
+### Changed
+
+- The live bot moved from the Azure VM to a Google Cloud `e2-micro` in us-central1, inside Google's free tier. The Azure subscription is gone, and with it the old database, so the bot starts with no memory of anyone.
+- `deployment/cloud-init.yml` works on any Ubuntu VM and creates a `chrono` user with uid 1000 for the data folders.
+- Replies about a spent quota or a blocked message no longer name Azure.
+
+### Fixed
+
+- Each tool call goes back to the model with the `thought_signature` Gemini attached to it. Without it Gemini refuses the next call in a tool round.
+
 ## 3.21.0 (2026-10-22)
 
 ### Added

@@ -7,7 +7,6 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 from dataclasses import asdict, dataclass, field
-from openai import AsyncOpenAI
 from typing import Callable, List, Optional, Tuple
 from config.ai_config import PERSONALITY_PROMPT, load_voice_examples, voice_examples_prompt
 from config.config import Config
@@ -17,7 +16,8 @@ from src.course_scope import Scope
 from src.document_builder import BuiltFile, plain_math, strip_filler
 from src.exceptions import ReplyLimitError, RequestBusy
 from src.request_governor import RequestGovernor
-from src.usage_guard import BudgetExceededError, UsageGuard, get_usage_guard, guard_client
+from src.ai_provider import AiSettings, make_client
+from src.usage_guard import BudgetExceededError, UsageGuard, get_usage_guard
 from src.tools import Tool, ToolResult, Turn, default_tools
 from src.tools.base import user_content
 from src.tools.documents import MAX_FILES_PER_REPLY
@@ -47,6 +47,20 @@ logger = logging.getLogger(__name__)
 _clean_personality = re.sub(
     r'\{conversation_history\}.*$', '', PERSONALITY_PROMPT, flags=re.DOTALL
 ).strip()
+
+def _echo_tool_call(call) -> dict:
+    """
+    A tool call as it goes back to the model in the next request. Gemini attaches a thought
+    signature to each call and answers 400 when the next request leaves it out, so whatever
+    the provider added under extra_content goes back with it. Azure adds nothing.
+    """
+    echoed = {"id": call.id, "type": "function",
+              "function": {"name": call.function.name, "arguments": call.function.arguments}}
+    extra = getattr(call, "extra_content", None)
+    if isinstance(extra, dict):
+        echoed["extra_content"] = extra
+    return echoed
+
 
 # The friend group lives in Bangkok, so "now" is told in its time
 _BANGKOK = timezone(timedelta(hours=7))
@@ -514,8 +528,8 @@ class Reply:
 class AIResponseHandler:
     """Handles all AI response generation logic"""
 
-    def __init__(self, endpoint: str, api_key: str, deployment: str,
-                 reply_log: Optional[ReplyLog] = None):
+    def __init__(self, endpoint: str = "", api_key: str = "", deployment: str = "",
+                 reply_log: Optional[ReplyLog] = None, settings: Optional[AiSettings] = None):
         self.response_cache = {}
         self.reply_log = reply_log
         self.cache_size = 50
@@ -528,9 +542,10 @@ class AIResponseHandler:
 
         # Every call goes through the budget guard. The SDK's own retry loop is kept
         # short: a reply has its own deadline and a retry here would spend it twice.
-        self.ai_client = guard_client(AsyncOpenAI(
-            base_url=endpoint, api_key=api_key, timeout=Config.AI_MODEL_TIMEOUT_SECONDS, max_retries=1))
-        self.deployment = deployment
+        if settings is None:
+            settings = AiSettings("openai", endpoint, api_key, deployment or "gpt-5-mini", "", "")
+        self.ai_client = make_client(settings, timeout=Config.AI_MODEL_TIMEOUT_SECONDS, max_retries=1)
+        self.deployment = settings.chat_model
 
         # One queue for every reply, so a burst cannot open unbounded model calls.
         self.governor = RequestGovernor(
@@ -542,9 +557,9 @@ class AIResponseHandler:
         # What the model can do besides talk. Each tool lives in src/tools.
         self.tools: List[Tool] = default_tools()
 
-        # What is said when Azure turns a call down for coming too fast. It clears by itself within a minute.
+        # What is said when the provider turns a call down for coming too fast. It clears by itself within a minute.
         self.fallback_responses = deque([
-            "azure is rate limiting me rn, too many msgs this minute. try again in like 30 sec",
+            "my model is rate limiting me rn, too many msgs this minute. try again in like 30 sec",
             "hit the rate limit on my model, too much going on this minute. gimme 30 sec and send it again",
             "im getting rate limited rn (too many requests at once). wait a min and try again",
         ], maxlen=10)
@@ -762,7 +777,8 @@ class AIResponseHandler:
             messages.append({"role": "assistant", "content": last_written})
             messages.append({"role": "user", "content": gap})
             try:
-                message = await self._chat(messages, max_tokens, None, effort, None, request)
+                message = await self._chat(messages, max_tokens, None, effort, None, request,
+                                           model=Config.AI_HEAVY_MODEL or None)
             except (BudgetExceededError, ReplyLimitError):
                 raise
             except Exception as e:
@@ -894,8 +910,10 @@ class AIResponseHandler:
                 request.course_codes = codes
             request.study = bool(study)
             request.detail = detail
+            # Only the document writer asks the model on its own, so it gets the heavy model
             request.ask_model = lambda model_messages, limit, effort=None: self._chat(
-                model_messages, limit, reasoning_effort=effort, request=request)
+                model_messages, limit, reasoning_effort=effort, request=request,
+                model=Config.AI_HEAVY_MODEL or None)
             request.embed = lambda text: self._embed(text, request)
 
             # One call before the answer decides whether the course material is needed at all.
@@ -998,6 +1016,7 @@ class AIResponseHandler:
                 effort = "none"
             request.effort = effort
             deep = bool(study or detail or rewrite)
+            model = (Config.AI_HEAVY_MODEL or None) if deep else None
             rounds = (Config.AI_STUDY_MAX_TOOL_ROUNDS if deep
                       else Config.AI_COURSE_MAX_TOOL_ROUNDS if in_course
                       else Config.AI_CHAT_MAX_TOOL_ROUNDS)
@@ -1020,7 +1039,7 @@ class AIResponseHandler:
                 force_tool = redo or ("search_course" if must_search and round_number == 0 else None)
                 redo = None
                 try:
-                    message = await self._chat(messages, max_tokens, tools, effort, force_tool, request)
+                    message = await self._chat(messages, max_tokens, tools, effort, force_tool, request, model)
                 except (BudgetExceededError, ReplyLimitError):
                     raise
                 except Exception as e:
@@ -1030,7 +1049,7 @@ class AIResponseHandler:
                     logger.warning(f"Request with images failed, retrying without them: {e}")
                     user_parts.insert(-1, "(the attached images failed to load, tell them u couldnt open the image)")
                     messages[-1] = {"role": "user", "content": "\n\n".join(user_parts)}
-                    message = await self._chat(messages, max_tokens, tools, effort, force_tool, request)
+                    message = await self._chat(messages, max_tokens, tools, effort, force_tool, request, model)
 
                 raw = message.content if isinstance(message.content, str) else ""
                 calls = message.tool_calls if isinstance(message.tool_calls, list) else []
@@ -1040,11 +1059,7 @@ class AIResponseHandler:
                 messages.append({
                     "role": "assistant",
                     "content": raw,
-                    "tool_calls": [
-                        {"id": call.id, "type": "function",
-                         "function": {"name": call.function.name, "arguments": call.function.arguments}}
-                        for call in calls
-                    ],
+                    "tool_calls": [_echo_tool_call(call) for call in calls],
                 })
                 for call in sorted(calls, key=lambda c: getattr(by_name.get(c.function.name), "priority", 1)):
                     result = await self._timed_tool(by_name, call, request)
@@ -1113,7 +1128,7 @@ class AIResponseHandler:
         if "insufficient_quota" in lowered or ("quota" in lowered and "rate limit" not in lowered):
             return await self._finish(
                 request,
-                Reply("my azure quota ran out, so i cant answer till my dev sorts it. nothing wrong with ur msg", ok=False),
+                Reply("my ai quota ran out, so i cant answer till my dev sorts it. nothing wrong with ur msg", ok=False),
                 error=error_msg)
         # Not just the letters "rate", which are in "generate" and "separate" too
         if re.search(r"\b429\b|rate.?limit|too many requests", lowered):
@@ -1219,7 +1234,7 @@ class AIResponseHandler:
         return f"im out of ai budget till {error.resets_on:%b} {error.resets_on.day}, my dev capped me. try again then"
 
     def _content_filter_response(self, error_msg: str) -> str:
-        """In-character response when Azure content filter blocks the request."""
+        """In-character response when the provider's content filter blocks the request."""
         # Detect which categories were actually filtered (Python True in str(dict))
         blocked = []
         checks = {
@@ -1235,11 +1250,11 @@ class AIResponseHandler:
         what = " + ".join(blocked) if blocked else "something"
 
         if "hate" in blocked:
-            return f"bruh my azure dad blocked that one on me 💀 — [{what}] hit the filter. even i got a ceiling apparently, try toning it down a lil"
+            return f"bruh my model blocked that one on me 💀 [{what}] hit the filter. even i got a ceiling apparently, try toning it down a lil"
         if "self harm" in blocked:
-            return f"nah that one got caught by azure [{what}] — can't go there my g. u good tho fr??"
+            return f"nah that one got caught by the filter [{what}], can't go there my g. u good tho fr??"
         if "sexual" in blocked:
-            return f"bro azure said that was too nasty 😭 [{what}] got flagged, my corporate overlord said absolutely not lmao"
+            return f"bro the filter said that was too nasty 😭 [{what}] got flagged, my corporate overlord said absolutely not lmao"
         if "violence" in blocked:
-            return f"yo azure blocked that for [{what}] my g, apparently that was too much even for my settings"
-        return f"bruh my azure dad said no on that one 💀 [{what}] got flagged, can't push it through rn"
+            return f"yo the filter blocked that for [{what}] my g, apparently that was too much even for my settings"
+        return f"bruh my model said no on that one 💀 [{what}] got flagged, can't push it through rn"

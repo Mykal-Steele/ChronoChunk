@@ -10,7 +10,7 @@ from src.study import StudyRequest
 
 @pytest.fixture
 def handler(mock_openai_client):
-    with patch("src.ai_response_handler.AsyncOpenAI") as mock_cls:
+    with patch("src.ai_provider.AsyncOpenAI") as mock_cls:
         mock_cls.return_value = mock_openai_client
         from src.ai_response_handler import AIResponseHandler
         h = AIResponseHandler(
@@ -1306,3 +1306,84 @@ def test_a_normal_answer_that_starts_with_code_formatting_is_not_removed(handler
     result = handler._format_ai_response(answer)
     assert result.lower() == answer.lower()
     assert "code formatting rules" in result.lower()
+
+
+# ── switching providers (Vertex since 2026-11-17, Azure before) ──────────────
+
+
+async def test_each_tool_call_goes_back_with_its_thought_signature(handler, mock_openai_client, web):
+    # Gemini answers 400 to the next call when the signature is missing (run.md, 2026-11-17)
+    call = _tool_call("web_search", {"query": "latest python"})
+    call.extra_content = {"google": {"thought_signature": "sig-1"}}
+    mock_openai_client.chat.completions.create.side_effect = [_message(tool_calls=[call]), _message(content="3.14")]
+    await handler.generate_reply("/latest python version?", "", "Kruskal", "1", allow_files=True)
+    messages = mock_openai_client.chat.completions.create.call_args[1]["messages"]
+    assistant = [m for m in messages if m["role"] == "assistant"][-1]
+    assert assistant["tool_calls"][0]["extra_content"] == {"google": {"thought_signature": "sig-1"}}
+
+
+async def test_a_tool_call_without_a_signature_goes_back_without_the_field(handler, mock_openai_client, web):
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("web_search", {"query": "latest python"})]), _message(content="3.14")]
+    await handler.generate_reply("/latest python version?", "", "Kruskal", "1", allow_files=True)
+    messages = mock_openai_client.chat.completions.create.call_args[1]["messages"]
+    assistant = [m for m in messages if m["role"] == "assistant"][-1]
+    assert "extra_content" not in assistant["tool_calls"][0]
+
+
+@pytest.fixture
+def heavy(monkeypatch):
+    from config.config import Config
+    monkeypatch.setattr(Config, "AI_HEAVY_MODEL", "gemini-3.8-flash")
+
+
+async def test_study_replies_use_the_heavy_model(handler, mock_openai_client, heavy):
+    full_key = "\n".join(f"{number}. A. because case {number} says so." for number in range(1, 31))
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(content=_quiz_reply(1, 12)),
+        _message(content=_quiz_reply(13, 30)),
+        _message(content="## Answer key\n" + full_key),
+    ]
+    await handler.generate_reply("make 30 mcqs for ai", "", "Kruskal", "1")
+    models = [c[1]["model"] for c in mock_openai_client.chat.completions.create.call_args_list]
+    assert models == ["gemini-3.8-flash"] * 3
+
+
+async def test_normal_chat_stays_on_the_chat_model(handler, mock_openai_client, heavy):
+    await handler.generate_reply("yo", "", "Kruskal", "1")
+    assert mock_openai_client.chat.completions.create.call_args[1]["model"] == "gpt-5-mini"
+
+
+async def test_the_document_writer_uses_the_heavy_model(handler, mock_openai_client, built_files, heavy):
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("create_document", {"format": "pdf", "title": "Proposal", "brief": "A proposal"})]),
+        _message(content="# Proposal\n\nText."),
+        _message(content="here"),
+    ]
+    await handler.generate_reply("/make a pdf proposal", "", "Kruskal", "1", allow_files=True)
+    models = [c[1]["model"] for c in mock_openai_client.chat.completions.create.call_args_list]
+    assert models == ["gpt-5-mini", "gemini-3.8-flash", "gpt-5-mini"]
+
+
+async def test_without_a_heavy_model_study_uses_the_chat_model(handler, mock_openai_client, monkeypatch):
+    from config.config import Config
+    monkeypatch.setattr(Config, "AI_HEAVY_MODEL", "")
+    mock_openai_client.chat.completions.create.return_value = _message(content=_quiz_reply(1, 30))
+    await handler.generate_reply("make 30 multiple choice for my ai exam", "", "Kruskal", "1")
+    assert mock_openai_client.chat.completions.create.call_args[1]["model"] == "gpt-5-mini"
+
+
+def test_no_canned_reply_names_a_provider(handler):
+    assert not any("azure" in reply.lower() for reply in handler.fallback_responses)
+
+
+async def test_the_spent_quota_reply_names_no_provider(handler, mock_openai_client):
+    mock_openai_client.chat.completions.create.side_effect = Exception("Error code: 429 insufficient_quota")
+    reply = await handler.generate_reply("yo", "", "Kruskal", "1")
+    assert "quota" in reply.text and "azure" not in reply.text.lower()
+
+
+@pytest.mark.parametrize("category", ["hate", "sexual", "violence", "self_harm", "none"])
+def test_the_blocked_reply_names_no_provider(handler, category):
+    text = handler._content_filter_response(f"{{'{category}': {{'filtered': True}}}}")
+    assert "azure" not in text.lower()

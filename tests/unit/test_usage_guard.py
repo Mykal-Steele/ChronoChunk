@@ -328,3 +328,13 @@ def test_the_weekly_reset_waits_for_enough_days_to_leave(user_guard, as_user, mo
     set_today(monkeypatch, date(2026, 10, 13))
     user_guard.check()
 
+
+
+def test_gemini_calls_are_costed_at_their_own_prices():
+    # Vertex list prices, global endpoint, November 2026 (Cloud Billing catalog)
+    plain = usage(prompt=1_000_000, completion=1_000_000)
+    assert UsageGuard.cost_of(plain, "google/gemini-3.8-flash") == pytest.approx(1.50 + 7.50)
+    assert UsageGuard.cost_of(plain, "google/gemini-3.1-flash-lite") == pytest.approx(0.25 + 1.50)
+    cached = usage(prompt=1_000_000, cached=1_000_000)
+    assert UsageGuard.cost_of(cached, "google/gemini-3.8-flash") == pytest.approx(0.15)
+    assert UsageGuard.cost_of(cached, "google/gemini-3.1-flash-lite") == pytest.approx(0.025)

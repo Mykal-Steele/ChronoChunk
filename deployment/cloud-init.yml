@@ -1,6 +1,7 @@
 #cloud-config
-# First-boot setup for the Azure VM: Docker, swap, and the repo checkout.
-# Pass it to `az vm create --custom-data deployment/cloud-init.yml`.
+# First-boot setup for the bot's VM: Docker, swap, and the repo checkout. Works on any
+# Ubuntu VM that runs cloud-init. On Google Cloud, pass it as user-data:
+#   gcloud compute instances create ... --metadata-from-file user-data=deployment/cloud-init.yml
 package_update: true
 package_upgrade: true
 packages:
@@ -8,6 +9,14 @@ packages:
   - docker-compose-v2
   - docker-buildx
   - git
+
+# The container runs as uid 1000, so the files it writes in /opt/chronochunk/data need
+# that owner. Creating this user first gives it uid 1000. SSH users added later get others.
+users:
+  - default
+  - name: chrono
+    uid: "1000"
+    shell: /bin/bash
 
 # The VM has 1 GiB of RAM, so image builds need swap.
 swap:
@@ -17,6 +26,6 @@ swap:
 
 runcmd:
   - systemctl enable --now docker
-  - usermod -aG docker azureuser
-  - install -d -o azureuser -g azureuser /opt/chronochunk /opt/chronochunk/data /opt/chronochunk/data/user_data /opt/chronochunk/data/logs /opt/chronochunk/data/state
-  - sudo -u azureuser git clone --branch main https://github.com/Mykal-Steele/ChronoChunk /opt/chronochunk/app
+  - usermod -aG docker chrono
+  - install -d -o chrono -g chrono /opt/chronochunk /opt/chronochunk/data /opt/chronochunk/data/user_data /opt/chronochunk/data/logs /opt/chronochunk/data/state
+  - sudo -u chrono git clone --branch main https://github.com/Mykal-Steele/ChronoChunk /opt/chronochunk/app
