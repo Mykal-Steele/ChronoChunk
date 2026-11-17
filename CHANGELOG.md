@@ -10,6 +10,13 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.22.1 (2026-11-18)
+
+### Fixed
+
+- The bot knows it runs on a Google Cloud VM (machine type, zone and image from Google's metadata server, never the project or addresses). Before this it guessed wrong about where it lives.
+- It knows which provider its models come from, and what changed in its updates from the last two weeks, so it can say what really happened to it. `CHANGELOG.md` is now in the image for this.
+
 ## 3.22.0 (2026-11-17)
 
 ### Added

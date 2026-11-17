@@ -19,5 +19,4 @@ requirements*.in
 deployment/
 .github/
 README.md
-CHANGELOG.md
 sync/
