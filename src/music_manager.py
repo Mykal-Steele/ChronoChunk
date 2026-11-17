@@ -379,11 +379,20 @@ class MusicManager:
 
         # A song that waited in the queue, or one on loop, can outlive its stream link
         if next_song.is_stale(time.time()):
+            voice = state.voice_client
             try:
                 next_song.url, _, _, _ = await self.extract_info(next_song.page_url)
                 logger.info(f"Fetched a fresh stream link for {next_song.title}")
             except Exception as e:
                 logger.warning(f"Could not refresh the stream link for {next_song.title}, trying the old one: {e!r}")
+            # The lookup took a moment. If the bot left voice meanwhile, nothing plays. If another
+            # song started meanwhile, this one goes back to the front of the queue.
+            if state.voice_client is not voice or voice is None or not voice.is_connected():
+                return False, "Not connected to a voice channel"
+            if voice.is_playing():
+                if next_song is not state.current_song:
+                    state.queue.insert(0, next_song)
+                return False, "Another song started first"
 
         state.current_song = next_song
             

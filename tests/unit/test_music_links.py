@@ -37,6 +37,7 @@ def _manager_with_voice(monkeypatch):
     state = manager.get_guild_music_state(1)
     state.voice_client = MagicMock()
     state.voice_client.is_connected.return_value = True
+    state.voice_client.is_playing.return_value = False  # like a real idle voice client
     return manager, state, played
 
 
@@ -75,3 +76,34 @@ async def test_a_queued_song_remembers_its_page(monkeypatch):
     manager.extract_info = AsyncMock(return_value=(_link(1795000000), "t", 213, PAGE))
     await manager.play(1, "rick roll", "Kruskal", "42")  # not in voice, so it only queues
     assert manager.get_guild_music_state(1).queue[0].page_url == PAGE
+
+
+async def test_leaving_voice_during_the_refresh_plays_nothing(monkeypatch):
+    # CodeRabbit on #44: the refresh awaits, and the session can change meanwhile
+    manager, state, played = _manager_with_voice(monkeypatch)
+    before = state.current_song
+
+    async def lookup_then_disconnect(url):
+        state.voice_client = None
+        return _link(int(time.time()) + 6 * 3600), "t", 213, PAGE
+
+    manager.extract_info = lookup_then_disconnect
+    state.queue = [Song(_link(int(time.time()) - 60), "t", 213, "K", page_url=PAGE)]
+    ok, _ = await manager._play_next(1)
+    assert not ok and played == [] and state.current_song is before
+
+
+async def test_a_song_started_during_the_refresh_keeps_playing(monkeypatch):
+    manager, state, played = _manager_with_voice(monkeypatch)
+    stale = Song(_link(int(time.time()) - 60), "waited", 213, "K", page_url=PAGE)
+
+    async def lookup_while_another_starts(url):
+        state.voice_client.is_playing.return_value = True
+        return _link(int(time.time()) + 6 * 3600), "waited", 213, PAGE
+
+    manager.extract_info = lookup_while_another_starts
+    state.voice_client.is_playing.return_value = False
+    state.queue = [stale]
+    ok, _ = await manager._play_next(1)
+    assert not ok and played == []
+    assert state.queue[0] is stale  # back at the front, not lost

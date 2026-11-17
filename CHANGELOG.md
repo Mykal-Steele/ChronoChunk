@@ -14,7 +14,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 ### Fixed
 
-- Music: YouTube stream links expire after about 6 hours. A song now keeps its YouTube page, and gets a fresh link right before it plays if the old one would run out before the song ends. That covers songs that waited in a long queue and songs on loop. If the new lookup fails, the old link is still tried.
+- Music: YouTube stream links expire after about 6 hours. A song now keeps its YouTube page, and gets a fresh link right before it plays if the old one would run out before the song ends. That covers songs that waited in a long queue and songs on loop. If the new lookup fails, the old link is still tried. If the bot leaves voice or another song starts during that lookup, nothing extra plays and the song goes back to the front of the queue.
 - Music: yt-dlp 2026.10.26, the newest release. YouTube changes often break older versions.
 
 ## 3.22.1 (2026-11-18)
