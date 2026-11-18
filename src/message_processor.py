@@ -4,6 +4,7 @@ import logging
 import re
 import time
 import discord
+from src.memory_store import place_of
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Callable, AsyncIterator, Optional, Set
@@ -412,7 +413,7 @@ is_correction: bool) -> None:
                         attached_context=attached.text, images=attached.images,
                         allow_files=True, file_gate=file_gate, web_gate=web_gate, course_gate=course_gate,
                         emoji_prompt=emoji.prompt(reactions=may_react), session_key=f"{channel_id}:{user_id}",
-                        history_age=history_age
+                        history_age=history_age, place=place_of(message.channel)
                     )
 
             with watch.step("send"):

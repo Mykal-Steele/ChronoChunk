@@ -25,8 +25,8 @@ Accepted with these decisions: something said in a small server can come up in a
 | # | Layer | What it adds | Status |
 |---|---|---|---|
 | 0 | Memory that survives | Nightly encrypted copy of the database in R2, 30 days kept | Done 2026-11-18, restore tested |
-| 1 | Remember what people teach | `remember` and `recall` tools, each memory with who said it, when and where, corrections replace the old fact | Next |
-| 2 | Find the memory that fits | Embeddings (Vertex `gemini-embedding-2`) in `sqlite-vec`, about 10 memories per reply ranked by relevance, recency and importance. Also brings course search back on Vertex | |
+| 1 | Remember what people teach | `remember` and `recall` tools, each memory with who said it, when and where, corrections replace the old fact. Memories that share words with the message go in front of the model before it answers | Done 2026-11-19 (3.25.0) |
+| 2 | Find the memory that fits | Next. Embeddings (Vertex `gemini-embedding-2`) in `sqlite-vec`, about 10 memories per reply ranked by relevance, recency and importance. Also brings course search back on Vertex | |
 | 3 | Episodes and sleep | Everything said in a channel is stored. A nightly job writes a summary of each channel's day, merges duplicate facts, settles contradictions and lets unimportant memories fade | |
 | 4 | Learning how to behave | Notices feedback ("stop roasting me", "that's wrong", a thumbs down) and writes a short lesson for that person or the whole server, which goes into its prompt. It never edits its code or its base personality | |
 | 5 | Control | `/memory` shows what it knows about you, `/forget` erases it, and admins can review and delete what it learned about the group or the world | |
@@ -35,7 +35,7 @@ Accepted with these decisions: something said in a small server can come up in a
 
 - Trust: what someone says about themselves is believed. A claim about the world is stored as "X told me", and checked with a web search before the bot states it as fact. One person cannot overwrite a fact others confirmed.
 - Every memory has a source (person, server, channel, time) and an importance score.
-- Memory stays encrypted at rest where the reply log already is, and in the R2 backups.
+- Where it is stored: memories, like facts and conversations, are plain SQLite in `state/chronochunk.db` on the VM, which only root and the bot's user can read. The reply log is encrypted row by row. Every copy that leaves the VM (the R2 backups) is encrypted. Encrypting the database itself would mean a key on the same disk, so it would not protect against anyone who can already read the file.
 - Provider-neutral: works on Vertex, Azure or any OpenAI-compatible API, same as the rest of the bot.
 
 ## Cost

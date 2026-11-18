@@ -5,6 +5,8 @@ import json
 import re
 import urllib.parse
 import logging
+from src.memory_store import MemoryStore
+from src.tools.memory import AUTO_RECALL_LIMIT, RecallMemory
 from src.clock import BANGKOK
 from types import SimpleNamespace
 import time
@@ -921,7 +923,8 @@ class AIResponseHandler:
                              emoji_prompt: str = "",
                              course_gate: Optional[Callable[[], None]] = None,
                              session_key: Optional[str] = None,
-                             history_age: Optional[timedelta] = None) -> Reply:
+                             history_age: Optional[timedelta] = None,
+                             place=None) -> Reply:
         """Generate a reply behind one deadline and one share of the bot's model capacity.
 
         The request object is made before waiting, so a busy or timed-out reply can
@@ -934,6 +937,7 @@ class AIResponseHandler:
             user_id=user_id,
             channel_id=session_key.split(":", 1)[0] if session_key else None,
             model=self.deployment,
+            place=place,
         )
         timeout = (Config.AI_FILE_REQUEST_TIMEOUT_SECONDS if allow_files
                    else Config.AI_REQUEST_TIMEOUT_SECONDS)
@@ -968,6 +972,8 @@ class AIResponseHandler:
 
         # Per-user cache, keyed by user identity + query + tail of history + what was attached
         cache_key = f"{user_id or username}|{query}|{conversation_history[-120:] if conversation_history else ''}"
+        # A saved, corrected or forgotten memory can change the answer, so it starts a new key
+        cache_key += f"|m{MemoryStore().revision()}"
         if attached_context or images:
             attached_digest = hashlib.sha1((attached_context + "".join(images)).encode("utf-8")).hexdigest()
             cache_key += f"|{attached_digest}"
@@ -1073,6 +1079,13 @@ class AIResponseHandler:
             # The tools on offer for this reply, and the state they share
             offered = [tool for tool in self.tools if tool.available() and (in_course or not tool.course_only)] if allow_files else []
             by_name = {tool.name: tool for tool in offered}
+            # What people told the bot before, matched on the message's words. It costs no model
+            # call, and the chat model does not reliably call recall on its own
+            recall = by_name.get("recall")
+            if isinstance(recall, RecallMemory) and user_id:
+                remembered = recall.matching(clean_query, AUTO_RECALL_LIMIT)
+                if remembered:
+                    user_parts.insert(-1, remembered)
 
             def keep(block: str) -> None:
                 if session is not None:

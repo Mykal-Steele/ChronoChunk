@@ -101,6 +101,26 @@ MIGRATIONS = [
     -- Whether the bot may answer a message nobody addressed to it in this channel
     ALTER TABLE channel_settings ADD COLUMN join_in INTEGER NOT NULL DEFAULT 1;
     """,
+    """
+    -- What people taught the bot, shared by every server it is in (memory plan, layer 1)
+    CREATE TABLE memories (
+        id           INTEGER PRIMARY KEY,
+        content      TEXT NOT NULL,
+        about        TEXT NOT NULL DEFAULT '',
+        kind         TEXT NOT NULL,          -- 'self': about the person who said it. 'claim': anything else
+        source_id    TEXT NOT NULL,
+        source_name  TEXT NOT NULL,
+        guild_id     TEXT NOT NULL DEFAULT '',
+        guild_name   TEXT NOT NULL DEFAULT '',
+        channel_id   TEXT NOT NULL DEFAULT '',
+        channel_name TEXT NOT NULL DEFAULT '',
+        created_at   TEXT NOT NULL,
+        replaced_by  INTEGER,                -- the memory that corrected this one
+        confirmed_by TEXT NOT NULL DEFAULT '[]'  -- JSON list of [user id, name] who said the same
+    );
+    CREATE INDEX memories_live ON memories(replaced_by);
+    CREATE INDEX memories_source ON memories(source_id);
+    """,
 ]
 
 

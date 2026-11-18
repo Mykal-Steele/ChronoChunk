@@ -1,6 +1,7 @@
 """What the bot remembers about people, and how it picks facts out of what they say."""
 import json
 import logging
+from src.memory_store import MemoryStore
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -93,6 +94,7 @@ class UserDataManager:
     def forget_user(self, user_id: str) -> None:
         """Delete everything stored about a user: facts, topics and saved conversations."""
         self.store.forget(user_id)
+        MemoryStore().forget_user(user_id)
         if self.reply_log:
             self.reply_log.delete_user(user_id)
         logger.info(f"Deleted all stored data for {clean_user_id(user_id)}")
