@@ -1,0 +1,11 @@
+#!/bin/sh
+# Uploads ChronoChunk's daily database copies to Cloudflare R2, encrypted by rclone's crypt
+# remote ("backup" in /etc/chronochunk/rclone.conf). R2 deletes anything older than 30 days.
+set -eu
+CONF=/etc/chronochunk/rclone.conf
+STATE=/opt/chronochunk/data/state
+# The bot writes chronochunk-<day>.db into state/backups at startup and once a day
+rclone --config "$CONF" copy "$STATE/backups" backup:db --max-age 48h --log-level NOTICE
+# Without this key the backed-up reply log cannot be read
+rclone --config "$CONF" copyto "$STATE/reply_log.key" backup:keys/reply_log.key --log-level NOTICE
+echo "backup done $(date -u +%FT%TZ)"

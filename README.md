@@ -157,6 +157,19 @@ Course search embeds questions with `EMBEDDING_DEPLOYMENT` (`text-embedding-3-sm
 
 To go back to Azure, set the Azure endpoint and key in `.env` and use the commented Azure block in `deployment/docker-compose.yml` instead of the Vertex one. The model names (`AI_CHAT_MODEL`, `AI_HEAVY_MODEL`, `AI_BACKGROUND_MODEL`) work the same way for every provider.
 
+### Backups off the server
+
+The bot copies its database to `state/backups` at startup and once a day, but those copies sit on the VM's own disk. The Azure shutdown in November 2026 lost everything that way, so a nightly job also uploads them to the Cloudflare R2 bucket `chronochunk-backups`, encrypted on the VM before they leave. R2 deletes them after 30 days.
+
+| Piece | Where |
+|---|---|
+| Upload script | `deployment/backup/chronochunk-backup`, installed at `/usr/local/bin/chronochunk-backup` |
+| Timer | `deployment/backup/chronochunk-backup.timer` and `.service`, daily at 04:00 UTC |
+| rclone config | `/etc/chronochunk/rclone.conf` on the VM, root only. Template: `deployment/backup/rclone.conf.example` |
+| Encryption password and salt | Kept off the VM by the owner. Without them the backups cannot be read |
+
+How to restore is in `docs/memory-plan.md`.
+
 ### Deploying a change
 
 1. Merge the pull request into `main`.
