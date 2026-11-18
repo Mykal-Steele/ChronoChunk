@@ -12,6 +12,9 @@ endpoint = https://<cloudflare account id>.r2.cloudflarestorage.com
 acl = private
 # A bucket-scoped token cannot list buckets
 no_check_bucket = true
+# R2 answers 501 to the HEAD ?versionId= check rclone does after each upload,
+# which fails every first attempt. R2 still checks the upload's Content-MD5.
+no_head = true
 
 [backup]
 type = crypt
