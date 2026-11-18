@@ -16,6 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
+# yt-dlp runs YouTube's JavaScript challenges on deno. Without it YouTube starts dropping formats
+COPY --from=denoland/deno:bin-2.9.8 /deno /usr/local/bin/deno
+
 # The bot does not run as root. 1000 is also the first user on the host, who owns the data folders.
 RUN useradd --create-home --uid 1000 bot
 

@@ -146,5 +146,7 @@ yarl==1.25.1
     # via aiohttp
 yt-dlp==2026.10.26
     # via -r requirements.in
+yt-dlp-ejs==0.8.0
+    # via -r requirements.in
 zopfli==0.4.3
     # via fonttools

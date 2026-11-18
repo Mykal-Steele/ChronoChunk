@@ -5,6 +5,7 @@ import re
 import time
 import discord
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import Callable, AsyncIterator, Optional, Set
 from src.ai_response_handler import AIResponseHandler, Reply
 from config.config import Config
@@ -301,9 +302,10 @@ class MessageProcessor:
                     channel_id=channel_id, user_data=user_data, query=query,
                     session_start=self.conversation.session_start(channel_id), current_id=message.id
                 )
+                history_age = self.message_handler.latest_message_age(channel_id, message.id)
             await self._handle_ai_response(message, user_id, username, channel_id, query,
                                            conversation_history, referenced, recent, watch,
-                                           answer_is_out=answer_is_out)
+                                           answer_is_out=answer_is_out, history_age=history_age)
         finally:
             answer_is_out()
 
@@ -372,7 +374,8 @@ is_correction: bool) -> None:
                               referenced: Optional[discord.Message] = None,
                               recent: Optional[list] = None,
                               watch: Optional[Stopwatch] = None,
-                              answer_is_out: Optional[Callable[[], None]] = None) -> None:
+                              answer_is_out: Optional[Callable[[], None]] = None,
+                              history_age: Optional[timedelta] = None) -> None:
         """
         Build the answer to one message and send it. answer_is_out is called once the
         answer is sent and in the history, before the slower work that nobody waits for.
@@ -408,7 +411,8 @@ is_correction: bool) -> None:
                         enriched_query, conversation_history, username, user_id,
                         attached_context=attached.text, images=attached.images,
                         allow_files=True, file_gate=file_gate, web_gate=web_gate, course_gate=course_gate,
-                        emoji_prompt=emoji.prompt(reactions=may_react), session_key=f"{channel_id}:{user_id}"
+                        emoji_prompt=emoji.prompt(reactions=may_react), session_key=f"{channel_id}:{user_id}",
+                        history_age=history_age
                     )
 
             with watch.step("send"):
@@ -522,11 +526,13 @@ is_correction: bool) -> None:
                 history = self.message_handler.build_conversation_context(
                     channel_id=channel_id, user_data={}, query=content,
                     session_start=self.conversation.session_start(channel_id), current_id=message.id)
+                history_age = self.message_handler.latest_message_age(channel_id, message.id)
                 custom_emoji = self.custom_emoji_due(channel_id)
                 emoji = usable_emoji(message.channel, self.bot.guilds)
                 reply = await self.ai_handler.generate_reply(
                     content, history, username, None,
-                    attached_context=UNCALLED_NOTE.format(name=username), emoji_prompt=emoji.prompt())
+                    attached_context=UNCALLED_NOTE.format(name=username), emoji_prompt=emoji.prompt(),
+                    history_age=history_age)
                 # A stand-in for a failed answer is for someone who asked. Nobody did.
                 if not reply.ok or stays_out(reply.text):
                     return

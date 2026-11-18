@@ -20,7 +20,9 @@ from config.config import Config
 CHANNEL_ANSWER_RULE = (
     "(their request below is about the channel messages above. answer from those messages only. "
     "no facts, steps, tasks, dates or advice that nobody there wrote, unless they ask for ur own take. "
-    "if the messages dont say, say that. keep it shorter than the chat it covers.)"
+    "if the messages dont say, say that. the --- lines say which day each part was sent: tell anything "
+    "from before today as something that happened then (\"on the 31st slade said he had the flu\"), "
+    "not happening now. keep it shorter than the chat it covers.)"
 )
 
 

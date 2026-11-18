@@ -3,12 +3,14 @@ import difflib
 import hashlib
 import json
 import re
+import urllib.parse
 import logging
+from src.clock import BANGKOK
 from types import SimpleNamespace
 import time
 from datetime import datetime, timedelta, timezone
 from dataclasses import asdict, dataclass, field
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 from config.ai_config import PERSONALITY_PROMPT, load_voice_examples, voice_examples_prompt
 from config.config import Config
 from collections import deque
@@ -40,6 +42,15 @@ from src.tools.courses import (
 )
 from src.pdf_notes import NOTES_MAX_TOKENS
 from src.course_need import COURSE_CHECK_TOOL, CourseNeed, check_prompt, check_tool, parse_check
+from src.conversation_link import (
+    LINK_CHECK_TOOL,
+    LIVE_WINDOW,
+    ConversationLink,
+    link_prompt,
+    link_question,
+    link_tool,
+    parse_link,
+)
 from src.study import DETAIL_PROMPT, REWRITE_PROMPT, StudyRequest, study_prompt, study_request, wants_detail
 
 logger = logging.getLogger(__name__)
@@ -63,8 +74,7 @@ def _echo_tool_call(call) -> dict:
     return echoed
 
 
-# The friend group lives in Bangkok, so "now" is told in its time
-_BANGKOK = timezone(timedelta(hours=7))
+_BANGKOK = BANGKOK
 
 
 def _now() -> datetime:
@@ -84,6 +94,7 @@ CONTEXT FORMAT:
 - the very last line, [Name]: "...", is the one message u are answering. everything above it is background for that.
 - >>> prefix = the freshest messages in the channel, the live conversation, top priority
 - [N msgs ago] = older same-day messages, only reference if directly relevant, secondary priority
+- [Nh ago, LOW priority] = over an hour old, so that was a different conversation. do not answer it, continue it or joke about it unless their new message clearly refers back.
 - [yesterday / N days ago, LOW priority] = old history, almost never bring it up unless THEY do
 - "Name (replying to X): message" means that message was an answer to X. "replying to YOU" means it was said to u.
 - "(other messages in between left out)" is a gap in the history. u did not see what was said there.
@@ -92,6 +103,8 @@ CONTEXT FORMAT:
 
 STAY ON TOPIC:
 - answer what they just said and nothing else. dont drag in an older message, an old insult or an old joke out of nowhere.
+- after more than an hour of silence the channel is on a new topic. answer the new message on its own, even if the only history is an old joke: never continue that old bit or treat it as what they are asking about.
+- watch for a stale hint: a short, plain question is a straight question, not a follow-up to whatever was said hours ago.
 - WHAT YOU KNOW ABOUT THEM is background. use a fact only when it directly matters to what they just asked. never recite those facts, never throw them in their face, never tack a roast or a lecture about them onto the end of an answer.
 - a normal question or request gets a straight answer. roasting is only for when THEY come at u in the message u are answering.
 
@@ -291,6 +304,67 @@ def repair_links(text: str, sources: List[str]) -> str:
             logger.warning(f"The model changed a link, put back {closest[0][:120]}")
         return closest[0] if closest else address
     return _ADDRESS.sub(exact, text)
+
+
+# A reply with no tools cannot check anything, and its knowledge is old
+_NO_LOOKUP_PROMPT = """
+- in this reply u cant search the web or open links. for anything that changes (news, who won something, releases, versions, prices, the latest or current anything) say u might be out of date instead of stating it as fact. never write a Source line.
+"""
+
+_SOURCE_LINE = re.compile(r'^\s*-#\s*sources?:', re.IGNORECASE)
+
+
+def _same_link(address: str) -> str:
+    return urllib.parse.unquote(address).rstrip('/')
+
+
+def drop_unseen_sources(text: str, found: List[str], given: Sequence[str] = ()) -> str:
+    """
+    Remove a "-# Source:" line that points at nothing the bot saw. found is what its tools
+    returned (search results, pages, course passages) and given is what people sent it. A
+    source line needs every one of its links in either. A line with no link at all stays only
+    when something was looked up. Lines inside a code block are left as they are. With no tools the model still wrote a source for a page it never
+    opened, so this is checked on the text, not asked of the model.
+    """
+    lines = text.split("\n")
+    if not any(_SOURCE_LINE.match(line) for line in lines):
+        return text
+    found_links = {_same_link(address) for block in found for address in _ADDRESS.findall(block)}
+    known = found_links | {_same_link(address) for block in given for address in _ADDRESS.findall(block or "")}
+    looked_up = any(block.strip() for block in found)
+    kept = []
+    in_code = False
+    for line in lines:
+        if line.lstrip().startswith("```"):
+            in_code = not in_code
+        elif not in_code and _SOURCE_LINE.match(line):
+            links = _ADDRESS.findall(line)
+            # Every link on the line has to be one it saw. A line with no link needs a lookup behind it
+            seen = all(_same_link(address) in known for address in links) if links else looked_up
+            if not seen:
+                logger.warning(f"Removed a source line for something the bot never saw: {line[:160]}")
+                continue
+        kept.append(line)
+    return "\n".join(kept).rstrip()
+
+
+# Where the channel chat starts in the context the message handler builds
+_CHANNEL_CHAT_MARKERS = ("\n(THE CHANNEL HAS BEEN QUIET", "\nCONVERSATION HISTORY:")
+
+
+def without_channel_chat(history: str) -> str:
+    """
+    The context without the channel chat, for a message the check found unrelated to it. Who
+    they are and what the bot knows about them stay: only the old discussion goes.
+    """
+    cut = min((history.find(marker) for marker in _CHANNEL_CHAT_MARKERS if marker in history), default=-1)
+    return history[:cut].rstrip() if cut >= 0 else ""
+
+
+def seen_material(request, material: List[str]) -> List[str]:
+    """Everything the tools put in front of the model: search results, pages, saved material and course links."""
+    courses = [f"{name} {link}" for name, link in (request.course_sources or {}).values()]
+    return list(request.findings) + list(material) + courses
 
 
 def _text_length(text: str) -> int:
@@ -713,6 +787,37 @@ class AIResponseHandler:
         )
         return (message.content if isinstance(message.content, str) else ""), counter.cost
 
+    async def _conversation_link(self, query: str, conversation_history: str, gap: str,
+                                 request: Turn) -> Optional[ConversationLink]:
+        """
+        One forced tool call that reads the new message next to the earlier chat and says
+        whether it continues it. None means the check failed, so the history is kept.
+        """
+        messages = [
+            {"role": "system", "content": link_prompt(gap)},
+            {"role": "user", "content": link_question(conversation_history, query)},
+        ]
+        try:
+            message = await self._chat(
+                messages, Config.AI_COURSE_CHECK_MAX_TOKENS, [link_tool()],
+                Config.AI_COURSE_CHECK_REASONING_EFFORT, LINK_CHECK_TOOL, request,
+                model=Config.AI_COURSE_CHECK_DEPLOYMENT or None,
+            )
+        except (BudgetExceededError, ReplyLimitError):
+            raise
+        except Exception as e:
+            logger.warning(f"Conversation link check failed, keeping the history: {e!r}")
+            return None
+        calls = message.tool_calls if isinstance(message.tool_calls, list) else []
+        for call in calls:
+            if call.function.name == LINK_CHECK_TOOL:
+                return parse_link(call.function.arguments)
+        content = message.content if isinstance(message.content, str) else ""
+        if content.strip().startswith("{"):
+            return parse_link(content)
+        logger.warning("Conversation link check returned no decision")
+        return None
+
     async def _course_need(self, query: str, conversation_history: str, attached_context: str,
                            codes: List[str], in_course: bool,
                            request: Turn) -> Optional[CourseNeed]:
@@ -815,7 +920,8 @@ class AIResponseHandler:
                              web_gate: Optional[Callable[[], None]] = None,
                              emoji_prompt: str = "",
                              course_gate: Optional[Callable[[], None]] = None,
-                             session_key: Optional[str] = None) -> Reply:
+                             session_key: Optional[str] = None,
+                             history_age: Optional[timedelta] = None) -> Reply:
         """Generate a reply behind one deadline and one share of the bot's model capacity.
 
         The request object is made before waiting, so a busy or timed-out reply can
@@ -836,7 +942,8 @@ class AIResponseHandler:
                 async with asyncio.timeout(timeout):
                     return await self._generate_reply(
                         request, query, conversation_history, username, user_id,
-                        allow_files=allow_files, emoji_prompt=emoji_prompt, session_key=session_key)
+                        allow_files=allow_files, emoji_prompt=emoji_prompt, session_key=session_key,
+                        history_age=history_age)
         except RequestBusy as e:
             logger.warning(f"Reply for {username} turned away: {e}")
             return await self._finish(
@@ -853,7 +960,8 @@ class AIResponseHandler:
     async def _generate_reply(self, request: Turn, query: str, conversation_history: str,  # pyright: ignore[reportGeneralTypeIssues]
                               username: str, user_id: Optional[str],
                               allow_files: bool, emoji_prompt: str,
-                              session_key: Optional[str]) -> Reply:
+                              session_key: Optional[str],
+                              history_age: Optional[timedelta] = None) -> Reply:
         """The reply itself. Every return path goes through _finish so it is logged."""
         attached_context = request.attached
         images = request.images
@@ -873,6 +981,16 @@ class AIResponseHandler:
 
         try:
             clean_query = query[1:].strip() if query.startswith('/') and len(query) > 1 else query
+
+            # After more than an hour of silence, one judgment call decides whether the earlier
+            # chat still belongs to this message. If it is a separate topic, it never reaches the prompt.
+            if conversation_history and history_age is not None and history_age > LIVE_WINDOW:
+                hours = max(1, int(history_age.total_seconds() // 3600))
+                gap = "about an hour" if hours == 1 else f"{hours} hours"
+                link = await self._conversation_link(clean_query, conversation_history, gap, request)
+                if link is not None and not link.related:
+                    conversation_history = without_channel_chat(conversation_history)
+                    request.history = conversation_history
 
             # Build user turn: context block (if any), loaded material (if any), then the actual message.
             # Behavioral rules live in the system prompt only, not repeated here.
@@ -1009,7 +1127,7 @@ class AIResponseHandler:
             messages: List[dict] = [
                 {"role": "system",
                  "content": _SYSTEM_PROMPT + self_setup_prompt(self.deployment)
-                            + "".join(tool.prompt() for tool in offered)
+                            + ("".join(tool.prompt() for tool in offered) if offered else _NO_LOOKUP_PROMPT)
                             + accuracy
                             + (NO_FLAG_PROMPT if scope and not in_course else "") + extra_rules + emoji_prompt},
             ]
@@ -1101,7 +1219,11 @@ class AIResponseHandler:
                     if in_course:
                         # The model names passages by number. Their names, dates and links are written here.
                         shown = render_sources(shown, request.course_sources)
-                    reply = Reply(repair_links(shown, request.findings), files)
+                    shown = repair_links(shown, request.findings)
+                    # A source the bot never saw is made up, whatever the model says
+                    found = seen_material(request, material)
+                    shown = drop_unseen_sources(shown, found, given=[query, request.attached, request.history])
+                    reply = Reply(shown, files)
                 # An answer from the web or the course material goes stale, so it is looked up again next time
                 if not files and not study and not request.lookups and not request.course_searches and not in_course:
                     self.response_cache[cache_key] = reply.text

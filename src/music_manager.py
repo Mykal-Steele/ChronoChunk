@@ -4,11 +4,13 @@ import aiohttp
 import discord
 import logging
 import re
+import shutil
 import os
 import random
 import time
 from typing import Any, Dict, List, Optional, Tuple
 import yt_dlp
+from yt_dlp.utils import DownloadError
 
 from config.config import Config
 from src import usage_context
@@ -86,6 +88,10 @@ def _has_listener(voice, channel=None) -> bool:
     """True when a person, not a bot, is in the bot's voice channel (or in channel, when given)."""
     channel = channel if channel is not None else getattr(voice, "channel", None)
     return any(not getattr(m, "bot", False) for m in (getattr(channel, "members", None) or []))
+
+
+class NoStreamError(ValueError):
+    """yt-dlp found the video but no stream for it. The message stays the one users have seen."""
 
 
 class GuildMusicState:
@@ -257,65 +263,72 @@ class MusicManager:
                 search_url = f"ytsearch1:{url}"
             
         try:
-            # Configure yt-dlp for reliable streaming
-            options = {
-                'format': 'bestaudio/best',
-                'noplaylist': True,
-                'nocheckcertificate': False,
-                'ignoreerrors': False,
-                'logtostderr': False,
-                'quiet': True,
-                'no_warnings': True,
-                'default_search': 'auto',
-                'source_address': '0.0.0.0',  # IPv6 addresses cause issues sometimes
-                'extract_flat': False,  # Full extraction
-                'skip_download': True,  # We only need the info
-                'retries': 2,           # Fail fast; the request itself has a deadline
-                'socket_timeout': 15,   # Do not hold a guild slot for half a minute
-                # A playlist link plays its first song. Without this yt-dlp looks up every song in it first
-                'playlist_items': '1',
-            }
-            
-            with yt_dlp.YoutubeDL(options) as ydl:  # pyright: ignore[reportArgumentType]
-                logger.info(f"Extracting info with yt-dlp for: {search_url}")
-                info: Any = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: ydl.extract_info(search_url, download=False)
-                )
-                
-                # Handle search results
-                if 'entries' in info:
-                    if not info['entries']:
-                        raise ValueError("No results found")
-                    info = info['entries'][0]  # Get the first result
-                
-                if not info:
-                    raise ValueError("Could not extract info from URL")
-                
-                # Get title and duration
-                title = info.get('title', 'Unknown Title')
-                duration = info.get('duration', 0)
-                
-                # Get direct audio URL - simplified to use the direct url
-                audio_url = info.get('url')
-                if not audio_url:
-                    # Fallback to first format with a URL
-                    for format_item in info.get('formats', []):
-                        if 'url' in format_item:
-                            audio_url = format_item['url']
-                            break
-                
-                if not audio_url:
-                    raise ValueError("Could not extract a valid audio URL")
-                
-                logger.info(f"Successfully extracted info for: {title} (duration: {duration}s)")
-                page_url = info.get('webpage_url') or (search_url if search_url.startswith("http") else "")
-                return audio_url, title, duration, page_url
-                
+            try:
+                return await self._lookup(search_url, js_runtimes={})
+            except (DownloadError, NoStreamError) as e:
+                # YouTube can demand its JavaScript challenges be solved before it hands out streams.
+                # deno solves them, but takes about 3 s and 320 MB, so it only runs when needed.
+                if not shutil.which("deno"):
+                    raise
+                logger.warning(f"Lookup without JavaScript failed, trying again with deno: {e!r}")
+                return await self._lookup(search_url, js_runtimes={"deno": {}})
         except Exception as e:
-            logger.error(f"Error extracting info with yt-dlp: {str(e)}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error extracting info with yt-dlp: {e!r}", exc_info=True)
             raise
+
+    async def _lookup(self, search_url: str, js_runtimes: Dict[str, Any]) -> Tuple[str, str, int, str]:
+        """One yt-dlp lookup: stream URL, title, duration and watch page URL."""
+        options = {
+            'format': 'bestaudio/best',
+            'noplaylist': True,
+            'nocheckcertificate': False,
+            'ignoreerrors': False,
+            'logtostderr': False,
+            'quiet': True,
+            'no_warnings': True,
+            'default_search': 'auto',
+            'source_address': '0.0.0.0',  # IPv6 addresses cause issues sometimes
+            'extract_flat': False,  # Full extraction
+            'skip_download': True,  # We only need the info
+            'retries': 2,           # Fail fast; the request itself has a deadline
+            'socket_timeout': 15,   # Do not hold a guild slot for half a minute
+            # A playlist link plays its first song. Without this yt-dlp looks up every song in it first
+            'playlist_items': '1',
+            # Empty means no JavaScript runtime. yt-dlp's default would start deno on every lookup
+            'js_runtimes': js_runtimes,
+        }
+        with yt_dlp.YoutubeDL(options) as ydl:  # pyright: ignore[reportArgumentType]
+            logger.info(f"Extracting info with yt-dlp for: {search_url} (js: {sorted(js_runtimes) or 'none'})")
+            info: Any = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: ydl.extract_info(search_url, download=False)
+            )
+
+        # Handle search results
+        if 'entries' in info:
+            if not info['entries']:
+                raise ValueError("No results found")
+            info = info['entries'][0]  # Get the first result
+
+        if not info:
+            raise ValueError("Could not extract info from URL")
+
+        title = info.get('title', 'Unknown Title')
+        duration = info.get('duration', 0)
+
+        audio_url = info.get('url')
+        if not audio_url:
+            # Fallback to first format with a URL
+            for format_item in info.get('formats', []):
+                if 'url' in format_item:
+                    audio_url = format_item['url']
+                    break
+
+        if not audio_url:
+            raise NoStreamError("Could not extract a valid audio URL")
+
+        logger.info(f"Successfully extracted info for: {title} (duration: {duration}s)")
+        page_url = info.get('webpage_url') or (search_url if search_url.startswith("http") else "")
+        return audio_url, title, duration, page_url
     
     async def play(self, guild_id: int, url: str, requested_by: str,
                    requested_by_id: Optional[str] = None) -> Tuple[bool, str]:

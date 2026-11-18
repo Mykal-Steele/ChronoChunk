@@ -6,6 +6,7 @@ import io
 import logging
 import os
 import re
+from src.clock import BANGKOK, as_time, day_header
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable, List, Optional, Tuple
@@ -459,7 +460,14 @@ async def read_channel_messages(messages: list) -> MessageContext:
     images = []
     file_blocks = []
     pdf_pictures = []
+    count = 0
+    day = None
     for message in messages:
+        # Each day of messages gets a header, so old news is not read as if it happened now
+        sent = as_time(getattr(message, "created_at", None))
+        if sent is not None and sent.astimezone(BANGKOK).date() != day:
+            day = sent.astimezone(BANGKOK).date()
+            lines.append(day_header(sent))
         labels = {}
         for attachment in _items(message.attachments):
             if id(attachment) in pictures:
@@ -473,11 +481,12 @@ async def read_channel_messages(messages: list) -> MessageContext:
         text = history_text(message, labels)
         if text:
             lines.append(f"{message.author.display_name}: {text}")
+            count += 1
 
-    if not lines:
+    if not count:
         return MessageContext()
     block = (
-        f"=== LAST {len(lines)} MESSAGES IN THIS CHANNEL, OLDEST FIRST ===\n"
+        f"=== LAST {count} MESSAGES IN THIS CHANNEL, OLDEST FIRST ===\n"
         + "\n".join(lines)
         + "\n=== END OF CHANNEL MESSAGES ==="
     )
