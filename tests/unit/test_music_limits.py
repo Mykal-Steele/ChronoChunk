@@ -76,3 +76,28 @@ async def test_a_rejected_music_request_does_not_spend_the_guild_budget():
 
     assert await manager._music_allowed(interaction) is False
     limiter.check_rate_limit.assert_called_once_with("42", "music")
+
+
+# ── how generous the limits are (raised 2026-11-18, the old ones were too tight) ──
+
+def test_music_limits_default_to_the_raised_numbers():
+    from config.config import Config
+    assert Config.RATE_LIMITS["music"] == (15, 600)
+    assert Config.RATE_LIMITS["music_guild"] == (40, 600)
+    assert Config.RATE_LIMITS["music_control"] == (60, 600)
+    assert Config.MUSIC_MAX_QUEUE_PER_GUILD == 25
+    assert Config.MUSIC_MAX_SONGS_PER_USER == 8
+
+
+def test_every_music_limit_can_be_changed_from_env():
+    import json
+    import os
+    import subprocess
+    import sys
+    env = {**os.environ, "MUSIC_REQUESTS_PER_USER": "7", "MUSIC_REQUESTS_PER_GUILD": "70",
+           "MUSIC_CONTROLS_PER_USER": "77", "MUSIC_MAX_QUEUE_PER_GUILD": "33", "MUSIC_MAX_SONGS_PER_USER": "11"}
+    code = ("import json; from config.config import Config as C; print(json.dumps([C.RATE_LIMITS['music'], "
+            "C.RATE_LIMITS['music_guild'], C.RATE_LIMITS['music_control'], C.MUSIC_MAX_QUEUE_PER_GUILD, "
+            "C.MUSIC_MAX_SONGS_PER_USER]))")
+    out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
+    assert json.loads(out.stdout.strip().splitlines()[-1]) == [[7, 600], [70, 600], [77, 600], 33, 11]

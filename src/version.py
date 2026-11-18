@@ -1,3 +1,3 @@
 """The bot's version. Change it here and add a section to CHANGELOG.md in the same commit."""
 
-__version__ = "3.22.4"
+__version__ = "3.23.0"

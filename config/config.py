@@ -41,8 +41,8 @@ class Config:
     MAX_GAME_ATTEMPTS = 10  # Maximum number of attempts in the guessing game
 
     # Music queue ceilings, so one person or one server cannot fill the bot's memory
-    MUSIC_MAX_QUEUE_PER_GUILD = int(os.getenv("MUSIC_MAX_QUEUE_PER_GUILD", 10))
-    MUSIC_MAX_SONGS_PER_USER = int(os.getenv("MUSIC_MAX_SONGS_PER_USER", 3))
+    MUSIC_MAX_QUEUE_PER_GUILD = int(os.getenv("MUSIC_MAX_QUEUE_PER_GUILD", 25))
+    MUSIC_MAX_SONGS_PER_USER = int(os.getenv("MUSIC_MAX_SONGS_PER_USER", 8))
     
     # Paths
     BASE_DIR = Path(__file__).parent.parent
@@ -181,9 +181,10 @@ class Config:
         "pdf": (30, 86400),    # 30 PDFs described page by page per day. One already described is free.
         "web": (20, 86400),    # 20 web searches or opened links per day
         "course": (120, 86400),# 120 searches of the course material per day
-        "music": (5, 600),     # 5 song requests per 10 minutes
-        "music_guild": (10, 600),  # 10 song requests per server per 10 minutes
-        "music_control": (20, 600),  # 20 playback controls per 10 minutes
+        # Music, per 10 minutes. Raised on 2026-11-18 from 5, 10 and 20, which were too tight.
+        "music": (int(os.getenv("MUSIC_REQUESTS_PER_USER", 15)), 600),
+        "music_guild": (int(os.getenv("MUSIC_REQUESTS_PER_GUILD", 40)), 600),
+        "music_control": (int(os.getenv("MUSIC_CONTROLS_PER_USER", 60)), 600),
     }
     
     # Dynamic settings like directories are initialized in a method rather than duplicated

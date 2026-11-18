@@ -337,7 +337,7 @@ The bot plays music in the voice channel you are in. A Spotify link is looked up
 - `/volume <0-100>` - Set the volume
 - `/relate` - Play a song related to the current one (YouTube recommendations)
 
-`/skip`, `/pause`, `/resume`, `/stop` and `/volume` need the Manage Server permission. A server may queue 10 songs, and one person may have 3 in the queue. Song requests and controls are rate limited.
+`/skip`, `/pause`, `/resume`, `/stop` and `/volume` need the Manage Server permission. A server may queue 25 songs, and one person may have 8 in the queue. One person may request 15 songs and use 60 controls per 10 minutes, and a server 40 songs. `MUSIC_MAX_QUEUE_PER_GUILD`, `MUSIC_MAX_SONGS_PER_USER`, `MUSIC_REQUESTS_PER_USER`, `MUSIC_REQUESTS_PER_GUILD` and `MUSIC_CONTROLS_PER_USER` in `.env` change them.
 
 Examples:
 
