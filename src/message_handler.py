@@ -4,6 +4,7 @@ from collections import Counter, deque
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from config.config import Config
+from src.conversation_link import LIVE_WINDOW
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -97,6 +98,20 @@ class MessageHandler:
             sent = sent.astimezone()  # naive timestamps are local time
         return max(datetime.now(timezone.utc) - sent, timedelta(0))
 
+    @staticmethod
+    def _hours_ago(age: timedelta) -> str:
+        """A whole number of hours, for a message older than the live window."""
+        return f"{max(1, int(age.total_seconds() // 3600))}h ago"
+
+    def latest_message_age(self, channel_id: str, current_id=None) -> Optional[timedelta]:
+        """How long before now the newest other message in the channel was sent. None when there is none."""
+        current = str(current_id) if current_id is not None else ""
+        for msg in reversed(self.last_channel_messages.get(channel_id, [])):
+            if current and msg.get("message_id") == current:
+                continue
+            return self._message_age(msg.get("timestamp"))
+        return None
+
     # Bot messages that must never appear in AI context
     _EXCLUDED_BOT_PATTERNS = (
         # game/command responses
@@ -154,8 +169,9 @@ class MessageHandler:
         "doubling down",
     })
 
-    # Only messages newer than this can be marked as the live conversation
-    _FRESH_WINDOW = timedelta(hours=2)
+    # Only messages newer than this can be marked as the live conversation. Past an
+    # hour of silence the channel is on a new topic until their message says otherwise.
+    _FRESH_WINDOW = LIVE_WINDOW
 
     def _is_excluded_bot_message(self, content: str) -> bool:
         """True for a bot message that is a game, command or error line and should not feed back into AI context."""
@@ -300,6 +316,13 @@ class MessageHandler:
                 context_parts.extend(past)
 
         if shown:
+            last_age = self._message_age(shown[-1].get("timestamp"))
+            if last_age > self._FRESH_WINDOW:
+                context_parts.append(
+                    f"\n(THE CHANNEL HAS BEEN QUIET: the last message before theirs was {self._hours_ago(last_age)}. "
+                    "treat it as an earlier conversation. their new message starts a new topic unless it clearly "
+                    "refers back; do not continue an old joke or topic on ur own.)")
+
             context_parts.append("\nCONVERSATION HISTORY:")
             total = len(messages)
             previous = None
@@ -317,12 +340,16 @@ class MessageHandler:
                     day_label = "yesterday" if age.days == 1 else f"{age.days} days ago"
                     prefix = ""
                     age_tag = f"[{day_label}, LOW priority] "
-                elif position_from_end <= 5 and age <= self._FRESH_WINDOW:
+                elif age > self._FRESH_WINDOW:
+                    # Long enough that this is a different conversation, not a live one
+                    prefix = ""
+                    age_tag = f"[{self._hours_ago(age)}, LOW priority] "
+                elif position_from_end <= 5:
                     prefix = ">>> "
                     age_tag = ""
                 else:
                     prefix = ""
-                    age_tag = f"[{position_from_end} msgs ago] "
+                    age_tag = f"[{position_from_end} msg{'s' if position_from_end != 1 else ''} ago] "
 
                 speaker = "YOU (ChronoChunk)" if msg.get("is_bot") else msg["author_name"]
                 if msg.get("reply_to"):
@@ -332,21 +359,14 @@ class MessageHandler:
                     content = _cut(content, OLDER_MESSAGE_CHARS)
                 context_parts.append(f"{prefix}{age_tag}{speaker}: {content}")
 
-        # Short-reply hint: a message of a few words is about what the bot said last
+        # A short message right after the bot spoke is most likely about what it just said.
         bot_msgs = [m for m in shown[-6:] if m.get("is_bot")]
         last_said = query or next((m["content"] for m in reversed(shown[-6:]) if not m.get("is_bot")), "")
-        if bot_msgs and last_said and len(last_said.lstrip("/").split()) <= 4:
-            stopwords = {
-                'like', 'dont', 'just', 'with', 'that', 'this', 'have', 'about',
-                'what', 'when', 'where', 'from', 'your', 'been', 'would', 'could',
-                'since', 'them', 'they', 'than', 'then', 'some', 'into', 'after',
-            }
-            topic_words = []
-            for word in re.findall(r'\b[a-z]{4,}\b', bot_msgs[-1]["content"].lower()):
-                if word not in stopwords and word not in topic_words:
-                    topic_words.append(word)
-            if topic_words:
-                context_parts.append(f"\n(short reply context hint — likely topic: {', '.join(topic_words[:5])})")
+        last_bot_is_fresh = bool(bot_msgs) and \
+            self._message_age(bot_msgs[-1].get("timestamp")) <= self._FRESH_WINDOW
+        if last_bot_is_fresh and last_said and len(last_said.lstrip("/").split()) <= 4:
+            context_parts.append(
+                "\n(short reply: they are most likely answering or reacting to what u just said)")
 
         # Wording the bot has leaned on lately. It keeps the name the system prompt knows it by.
         banned = self._get_banned_phrases(channel_id)

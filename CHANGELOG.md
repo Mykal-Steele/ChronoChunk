@@ -10,6 +10,12 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.24.2 (2026-11-18)
+
+### Fixed
+
+- After an hour of silence the bot no longer picks an old joke or topic back up. When the last message before theirs is over an hour old, one short check on the chat model reads both and decides whether the new message continues the old chat. If it does not, the old chat is left out of the answer. Messages over an hour old are marked as an earlier conversation, and the short-reply hint only follows a bot message from the last hour. In a test, "hi" five hours after a roast got "still thinking about that failed compile?" before and a plain hello after, while real follow-ups kept their context.
+
 ## 3.24.1 (2026-11-18)
 
 ### Fixed

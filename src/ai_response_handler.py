@@ -40,6 +40,15 @@ from src.tools.courses import (
 )
 from src.pdf_notes import NOTES_MAX_TOKENS
 from src.course_need import COURSE_CHECK_TOOL, CourseNeed, check_prompt, check_tool, parse_check
+from src.conversation_link import (
+    LINK_CHECK_TOOL,
+    LIVE_WINDOW,
+    ConversationLink,
+    link_prompt,
+    link_question,
+    link_tool,
+    parse_link,
+)
 from src.study import DETAIL_PROMPT, REWRITE_PROMPT, StudyRequest, study_prompt, study_request, wants_detail
 
 logger = logging.getLogger(__name__)
@@ -84,6 +93,7 @@ CONTEXT FORMAT:
 - the very last line, [Name]: "...", is the one message u are answering. everything above it is background for that.
 - >>> prefix = the freshest messages in the channel, the live conversation, top priority
 - [N msgs ago] = older same-day messages, only reference if directly relevant, secondary priority
+- [Nh ago, LOW priority] = over an hour old, so that was a different conversation. do not answer it, continue it or joke about it unless their new message clearly refers back.
 - [yesterday / N days ago, LOW priority] = old history, almost never bring it up unless THEY do
 - "Name (replying to X): message" means that message was an answer to X. "replying to YOU" means it was said to u.
 - "(other messages in between left out)" is a gap in the history. u did not see what was said there.
@@ -92,6 +102,8 @@ CONTEXT FORMAT:
 
 STAY ON TOPIC:
 - answer what they just said and nothing else. dont drag in an older message, an old insult or an old joke out of nowhere.
+- after more than an hour of silence the channel is on a new topic. answer the new message on its own, even if the only history is an old joke: never continue that old bit or treat it as what they are asking about.
+- watch for a stale hint: a short, plain question is a straight question, not a follow-up to whatever was said hours ago.
 - WHAT YOU KNOW ABOUT THEM is background. use a fact only when it directly matters to what they just asked. never recite those facts, never throw them in their face, never tack a roast or a lecture about them onto the end of an answer.
 - a normal question or request gets a straight answer. roasting is only for when THEY come at u in the message u are answering.
 
@@ -713,6 +725,37 @@ class AIResponseHandler:
         )
         return (message.content if isinstance(message.content, str) else ""), counter.cost
 
+    async def _conversation_link(self, query: str, conversation_history: str, gap: str,
+                                 request: Turn) -> Optional[ConversationLink]:
+        """
+        One forced tool call that reads the new message next to the earlier chat and says
+        whether it continues it. None means the check failed, so the history is kept.
+        """
+        messages = [
+            {"role": "system", "content": link_prompt(gap)},
+            {"role": "user", "content": link_question(conversation_history, query)},
+        ]
+        try:
+            message = await self._chat(
+                messages, Config.AI_COURSE_CHECK_MAX_TOKENS, [link_tool()],
+                Config.AI_COURSE_CHECK_REASONING_EFFORT, LINK_CHECK_TOOL, request,
+                model=Config.AI_COURSE_CHECK_DEPLOYMENT or None,
+            )
+        except (BudgetExceededError, ReplyLimitError):
+            raise
+        except Exception as e:
+            logger.warning(f"Conversation link check failed, keeping the history: {e!r}")
+            return None
+        calls = message.tool_calls if isinstance(message.tool_calls, list) else []
+        for call in calls:
+            if call.function.name == LINK_CHECK_TOOL:
+                return parse_link(call.function.arguments)
+        content = message.content if isinstance(message.content, str) else ""
+        if content.strip().startswith("{"):
+            return parse_link(content)
+        logger.warning("Conversation link check returned no decision")
+        return None
+
     async def _course_need(self, query: str, conversation_history: str, attached_context: str,
                            codes: List[str], in_course: bool,
                            request: Turn) -> Optional[CourseNeed]:
@@ -815,7 +858,8 @@ class AIResponseHandler:
                              web_gate: Optional[Callable[[], None]] = None,
                              emoji_prompt: str = "",
                              course_gate: Optional[Callable[[], None]] = None,
-                             session_key: Optional[str] = None) -> Reply:
+                             session_key: Optional[str] = None,
+                             history_age: Optional[timedelta] = None) -> Reply:
         """Generate a reply behind one deadline and one share of the bot's model capacity.
 
         The request object is made before waiting, so a busy or timed-out reply can
@@ -836,7 +880,8 @@ class AIResponseHandler:
                 async with asyncio.timeout(timeout):
                     return await self._generate_reply(
                         request, query, conversation_history, username, user_id,
-                        allow_files=allow_files, emoji_prompt=emoji_prompt, session_key=session_key)
+                        allow_files=allow_files, emoji_prompt=emoji_prompt, session_key=session_key,
+                        history_age=history_age)
         except RequestBusy as e:
             logger.warning(f"Reply for {username} turned away: {e}")
             return await self._finish(
@@ -853,7 +898,8 @@ class AIResponseHandler:
     async def _generate_reply(self, request: Turn, query: str, conversation_history: str,  # pyright: ignore[reportGeneralTypeIssues]
                               username: str, user_id: Optional[str],
                               allow_files: bool, emoji_prompt: str,
-                              session_key: Optional[str]) -> Reply:
+                              session_key: Optional[str],
+                              history_age: Optional[timedelta] = None) -> Reply:
         """The reply itself. Every return path goes through _finish so it is logged."""
         attached_context = request.attached
         images = request.images
@@ -873,6 +919,16 @@ class AIResponseHandler:
 
         try:
             clean_query = query[1:].strip() if query.startswith('/') and len(query) > 1 else query
+
+            # After more than an hour of silence, one judgment call decides whether the earlier
+            # chat still belongs to this message. If it is a separate topic, it never reaches the prompt.
+            if conversation_history and history_age is not None and history_age > LIVE_WINDOW:
+                hours = max(1, int(history_age.total_seconds() // 3600))
+                gap = "about an hour" if hours == 1 else f"{hours} hours"
+                link = await self._conversation_link(clean_query, conversation_history, gap, request)
+                if link is not None and not link.related:
+                    conversation_history = ""
+                    request.history = ""
 
             # Build user turn: context block (if any), loaded material (if any), then the actual message.
             # Behavioral rules live in the system prompt only, not repeated here.

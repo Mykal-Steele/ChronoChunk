@@ -82,7 +82,7 @@ def test_build_context_short_followup_injects_hint(handler):
     handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "why", is_bot=False)
     result = handler.build_conversation_context(CHANNEL_ID, {})
     # Short follow-up (≤4 words) should inject the hint with topic words
-    assert "short reply context hint" in result and "python" in result
+    assert "short reply:" in result
 
 
 # ── history snapshots and message age ─────────────────────────────────────────
@@ -123,7 +123,22 @@ def test_build_context_same_day_but_hours_old_is_secondary(handler):
     five_hours_ago = datetime.now(timezone.utc) - timedelta(hours=5)
     handler.update_channel_history(CHANNEL_ID, USER_ID, "Alice", "earlier today", is_bot=False, timestamp=five_hours_ago)
     result = handler.build_conversation_context(CHANNEL_ID, {})
-    assert "[1 msgs ago] Alice: earlier today" in result
+    assert "[5h ago, LOW priority] Alice: earlier today" in result
+
+
+def test_a_quiet_channel_says_the_old_messages_are_an_earlier_conversation(handler):
+    _say(handler, "Alex", "an old joke", minutes_ago=5 * 60)
+    context = handler.build_conversation_context(CHANNEL_ID, {"user_id": "alex", "username": "Alex"})
+    assert "THE CHANNEL HAS BEEN QUIET" in context and "5h ago" in context
+
+
+def test_an_old_bot_reply_does_not_drive_a_short_new_message(handler):
+    _say(handler, "Alex", "is go better than google", minutes_ago=5 * 60 + 18)
+    _say(handler, "x", "dont go is Go with a breakup arc", bot=True, minutes_ago=5 * 60)
+    context = handler.build_conversation_context(
+        CHANNEL_ID, {"user_id": "alex", "username": "Alex"}, query="/what is your version")
+    assert "short reply:" not in context
+    assert "THE CHANNEL HAS BEEN QUIET" in context
 
 
 def test_message_age_accepts_old_style_naive_timestamps(handler):
@@ -132,6 +147,17 @@ def test_message_age_accepts_old_style_naive_timestamps(handler):
     assert handler._message_age(naive).days == 2
     assert handler._message_age(None).days == 0
     assert handler._message_age("not a date").days == 0
+
+
+def test_latest_message_age_skips_the_one_being_answered(handler):
+    _say(handler, "Alex", "old line", minutes_ago=180, message_id=1)
+    _say(handler, "Alex", "the new question", message_id=2)
+    age = handler.latest_message_age(CHANNEL_ID, 2)
+    assert age is not None and 179 <= age.total_seconds() / 60 <= 181
+
+
+def test_latest_message_age_is_none_for_an_empty_channel(handler):
+    assert handler.latest_message_age(CHANNEL_ID) is None
 
 
 # ── how much of the channel one answer reads ──────────────────────────────────
@@ -270,7 +296,7 @@ def test_a_short_follow_up_is_read_from_the_message_being_answered(handler):
     _say(handler, "Alex", "what is python")
     _say(handler, "x", "python is a programming language", bot=True)
     context = handler.build_conversation_context(CHANNEL_ID, {}, query="/why")
-    assert "short reply context hint — likely topic: python, programming, language" in context
+    assert "short reply:" in context
 
 
 # ── worn-out phrases ──────────────────────────────────────────────────────────
