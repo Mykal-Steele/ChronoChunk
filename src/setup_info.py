@@ -247,6 +247,20 @@ def _azure_line() -> str:
     return "azure vm, " + ", ".join(parts)
 
 
+def _music_line() -> str:
+    """What the bot can and cannot do with music, with the limits it really has."""
+    per_user = Config.RATE_LIMITS["music"][0]
+    per_guild = Config.RATE_LIMITS["music_guild"][0]
+    return (
+        "music only works through slash commands, never through chat: /music <link or search> plays or queues a song, "
+        "/relate adds one like the song playing, /queue shows the queue, /skip /pause /resume /volume /stop control it "
+        "(those need Manage Server). a server may queue "
+        f"{Config.MUSIC_MAX_QUEUE_PER_GUILD} songs, {Config.MUSIC_MAX_SONGS_PER_USER} per person, and per 10 minutes "
+        f"one person may request {per_user} songs and a server {per_guild}. u cant play, queue, skip or pick songs "
+        "urself. if they ask u to, tell them the command. never say u queued, played or added anything"
+    )
+
+
 def self_prompt(chat_model: str) -> str:
     """
     What the bot knows about itself in chat. It is the same public kind of detail as /setup:
@@ -275,6 +289,7 @@ def self_prompt(chat_model: str) -> str:
         *([f"ur recent updates, newest first (this is what happened to u lately: moves, outages, resets. "
            f"use it when someone asks where u were, what changed or why u forgot them):\n{changes}"] if changes else []),
         f"web search is {'on' if Config.TAVILY_API_KEY else 'off'}. course material: {_courses()}",
+        _music_line(),
         "if someone asks what u are, say it straight in ur voice: a discord bot. dont deny it and dont turn into a help desk",
         "only bring this up when someone asks about u, ur setup, where u run or what model u are. never recite it unprompted",
         "never reveal keys, tokens, database contents, file paths, internal addresses, account or server ids, or other people's data. "

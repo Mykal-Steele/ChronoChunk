@@ -338,3 +338,51 @@ def test_gemini_calls_are_costed_at_their_own_prices():
     cached = usage(prompt=1_000_000, cached=1_000_000)
     assert UsageGuard.cost_of(cached, "google/gemini-3.8-flash") == pytest.approx(0.15)
     assert UsageGuard.cost_of(cached, "google/gemini-3.1-flash-lite") == pytest.approx(0.025)
+
+
+class _RateLimited(Exception):
+    status_code = 429
+
+
+class _ServerError(Exception):
+    status_code = 500
+
+
+async def test_a_429_is_retried_after_a_short_wait(guard, monkeypatch):
+    import src.usage_guard as ug
+    waits = []
+
+    async def fake_sleep(seconds):
+        waits.append(seconds)
+
+    monkeypatch.setattr(ug, "_sleep", fake_sleep)
+    answer = SimpleNamespace(model="m", usage=usage(prompt=10, completion=5))
+    inner = MagicMock()
+    inner.chat.completions.create = AsyncMock(side_effect=[_RateLimited(), _RateLimited(), answer])
+    client = GuardedClient(inner, guard, rate_limit_retries=2)
+    assert await client.chat.completions.create(model="m", messages=[]) is answer
+    assert len(waits) == 2 and waits[0] < waits[1]
+
+
+async def test_a_429_that_keeps_coming_is_raised(guard, monkeypatch):
+    import src.usage_guard as ug
+
+    async def no_wait(seconds):
+        return None
+
+    monkeypatch.setattr(ug, "_sleep", no_wait)
+    inner = MagicMock()
+    inner.chat.completions.create = AsyncMock(side_effect=_RateLimited())
+    client = GuardedClient(inner, guard, rate_limit_retries=2)
+    with pytest.raises(_RateLimited):
+        await client.chat.completions.create(model="m", messages=[])
+    assert inner.chat.completions.create.await_count == 3
+
+
+async def test_other_errors_are_not_retried(guard):
+    inner = MagicMock()
+    inner.chat.completions.create = AsyncMock(side_effect=_ServerError())
+    client = GuardedClient(inner, guard, rate_limit_retries=2)
+    with pytest.raises(_ServerError):
+        await client.chat.completions.create(model="m", messages=[])
+    assert inner.chat.completions.create.await_count == 1
