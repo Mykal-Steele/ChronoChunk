@@ -149,7 +149,7 @@ class MessageHandler:
         "down bad", "caught in 4k", "stay losing", "big l", "take the l", "fr fr",
         "deadass", "on god", "mid af", "dog water", "weak energy", "weak sauce",
         "glazing", "stop glazing", "npc energy", "npc behavior", "kindergarten",
-        "remedial", "room temp", "brain dead", "cope", "stay cooked", "lowkey cooked",
+        "remedial", "room temp", "brain dead", "cope", "cooked", "stay cooked", "lowkey cooked",
         "fully cooked", "clowned", "math class", "calculator", "relearn", "basic math",
         "doubling down",
     })
