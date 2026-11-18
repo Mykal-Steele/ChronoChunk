@@ -6,6 +6,7 @@ import discord
 from config.config import Config
 from src.tools.documents import MAX_FILES_PER_REPLY
 from src.version import __version__
+from src.setup_info import span as _span
 from src.message_context import (
     MAX_FILE_BYTES, MAX_FILE_CHARS, MAX_FILES, MAX_IMAGE_BYTES, MAX_IMAGES, MAX_PDF_PAGES, RECENT_FILE_CHARS,
     RECENT_MAX_FILES, RECENT_MAX_IMAGES, RECENT_POST_MINUTES, RECENT_POSTS, TLDR_FILE_CHARS, TLDR_MAX_FILES,
@@ -49,6 +50,45 @@ def limit_lines() -> List[str]:
         f"course searches: {course_count} {_window(course_window)}. `/usage` shows what u have left",
         "cant read yet: gifs, videos, voice messages, word, excel and powerpoint files",
     ]
+
+
+def build_music_help_embed() -> discord.Embed:
+    """/help music: how to play, every music command, and the limits from the settings that enforce them."""
+    per_user, window = Config.RATE_LIMITS["music"]
+    per_guild, guild_window = Config.RATE_LIMITS["music_guild"]
+    controls, control_window = Config.RATE_LIMITS["music_control"]
+    embed = discord.Embed(
+        title="ChronoChunk Music",
+        description="how music works, my g:",
+        color=0x9B59B6,
+    )
+    playing = [
+        "join a voice channel first, then `/music <song or link>`",
+        "a YouTube link, a Spotify track link, or just words: `/music never gonna give you up`, `/music sad lofi for studying`",
+        "a playlist link only plays its first song",
+        "`/relate` - add a song like the one playing, picked from YouTube's mix",
+        "i cant start songs from chat. ask me in chat and i'll point u to `/music`",
+    ]
+    embed.add_field(name="▶️ playing", value="\n".join(playing), inline=False)
+    control = [
+        "`/queue` - what's playing and what's next",
+        "`/skip`, `/pause`, `/resume` - the song playing now",
+        "`/volume <0-100>` - how loud i am",
+        "`/stop` - stop, clear the queue and leave voice",
+        "skip, pause, resume, volume and stop need Manage Server, so one person cant skip everyone's songs",
+    ]
+    embed.add_field(name="🎛️ controls", value="\n".join(control), inline=False)
+    limits = [
+        f"{per_user} songs per person {_window(window)}, {per_guild} per server {_window(guild_window)}"
+        if guild_window != window else f"{per_user} songs per person and {per_guild} per server {_window(window)}",
+        f"{controls} controls per person {_window(control_window)}",
+        f"{Config.MUSIC_MAX_QUEUE_PER_GUILD} songs in the queue, {Config.MUSIC_MAX_SONGS_PER_USER} from one person",
+        f"i leave voice after {_span(Config.MUSIC_ALONE_SECONDS)} with nobody else in the channel, "
+        f"or after {_span(Config.MUSIC_IDLE_SECONDS)} with nothing playing. a long song never gets cut off",
+    ]
+    embed.add_field(name="📏 limits", value="\n".join(f"- {line}" for line in limits), inline=False)
+    embed.set_footer(text=f"ChronoChunk v{__version__} | `/help` shows everything else")
+    return embed
 
 
 def build_help_embed() -> discord.Embed:
@@ -117,7 +157,8 @@ def build_help_embed() -> discord.Embed:
     embed.add_field(name="🎮 game commands", value="\n".join(game_cmds), inline=False)
 
     music_cmds = [
-        "`/music <query>` - play music from YouTube/Spotify. If you type a natural language query instead of a link, the AI will read your response and determine what music you're looking for.",
+        "`/help music` - how music works, who can control it, and the limits",
+        "`/music <song or link>` - play from YouTube or a Spotify link, or describe what u want",
         "`/skip` - skip to next song",
         "`/pause` - pause current playback",
         "`/resume` - resume playback",

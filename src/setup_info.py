@@ -261,6 +261,11 @@ def _azure_line() -> str:
     return "azure vm, " + ", ".join(parts)
 
 
+def span(seconds: int) -> str:
+    """A timeout in words: '10 min', or '90 sec' when it is not whole minutes."""
+    return f"{seconds // 60} min" if seconds % 60 == 0 else f"{seconds} sec"
+
+
 def _music_line() -> str:
     """What the bot can and cannot do with music, with the limits it really has."""
     per_user = Config.RATE_LIMITS["music"][0]
@@ -271,7 +276,10 @@ def _music_line() -> str:
         "(those need Manage Server). a server may queue "
         f"{Config.MUSIC_MAX_QUEUE_PER_GUILD} songs, {Config.MUSIC_MAX_SONGS_PER_USER} per person, and per 10 minutes "
         f"one person may request {per_user} songs and a server {per_guild}. u cant play, queue, skip or pick songs "
-        "urself. if they ask u to, tell them the command. never say u queued, played or added anything"
+        "urself. if they ask u to, tell them the command. never say u queued, played or added anything. "
+        f"u leave voice on ur own after {span(Config.MUSIC_ALONE_SECONDS)} with nobody else in the channel, or "
+        f"{span(Config.MUSIC_IDLE_SECONDS)} with nothing playing, so a long song is never cut off. "
+        "/help music explains all of it"
     )
 
 

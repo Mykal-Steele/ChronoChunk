@@ -107,3 +107,73 @@ async def test_a_song_started_during_the_refresh_keeps_playing(monkeypatch):
     ok, _ = await manager._play_next(1)
     assert not ok and played == []
     assert state.queue[0] is stale  # back at the front, not lost
+
+
+class _RecordingYoutubeDL:
+    """Stands in for yt_dlp.YoutubeDL and keeps the options the bot passed."""
+    seen: list = []
+    urls: list = []
+
+    def __init__(self, options):
+        _RecordingYoutubeDL.seen.append(options)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def extract_info(self, url, download=False):
+        _RecordingYoutubeDL.urls.append(url)
+        return {"entries": [{"url": _link(1795000000), "title": "first", "duration": 200,
+                             "webpage_url": PAGE}]}
+
+
+async def test_a_playlist_link_only_looks_up_its_first_song(monkeypatch):
+    # A 210 song playlist took 168s, because yt-dlp resolved every song before the bot took the first
+    _RecordingYoutubeDL.seen = []
+    monkeypatch.setattr(music_manager.yt_dlp, "YoutubeDL", _RecordingYoutubeDL)
+    url, title, _, _ = await MusicManager().extract_info(
+        "https://www.youtube.com/playlist?list=PLplXQ2cg9B_qrCVd1J_iId5SvP8Kf_BfS")
+    assert title == "first"
+    assert _RecordingYoutubeDL.seen[-1].get("playlist_items") == "1"
+
+
+async def test_the_lookup_has_no_filter_that_rejects_normal_videos(monkeypatch):
+    # The old members-only filter returned True for every normal video, which yt-dlp reads
+    # as a reason to skip it, and then crashed joining that True into its log line
+    _RecordingYoutubeDL.seen = []
+    monkeypatch.setattr(music_manager.yt_dlp, "YoutubeDL", _RecordingYoutubeDL)
+    await MusicManager().extract_info(PAGE)
+    match_filter = _RecordingYoutubeDL.seen[-1].get("match_filter")
+    assert match_filter is None or match_filter({"title": "a normal song"}) is None
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("link", [
+    "https://www.youtube.com/playlist?list=PLplXQ2cg9B_qrCVd1J_iId5SvP8Kf_BfS",
+    "https://music.youtube.com/watch?v=dQw4w9WgXcQ",
+    "https://www.youtube.com/shorts/dQw4w9WgXcQ",
+    "https://m.youtube.com/watch?v=dQw4w9WgXcQ",
+    "youtube.com/watch?v=dQw4w9WgXcQ",
+    "https://youtu.be/dQw4w9WgXcQ?si=abc",
+])
+async def test_every_kind_of_youtube_link_goes_straight_to_youtube(monkeypatch, link):
+    # These used to be treated as search words: the AI rewrote them and YouTube found nothing
+    _RecordingYoutubeDL.urls = []
+    monkeypatch.setattr(music_manager.yt_dlp, "YoutubeDL", _RecordingYoutubeDL)
+    manager = MusicManager()
+    manager._enhance_search_query = AsyncMock(side_effect=AssertionError("a link is not a search"))
+    await manager.extract_info(link)
+    assert _RecordingYoutubeDL.urls == [link]
+
+
+async def test_words_still_become_a_search(monkeypatch):
+    _RecordingYoutubeDL.urls = []
+    monkeypatch.setattr(music_manager.yt_dlp, "YoutubeDL", _RecordingYoutubeDL)
+    manager = MusicManager()
+    manager._enhance_search_query = AsyncMock(return_value="rick astley never gonna give you up")
+    await manager.extract_info("that rickroll song")
+    assert _RecordingYoutubeDL.urls == ["ytsearch1:rick astley never gonna give you up"]
