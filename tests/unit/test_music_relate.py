@@ -84,3 +84,16 @@ async def test_relate_says_so_when_the_mix_is_empty(monkeypatch):
     ok, message = await manager.get_related_song(1, "Kruskal", "42")
     assert not ok and "related" in message
     manager.play.assert_not_called()
+
+
+async def test_relate_skips_paid_videos_and_live_streams(monkeypatch):
+    # Review of #48: the old code skipped subscriber-only and premium videos by availability,
+    # and a live stream has no length, so it would pass a length check and never end
+    manager, _ = _setup(monkeypatch, [
+        {"id": "SUB", "title": "x", "duration": 200, "availability": "subscriber_only"},
+        {"id": "PREM", "title": "x", "duration": 200, "availability": "premium_only"},
+        {"id": "LIVE", "title": "lofi radio", "duration": None},
+        _entry("OK2"),
+    ])
+    await manager.get_related_song(1, "Kruskal", "42")
+    manager.play.assert_awaited_once_with(1, _watch("OK2"), "Kruskal", "42")

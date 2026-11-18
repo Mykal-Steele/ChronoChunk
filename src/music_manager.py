@@ -21,6 +21,7 @@ YOUTUBE_REGEX = r'(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)(
 RELATED_MIX_SIZE = 25
 RELATED_PICK_FROM = 10
 RELATED_MAX_SECONDS = 15 * 60
+RELATED_UNAVAILABLE = {"subscriber_only", "premium_only", "needs_auth"}
 
 
 def _video_id(url: str) -> Optional[str]:
@@ -591,11 +592,13 @@ class MusicManager:
             mix: Any = await loop.run_in_executor(None, lambda: ydl.extract_info(mix_url, download=False))
 
         skip = avoid | {video_id}
+        # A live stream has no duration and would never end, so a song needs a known length
         candidates = [
             entry for entry in ((mix or {}).get('entries') or [])
             if entry and entry.get('id') and entry['id'] not in skip
             and 'members only' not in (entry.get('title') or '').lower()
-            and (entry.get('duration') or 0) <= RELATED_MAX_SECONDS
+            and entry.get('availability') not in RELATED_UNAVAILABLE
+            and 0 < (entry.get('duration') or 0) <= RELATED_MAX_SECONDS
         ]
         if not candidates:
             return None, "couldn't find any related songs for this one"

@@ -14,7 +14,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 ### Fixed
 
-- `/relate` works again. yt-dlp stopped returning a video's related videos, so it always said there were none. It now picks from YouTube's Mix for the song that is playing, near the top where the songs are most alike, and skips the song itself, songs already queued, members-only videos and anything over 15 minutes.
+- `/relate` works again. yt-dlp stopped returning a video's related videos, so it always said there were none. It now picks from YouTube's Mix for the song that is playing, near the top where the songs are most alike, and skips the song itself, songs already queued, members-only and paid videos, live streams and anything over 15 minutes.
 - The bot no longer says it queued or played songs from chat, which it cannot do. It knows music works only through `/music`, `/relate`, `/queue` and the controls, and it knows the real music limits.
 - When Google answers a model call with 429 (its shared Gemini capacity is busy), the bot waits 2 seconds and then 5 seconds and tries again before giving up.
 - Before calling a tool, app, model or game dead, new or the latest, the bot searches first instead of answering from old knowledge.
