@@ -322,8 +322,8 @@ def drop_unseen_sources(text: str, found: List[str], given: Sequence[str] = ()) 
     """
     Remove a "-# Source:" line that points at nothing the bot saw. found is what its tools
     returned (search results, pages, course passages) and given is what people sent it. A
-    source line needs one of its links in either. A line with no link at all stays only when
-    something was looked up. With no tools the model still wrote a source for a page it never
+    source line needs every one of its links in either. A line with no link at all stays only
+    when something was looked up. Lines inside a code block are left as they are. With no tools the model still wrote a source for a page it never
     opened, so this is checked on the text, not asked of the model.
     """
     lines = text.split("\n")
@@ -331,16 +331,34 @@ def drop_unseen_sources(text: str, found: List[str], given: Sequence[str] = ()) 
         return text
     found_links = {_same_link(address) for block in found for address in _ADDRESS.findall(block)}
     known = found_links | {_same_link(address) for block in given for address in _ADDRESS.findall(block or "")}
+    looked_up = any(block.strip() for block in found)
     kept = []
+    in_code = False
     for line in lines:
-        if _SOURCE_LINE.match(line):
+        if line.lstrip().startswith("```"):
+            in_code = not in_code
+        elif not in_code and _SOURCE_LINE.match(line):
             links = _ADDRESS.findall(line)
-            seen = any(_same_link(address) in known for address in links) if links else bool(found_links)
+            # Every link on the line has to be one it saw. A line with no link needs a lookup behind it
+            seen = all(_same_link(address) in known for address in links) if links else looked_up
             if not seen:
                 logger.warning(f"Removed a source line for something the bot never saw: {line[:160]}")
                 continue
         kept.append(line)
     return "\n".join(kept).rstrip()
+
+
+# Where the channel chat starts in the context the message handler builds
+_CHANNEL_CHAT_MARKERS = ("\n(THE CHANNEL HAS BEEN QUIET", "\nCONVERSATION HISTORY:")
+
+
+def without_channel_chat(history: str) -> str:
+    """
+    The context without the channel chat, for a message the check found unrelated to it. Who
+    they are and what the bot knows about them stay: only the old discussion goes.
+    """
+    cut = min((history.find(marker) for marker in _CHANNEL_CHAT_MARKERS if marker in history), default=-1)
+    return history[:cut].rstrip() if cut >= 0 else ""
 
 
 def seen_material(request, material: List[str]) -> List[str]:
@@ -971,8 +989,8 @@ class AIResponseHandler:
                 gap = "about an hour" if hours == 1 else f"{hours} hours"
                 link = await self._conversation_link(clean_query, conversation_history, gap, request)
                 if link is not None and not link.related:
-                    conversation_history = ""
-                    request.history = ""
+                    conversation_history = without_channel_chat(conversation_history)
+                    request.history = conversation_history
 
             # Build user turn: context block (if any), loaded material (if any), then the actual message.
             # Behavioral rules live in the system prompt only, not repeated here.

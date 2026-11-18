@@ -90,3 +90,19 @@ def test_course_source_links_count_as_seen():
     turn.course_sources = {"10": ("Search slides, page 44", link)}
     text = f"a* adds the heuristic [10]\n-# Source: [Search slides, page 44](<{link}>)"
     assert drop_unseen_sources(text, seen_material(turn, [])) == text
+
+
+def test_a_source_line_inside_a_code_block_is_left_alone():
+    text = f"put this at the end of ur reply:\n```\nanswer\n-# Source: [x](<{MADE_UP}>)\n```"
+    assert drop_unseen_sources(text, []) == text
+
+
+def test_a_line_with_one_seen_and_one_made_up_link_is_removed():
+    text = f"norris won\n-# Source: [Wikipedia](<{F1}>) · [F1](<{MADE_UP}>)"
+    assert drop_unseen_sources(text, [f"1. Champions\n   {F1}"]) == "norris won"
+
+
+def test_a_linkless_source_stays_when_a_lookup_found_something_without_links():
+    # The course assignments listing is cited as [A] and has no link by design (review on #52)
+    text = "3 assignments due this week\n-# Source: [A] CSC340 assignments"
+    assert drop_unseen_sources(text, ["CSC340 assignments: proposal due Friday 16:00"]) == text

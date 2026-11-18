@@ -97,3 +97,23 @@ async def test_a_fresh_history_skips_the_check(handler, mock_openai_client):
     await handler.generate_reply("/what is your version", ">>> YOU: hey", "Kruskal", "1",
                                  history_age=timedelta(minutes=10))
     assert mock_openai_client.chat.completions.create.await_count == 1
+
+
+async def test_dropping_a_stale_chat_keeps_what_the_bot_knows_about_them(handler, mock_openai_client):
+    # Only the old channel chat goes. The saved facts are not part of that chat (review on #52)
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call(LINK_CHECK_TOOL, {"related": False, "topic": "version"})]),
+        _message(content="v3.24.2"),
+    ]
+    history = ("RESPONDING TO: Kruskal\n\nWHAT YOU KNOW ABOUT THEM (background only):\n  - You study cs at kmutt\n"
+               "\nCONVERSATION HISTORY:\n[7h ago, LOW priority] Kruskal: go is Go with a breakup arc")
+    await handler.generate_reply("/what is your version", history, "Kruskal", "1", history_age=timedelta(hours=7))
+    joined = "\n".join(str(m["content"]) for m in mock_openai_client.chat.completions.create.call_args_list[-1][1]["messages"])
+    assert "breakup arc" not in joined
+    assert "You study cs at kmutt" in joined
+
+
+def test_slash_chat_passes_the_age_of_the_channel_chat():
+    import inspect
+    from src import slash_commands
+    assert "history_age=" in inspect.getsource(slash_commands.SlashCommandManager._register_chat_command)
