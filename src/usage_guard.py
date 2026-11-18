@@ -1,4 +1,5 @@
 """Keeps the bot's AI spending under a hard budget and records what every call costs."""
+import asyncio
 import logging
 import sqlite3
 from datetime import date, datetime, timezone
@@ -252,20 +253,37 @@ class UsageGuard:
         }
 
 
+# Seconds to wait before each retry of a call the provider turned down with 429. Vertex's
+# shared Gemini capacity answers 429 "Resource exhausted" now and then, and Google's advice
+# is to wait and try again. Patched in tests.
+RATE_LIMIT_WAITS = (2.0, 5.0)
+_sleep = asyncio.sleep
+
+
 class _GuardedCalls:
     """One kind of model call, chat completions or embeddings. Both are made with create and report their usage."""
 
-    def __init__(self, calls, guard: UsageGuard, prepare: Optional[Callable[[dict], dict]] = None):
+    def __init__(self, calls, guard: UsageGuard, prepare: Optional[Callable[[dict], dict]] = None,
+                 rate_limit_retries: int = 0):
         self._calls = calls
         self._guard = guard
         # Shapes each call for the provider, see src/ai_provider.py
         self._prepare = prepare
+        self._retries = min(rate_limit_retries, len(RATE_LIMIT_WAITS))
 
     async def create(self, **kwargs):
         self._guard.check()
         if self._prepare:
             kwargs = self._prepare(kwargs)
-        response = await self._calls.create(**kwargs)
+        for attempt in range(self._retries + 1):
+            try:
+                response = await self._calls.create(**kwargs)
+                break
+            except Exception as e:
+                if getattr(e, "status_code", None) != 429 or attempt == self._retries:
+                    raise
+                logger.warning(f"Model call got 429, waiting {RATE_LIMIT_WAITS[attempt]}s before retry {attempt + 1}")
+                await _sleep(RATE_LIMIT_WAITS[attempt])
         model = getattr(response, "model", None)
         self._guard.record(getattr(response, "usage", None), model if isinstance(model, str) else kwargs.get("model"))
         return response
@@ -277,8 +295,10 @@ class GuardedClient:
     budget first and record the cost after.
     """
 
-    def __init__(self, client, guard: UsageGuard, prepare: Optional[Callable[[dict], dict]] = None):
-        self.chat = SimpleNamespace(completions=_GuardedCalls(client.chat.completions, guard, prepare))
+    def __init__(self, client, guard: UsageGuard, prepare: Optional[Callable[[dict], dict]] = None,
+                 rate_limit_retries: int = 0):
+        self.chat = SimpleNamespace(completions=_GuardedCalls(client.chat.completions, guard, prepare,
+                                                              rate_limit_retries))
         self.embeddings = _GuardedCalls(client.embeddings, guard)
 
 
@@ -293,9 +313,10 @@ def get_usage_guard() -> UsageGuard:
     return _shared_guard
 
 
-def guard_client(client, prepare: Optional[Callable[[dict], dict]] = None) -> GuardedClient:
+def guard_client(client, prepare: Optional[Callable[[dict], dict]] = None,
+                 rate_limit_retries: int = 0) -> GuardedClient:
     """
     Wrap an AsyncOpenAI client so all its chat completions and embeddings obey the shared
     budget. prepare, when given, reshapes each chat completion before it is sent.
     """
-    return GuardedClient(client, get_usage_guard(), prepare)
+    return GuardedClient(client, get_usage_guard(), prepare, rate_limit_retries)

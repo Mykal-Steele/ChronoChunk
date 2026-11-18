@@ -144,4 +144,4 @@ def make_client(settings: AiSettings, timeout: Optional[float] = None,
         options["max_retries"] = max_retries
     api_key = vertex_token_provider() if settings.provider == "vertex" else settings.api_key
     client = AsyncOpenAI(base_url=settings.base_url, api_key=api_key, **options)
-    return guard_client(client, prepare=lambda kwargs: prepare_chat(settings, kwargs))
+    return guard_client(client, prepare=lambda kwargs: prepare_chat(settings, kwargs), rate_limit_retries=2)

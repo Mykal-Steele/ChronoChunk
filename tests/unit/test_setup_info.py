@@ -367,3 +367,16 @@ def test_a_missing_changelog_is_not_an_error(monkeypatch, tmp_path):
 
 def test_the_real_changelog_gives_the_running_version():
     assert setup_info.latest_changes().startswith(f"{__version__} (")
+
+
+def test_the_bot_knows_music_is_slash_commands_with_real_limits(monkeypatch):
+    # It told people "got that + 3 more similar ones queued up" from chat, which it cannot do
+    monkeypatch.setattr(Config, "MUSIC_MAX_QUEUE_PER_GUILD", 25)
+    monkeypatch.setattr(Config, "MUSIC_MAX_SONGS_PER_USER", 8)
+    monkeypatch.setitem(Config.RATE_LIMITS, "music", (15, 600))
+    monkeypatch.setitem(Config.RATE_LIMITS, "music_guild", (40, 600))
+    text = setup_info.self_prompt("gemini-3.1-flash-lite")
+    for command in ("/music", "/relate", "/queue", "/skip", "/stop"):
+        assert command in text
+    assert "25 songs" in text and "8 per person" in text and "15" in text and "40" in text
+    assert "never say u queued" in text

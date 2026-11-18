@@ -5,6 +5,7 @@ import discord
 import logging
 import re
 import os
+import random
 import time
 from typing import Any, Dict, List, Optional, Tuple
 import yt_dlp
@@ -16,6 +17,16 @@ logger = logging.getLogger(__name__)
 
 # YouTube and Spotify URL regex patterns
 YOUTUBE_REGEX = r'(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)([a-zA-Z0-9_-]+)'
+# /relate: how much of the Mix to load, how far down it may pick, and the longest song it adds
+RELATED_MIX_SIZE = 25
+RELATED_PICK_FROM = 10
+RELATED_MAX_SECONDS = 15 * 60
+RELATED_UNAVAILABLE = {"subscriber_only", "premium_only", "needs_auth"}
+
+
+def _video_id(url: str) -> Optional[str]:
+    found = re.match(YOUTUBE_REGEX, url or "")
+    return found.group(1) if found else None
 SPOTIFY_REGEX = r'(?:https?://)?(?:open\.spotify\.com/track/|spotify:track:)([a-zA-Z0-9]+)'
 
 # Inactivity timeout in seconds (10 minutes)
@@ -544,7 +555,8 @@ class MusicManager:
                 current_song = state.current_song
                 if not current_song:
                     return False, "nothing is currently playing to get recommendations for"
-                related_url, error = await self._related_video_url(current_song)
+                queued = {_video_id(song.page_url) for song in state.queue} - {None}
+                related_url, error = await self._related_video_url(current_song, queued)
             if not related_url:
                 return False, error
             return await self.play(guild_id, related_url, requested_by, requested_by_id)
@@ -554,75 +566,46 @@ class MusicManager:
             logger.error(f"Traceback: {traceback.format_exc()}")
             return False, f"error finding related song: {str(e)}"
 
-    async def _related_video_url(self, current_song: Song) -> Tuple[Optional[str], str]:
-        """Find one playable recommendation for a song, or the reason there is none."""
-        video_id = None
-        youtube_match = re.match(YOUTUBE_REGEX, current_song.url)
-
-        if youtube_match:
-            video_id = youtube_match.group(1)
-        else:
-            options = {
-                'default_search': 'ytsearch',
-                'noplaylist': True,
-                'extract_flat': True,
-                'skip_download': True,
-                'quiet': True,
-                'no_warnings': True
-            }
-
-            with yt_dlp.YoutubeDL(options) as ydl:  # pyright: ignore[reportArgumentType]
-                logger.info(f"Searching YouTube for: {current_song.title}")
-                search_results: Any = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: ydl.extract_info(f"ytsearch1:{current_song.title}", download=False)
-                )
-
-                if not search_results or 'entries' not in search_results or not search_results['entries']:
-                    return None, "couldn't find the source video to get recommendations"
-
-                video_id = search_results['entries'][0]['id']
-
+    async def _related_video_url(self, current_song: Song, avoid: set) -> Tuple[Optional[str], str]:
+        """
+        One song from YouTube's Mix for the song that is playing, or the reason there is none.
+        yt-dlp no longer returns a video's related videos, but the Mix playlist (list=RD<id>)
+        is the same kind of list and still loads. Songs in avoid (already queued) are skipped.
+        """
+        video_id = _video_id(current_song.page_url) or _video_id(current_song.url)
+        loop = asyncio.get_event_loop()
         if not video_id:
-            return None, "couldn't determine video ID for recommendations"
+            search = {'extract_flat': True, 'skip_download': True, 'quiet': True, 'no_warnings': True}
+            with yt_dlp.YoutubeDL(search) as ydl:  # pyright: ignore[reportArgumentType]
+                found: Any = await loop.run_in_executor(
+                    None, lambda: ydl.extract_info(f"ytsearch1:{current_song.title}", download=False))
+            entries = (found or {}).get('entries') or []
+            video_id = entries[0].get('id') if entries and entries[0] else None
+        if not video_id:
+            return None, "couldn't find the song that's playing on youtube, so no related songs"
 
-        logger.info(f"Found video ID: {video_id}")
-        video_url = f"https://www.youtube.com/watch?v={video_id}"
-        options = {
-            'skip_download': True,
-            'extract_flat': True,
-            'quiet': True,
-            'no_warnings': True,
-            'match_filter': lambda info_dict: None if info_dict.get('availability') == 'subscriber_only' else None if 'members only' in info_dict.get('title', '').lower() else None if info_dict.get('premium') is True else True,
-        }
-
+        options = {'extract_flat': True, 'skip_download': True, 'quiet': True, 'no_warnings': True,
+                   'playlistend': RELATED_MIX_SIZE}
+        mix_url = f"https://www.youtube.com/watch?v={video_id}&list=RD{video_id}"
         with yt_dlp.YoutubeDL(options) as ydl:  # pyright: ignore[reportArgumentType]
-            logger.info(f"Getting recommendations for video ID: {video_id}")
-            video_info = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: ydl.extract_info(video_url, download=False)
-            )
+            logger.info(f"Loading the YouTube Mix for {video_id}")
+            mix: Any = await loop.run_in_executor(None, lambda: ydl.extract_info(mix_url, download=False))
 
-            if not video_info:
-                return None, "failed to get video information"
-
-            if not video_info.get('related_videos'):
-                return None, "no recommendations found for this song"
-
-            related_videos = []
-            for video in video_info.get('related_videos', []):
-                if video.get('availability') == 'subscriber_only' or 'members only' in video.get('title', '').lower() or video.get('premium') is True:
-                    continue
-                related_videos.append(video)
-                if len(related_videos) >= 5:
-                    break
-
-            if not related_videos:
-                return None, "no valid recommendations found (filtered out members-only content)"
-
-            import random
-            related_video = random.choice(related_videos)
-            related_url = f"https://www.youtube.com/watch?v={related_video['id']}"
-            logger.info(f"Selected related video: {related_video.get('title', 'Unknown')} ({related_url})")
-            return related_url, ""
+        skip = avoid | {video_id}
+        # A live stream has no duration and would never end, so a song needs a known length
+        candidates = [
+            entry for entry in ((mix or {}).get('entries') or [])
+            if entry and entry.get('id') and entry['id'] not in skip
+            and 'members only' not in (entry.get('title') or '').lower()
+            and entry.get('availability') not in RELATED_UNAVAILABLE
+            and 0 < (entry.get('duration') or 0) <= RELATED_MAX_SECONDS
+        ]
+        if not candidates:
+            return None, "couldn't find any related songs for this one"
+        # The Mix is ordered from most to least alike, so stay near the top
+        picked = random.choice(candidates[:RELATED_PICK_FROM])
+        logger.info(f"Related song: {picked.get('title', '?')} ({picked['id']})")
+        return f"https://www.youtube.com/watch?v={picked['id']}", ""
 
     def clear_queue(self, guild_id: int) -> bool:
         """Clear the queue for the guild"""
