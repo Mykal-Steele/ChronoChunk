@@ -15,6 +15,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 ### Changed
 
 - The bot runs on Python 3.15 (was 3.12). discord.py's voice libraries moved up with it: `davey` 0.2.0, which has 3.15 wheels, and `audioop-lts`, which replaces the `audioop` module Python dropped in 3.13. `pydantic` must be at least 2.14.2, the first whose core has 3.15 wheels.
+- Package updates from Dependabot #45: `openai` 3.51.0, `pypdf` 7.1.0, `pypdfium2` 5.15.2, and for the tests `pytest` 9.2.0, `pytest-asyncio` 1.5.0, `ruff` 0.17.5 and `nodeenv` 1.12.0.
 
 ## 3.24.2 (2026-11-18)
 

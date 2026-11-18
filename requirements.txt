@@ -73,7 +73,7 @@ multidict==7.1.0
     # via
     #   aiohttp
     #   yarl
-openai==3.35.1
+openai==3.51.0
     # via -r requirements.in
 pillow==13.0.0
     # via
@@ -101,9 +101,9 @@ pynacl==1.5.0
     # via
     #   -r requirements.in
     #   discord-py
-pypdf==6.21.1
+pypdf==7.1.0
     # via -r requirements.in
-pypdfium2==5.14.0
+pypdfium2==5.15.2
     # via -r requirements.in
 pyphen==0.18.1
     # via weasyprint
