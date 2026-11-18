@@ -10,6 +10,14 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.22.3 (2026-11-18)
+
+### Fixed
+
+- The bot only roasts people who started it: insulted it, swore at it, roasted it, or asked it to roast someone. Questions, typos, bad takes, cheeky lines like "good boy" and people stressed about exams get a friendly answer instead. On Gemini the old rules ("go 10x harder at ANY negativity") made it roast people for nothing.
+- It no longer says "cooked". The word is gone from its examples and slang, it is told not to use it, and it counts as worn out if it slips through.
+- Its personality no longer says it lives on Azure.
+
 ## 3.22.2 (2026-11-18)
 
 ### Fixed
