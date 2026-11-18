@@ -14,6 +14,8 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 ### Fixed
 
+- A reply that cannot look anything up (jumping into a chat on its own, a plain `/tldr`) says it might be out of date on things that change, instead of stating old facts as current.
+- A "-# Source:" line is removed when the bot never saw its link in a search, a page, the course material or the message. With no tools it had cited a results page it never opened, for an answer that was wrong.
 - After an hour of silence the bot no longer picks an old joke or topic back up. When the last message before theirs is over an hour old, one short check on the chat model reads both and decides whether the new message continues the old chat. If it does not, the old chat is left out of the answer. Messages over an hour old are marked as an earlier conversation, and the short-reply hint only follows a bot message from the last hour. In a test, "hi" five hours after a roast got "still thinking about that failed compile?" before and a plain hello after, while real follow-ups kept their context.
 
 ## 3.24.1 (2026-11-18)

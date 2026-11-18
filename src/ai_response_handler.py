@@ -3,12 +3,13 @@ import difflib
 import hashlib
 import json
 import re
+import urllib.parse
 import logging
 from types import SimpleNamespace
 import time
 from datetime import datetime, timedelta, timezone
 from dataclasses import asdict, dataclass, field
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 from config.ai_config import PERSONALITY_PROMPT, load_voice_examples, voice_examples_prompt
 from config.config import Config
 from collections import deque
@@ -303,6 +304,43 @@ def repair_links(text: str, sources: List[str]) -> str:
             logger.warning(f"The model changed a link, put back {closest[0][:120]}")
         return closest[0] if closest else address
     return _ADDRESS.sub(exact, text)
+
+
+# A reply with no tools cannot check anything, and its knowledge is old
+_NO_LOOKUP_PROMPT = """
+- in this reply u cant search the web or open links. for anything that changes (news, who won something, releases, versions, prices, the latest or current anything) say u might be out of date instead of stating it as fact. never write a Source line.
+"""
+
+_SOURCE_LINE = re.compile(r'^\s*-#\s*sources?:', re.IGNORECASE)
+
+
+def _same_link(address: str) -> str:
+    return urllib.parse.unquote(address).rstrip('/')
+
+
+def drop_unseen_sources(text: str, found: List[str], given: Sequence[str] = ()) -> str:
+    """
+    Remove a "-# Source:" line that points at nothing the bot saw. found is what its tools
+    returned (search results, pages, course passages) and given is what people sent it. A
+    source line needs one of its links in either. A line with no link at all stays only when
+    something was looked up. With no tools the model still wrote a source for a page it never
+    opened, so this is checked on the text, not asked of the model.
+    """
+    lines = text.split("\n")
+    if not any(_SOURCE_LINE.match(line) for line in lines):
+        return text
+    found_links = {_same_link(address) for block in found for address in _ADDRESS.findall(block)}
+    known = found_links | {_same_link(address) for block in given for address in _ADDRESS.findall(block or "")}
+    kept = []
+    for line in lines:
+        if _SOURCE_LINE.match(line):
+            links = _ADDRESS.findall(line)
+            seen = any(_same_link(address) in known for address in links) if links else bool(found_links)
+            if not seen:
+                logger.warning(f"Removed a source line for something the bot never saw: {line[:160]}")
+                continue
+        kept.append(line)
+    return "\n".join(kept).rstrip()
 
 
 def _text_length(text: str) -> int:
@@ -1065,7 +1103,7 @@ class AIResponseHandler:
             messages: List[dict] = [
                 {"role": "system",
                  "content": _SYSTEM_PROMPT + self_setup_prompt(self.deployment)
-                            + "".join(tool.prompt() for tool in offered)
+                            + ("".join(tool.prompt() for tool in offered) if offered else _NO_LOOKUP_PROMPT)
                             + accuracy
                             + (NO_FLAG_PROMPT if scope and not in_course else "") + extra_rules + emoji_prompt},
             ]
@@ -1157,7 +1195,11 @@ class AIResponseHandler:
                     if in_course:
                         # The model names passages by number. Their names, dates and links are written here.
                         shown = render_sources(shown, request.course_sources)
-                    reply = Reply(repair_links(shown, request.findings), files)
+                    shown = repair_links(shown, request.findings)
+                    # A source the bot never saw is made up, whatever the model says
+                    found = request.findings + material + [str(source) for source in (request.course_sources or [])]
+                    shown = drop_unseen_sources(shown, found, given=[query, request.attached, request.history])
+                    reply = Reply(shown, files)
                 # An answer from the web or the course material goes stale, so it is looked up again next time
                 if not files and not study and not request.lookups and not request.course_searches and not in_course:
                     self.response_cache[cache_key] = reply.text
