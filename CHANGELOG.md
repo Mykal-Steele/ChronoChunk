@@ -10,6 +10,12 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.24.3 (2026-11-19)
+
+### Changed
+
+- The bot runs on Python 3.15 (was 3.12). discord.py's voice libraries moved up with it: `davey` 0.2.0, which has 3.15 wheels, and `audioop-lts`, which replaces the `audioop` module Python dropped in 3.13. `pydantic` must be at least 2.14.2, the first whose core has 3.15 wheels.
+
 ## 3.24.2 (2026-11-18)
 
 ### Fixed
