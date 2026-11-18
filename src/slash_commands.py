@@ -8,7 +8,7 @@ from src import usage_context
 from src.ai_response_handler import AIResponseHandler
 from src.exceptions import RateLimitError
 from src.game_manager import GameManager
-from src.help_menu import build_help_embed
+from src.help_menu import build_help_embed, build_music_help_embed
 from src.channel_settings import get_channel_settings
 from src.conversation import Conversation
 from src.message_context import gather_context, resolve_message_link
@@ -632,8 +632,11 @@ class SlashCommandManager:
     async def _register_help_command(self):
         """Register the help command"""
         @self.bot.tree.command(name="help", description="Show all available commands and how to use them")
-        async def help(interaction: discord.Interaction):
-            await interaction.response.send_message(embed=build_help_embed())
+        @app_commands.describe(topic="Pick music for how music works and its limits")
+        @app_commands.choices(topic=[app_commands.Choice(name="music", value="music")])
+        async def help(interaction: discord.Interaction, topic: Optional[str] = None):
+            embed = build_music_help_embed() if topic == "music" else build_help_embed()
+            await interaction.response.send_message(embed=embed)
 
     async def _register_relate_command(self):
         """Register the relate command"""

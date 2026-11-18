@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from src.ai_response_handler import Reply
 from src.exceptions import RateLimitError
-from src.help_menu import build_help_embed
+from src.help_menu import build_help_embed, build_music_help_embed
 from src.rate_limiter import RateLimiter
 from src.setup_info import setup_summary
 from src.stats import stats_summary
@@ -112,8 +112,15 @@ class CommandHandler:
         )
 
     async def _handle_help(self, args: List[str], message: discord.Message, user_id: str) -> Optional[discord.Embed]:
-        """Show the help menu for a bare '/help'. With more words, like '/help me write this', it is chat."""
-        return None if args else build_help_embed()
+        """
+        '/help' shows the menu and '/help music' the music page. With other words, like
+        '/help me write this', it is chat.
+        """
+        if not args:
+            return build_help_embed()
+        if len(args) == 1 and args[0].lower() == "music":
+            return build_music_help_embed()
+        return None
 
     async def _handle_usage(self, args: List[str], message: discord.Message, user_id: str) -> str:
         """Show how much of the AI budget is used"""

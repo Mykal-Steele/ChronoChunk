@@ -17,13 +17,16 @@ MUSIC_LIMIT_DEFAULTS = {
     "MUSIC_CONTROLS_PER_USER": 60,    # skip, pause, volume and so on per person per 10 minutes
     "MUSIC_MAX_QUEUE_PER_GUILD": 25,  # songs waiting in one server's queue
     "MUSIC_MAX_SONGS_PER_USER": 8,    # of those, songs from one person
+    "MUSIC_IDLE_SECONDS": 600,        # leave voice after this long with nothing playing and no commands
+    "MUSIC_ALONE_SECONDS": 600,       # leave voice after this long with nobody else in the channel
 }
 
 
 def music_limit(env, name: str) -> int:
     """
-    A music limit from env. Anything that is not a whole number of at least 1 gets the
-    default, because 0 would make the rate limiter raise IndexError instead of refusing.
+    A music limit or timeout from env. Anything that is not a whole number of at least 1
+    gets the default, because 0 would make the rate limiter raise IndexError instead of
+    refusing, and a 0 second timeout would leave voice the moment a song ends.
     """
     try:
         value = int((env.get(name) or "").strip())
@@ -64,6 +67,8 @@ class Config:
     # Music queue ceilings, so one person or one server cannot fill the bot's memory
     MUSIC_MAX_QUEUE_PER_GUILD = music_limit(os.environ, "MUSIC_MAX_QUEUE_PER_GUILD")
     MUSIC_MAX_SONGS_PER_USER = music_limit(os.environ, "MUSIC_MAX_SONGS_PER_USER")
+    MUSIC_IDLE_SECONDS = music_limit(os.environ, "MUSIC_IDLE_SECONDS")
+    MUSIC_ALONE_SECONDS = music_limit(os.environ, "MUSIC_ALONE_SECONDS")
     
     # Paths
     BASE_DIR = Path(__file__).parent.parent

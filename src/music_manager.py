@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 # YouTube and Spotify URL regex patterns
 YOUTUBE_REGEX = r'(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)([a-zA-Z0-9_-]+)'
+# Any YouTube link: watch, playlist, shorts, music.youtube.com and the mobile site go to yt-dlp as they are
+YOUTUBE_LINK_REGEX = r'(?:https?://)?(?:(?:www|m|music)\.)?(?:youtube\.com/|youtu\.be/)'
 # /relate: how much of the Mix to load, how far down it may pick, and the longest song it adds
 RELATED_MIX_SIZE = 25
 RELATED_PICK_FROM = 10
@@ -29,8 +31,6 @@ def _video_id(url: str) -> Optional[str]:
     return found.group(1) if found else None
 SPOTIFY_REGEX = r'(?:https?://)?(?:open\.spotify\.com/track/|spotify:track:)([a-zA-Z0-9]+)'
 
-# Inactivity timeout in seconds (10 minutes)
-INACTIVITY_TIMEOUT = 600
 # Spotify sends the title and artist tags only to link previewers, so the lookup names itself as one
 LINK_PREVIEW_USER_AGENT = "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)"
 SPOTIFY_TIMEOUT_SECONDS = 10
@@ -156,31 +156,34 @@ class MusicManager:
         state = self.get_guild_music_state(guild_id)
         state.last_activity = time.time()
     
+    async def check_inactive(self, now: float) -> None:
+        """
+        One pass over the guilds. The bot leaves voice when nobody else has been in its
+        channel for MUSIC_ALONE_SECONDS, or when nothing has played and nobody has used a
+        command for MUSIC_IDLE_SECONDS. A song that is still playing is never idle, so a
+        long song is not cut off just because nobody typed anything.
+        """
+        for guild_id, state in list(self.guild_music_states.items()):
+            voice = state.voice_client
+            if not voice or not voice.is_connected():
+                continue
+            if state.alone_since is not None and now - state.alone_since > Config.MUSIC_ALONE_SECONDS:
+                logger.info(f"Guild {guild_id}: alone in voice for {Config.MUSIC_ALONE_SECONDS}s, leaving")
+                await self.leave_voice_channel(guild_id)
+            elif not voice.is_playing() and now - state.last_activity > Config.MUSIC_IDLE_SECONDS:
+                logger.info(f"Guild {guild_id}: nothing played for {Config.MUSIC_IDLE_SECONDS}s, leaving")
+                await self.leave_voice_channel(guild_id)
+
     async def _check_inactive_voice_clients(self) -> None:
-        """Periodically check for inactive voice clients and disconnect them"""
+        """Runs check_inactive every 30 seconds for as long as the bot is up."""
         while True:
             try:
-                current_time = time.time()
-                for guild_id, state in list(self.guild_music_states.items()):
-                    if state.voice_client and state.voice_client.is_connected():
-                        # Check if bot is alone in the voice channel too long
-                        if state.alone_since is not None and current_time - state.alone_since > 600:  # 10 minutes
-                            logger.info(f"Bot has been alone in guild {guild_id} for 10 minutes, disconnecting")
-                            await self.leave_voice_channel(guild_id)
-                        
-                        # Also check general inactivity timeout
-                        elif current_time - state.last_activity > INACTIVITY_TIMEOUT:
-                            logger.info(f"Guild {guild_id}: Disconnecting due to inactivity timeout")
-                            await self.leave_voice_channel(guild_id)
-                
-                # Check every 30 seconds
+                await self.check_inactive(time.time())
                 await asyncio.sleep(30)
             except Exception as e:
-                logger.error(f"Error in inactivity checker: {e}")
-                import traceback
-                logger.error(f"Traceback: {traceback.format_exc()}")
+                logger.error(f"Error in inactivity checker: {e!r}", exc_info=True)
                 await asyncio.sleep(60)
-    
+
     def get_guild_music_state(self, guild_id: int) -> GuildMusicState:
         """Get or create a GuildMusicState for the specified guild"""
         if guild_id not in self.guild_music_states:
@@ -232,8 +235,7 @@ class MusicManager:
             search_url = f"ytsearch1:{await self._spotify_search_query(spotify_match.group(1))}"
             logger.info(f"Using search query for Spotify track: {search_url}")
             
-        elif re.match(YOUTUBE_REGEX, url):
-            # Direct YouTube URL
+        elif re.match(YOUTUBE_LINK_REGEX, url):
             search_url = url
         else:
             # Not a URL - ALWAYS enhance with AI
@@ -264,8 +266,8 @@ class MusicManager:
                 'skip_download': True,  # We only need the info
                 'retries': 2,           # Fail fast; the request itself has a deadline
                 'socket_timeout': 15,   # Do not hold a guild slot for half a minute
-                # Add these new options to filter out members-only content
-                'match_filter': lambda info_dict: None if info_dict.get('availability') == 'subscriber_only' else None if 'members only' in info_dict.get('title', '').lower() else None if info_dict.get('premium') is True else True,
+                # A playlist link plays its first song. Without this yt-dlp looks up every song in it first
+                'playlist_items': '1',
             }
             
             with yt_dlp.YoutubeDL(options) as ydl:  # pyright: ignore[reportArgumentType]
@@ -699,26 +701,24 @@ Request: "{query}"
             return query  # Fall back to the original query
 
     async def on_voice_state_update(self, member, before, after):
-        """Handle voice state changes to detect when users leave"""
-        # Skip if the member is the bot itself
+        """Start the alone timer when the last person leaves the bot's channel, and stop it when someone comes back."""
         if member.bot:
             return
-            
-        # Only care about users leaving a channel
-        if before and before.channel and (not after or before.channel != after.channel):
-            # Find any guild states where the bot is in the same channel that was left
-            for guild_id, state in self.guild_music_states.items():
-                if not state.voice_client or not state.voice_client.is_connected():
-                    continue
-                    
-                # Check if this is the channel the user left
-                if state.voice_client.channel.id == before.channel.id:
-                    # Count non-bot members in the voice channel
-                    real_members = [m for m in before.channel.members if not m.bot]
-                    
-                    # If no real members remain and the bot is there
-                    if not real_members:
-                        logger.info(f"All users left voice channel in guild {guild_id}, starting alone timer")
-                        # Start tracking when the bot became alone
-                        state.alone_since = time.time()
-                        break
+        left = before.channel if before else None
+        joined = after.channel if after else None
+        if left is not None and joined is not None and left.id == joined.id:
+            return  # mute, deafen or similar, nobody moved
+        for guild_id, state in self.guild_music_states.items():
+            voice = state.voice_client
+            if not voice or not voice.is_connected():
+                continue
+            if joined is not None and voice.channel.id == joined.id:
+                if state.alone_since is not None:
+                    logger.info(f"Someone joined the voice channel in guild {guild_id}, stopping the alone timer")
+                state.alone_since = None
+                break
+            if left is not None and voice.channel.id == left.id:
+                if not [m for m in left.members if not m.bot]:
+                    logger.info(f"All users left voice channel in guild {guild_id}, starting alone timer")
+                    state.alone_since = time.time()
+                break

@@ -127,8 +127,13 @@ Everything else uses the default from `config/config.py` unless `.env` sets it:
 | `AI_QUEUE_WAIT_SECONDS` | 10 | How long a reply waits for a slot before it is turned away |
 | `AI_MAX_MODEL_CALLS_PER_REPLY` | 24 | Model calls one reply may make |
 | `AI_MAX_REPLY_COST_USD` | 0.25 | Model spend one reply may reach |
-| `MUSIC_MAX_QUEUE_PER_GUILD` | 10 | Songs one server may queue |
-| `MUSIC_MAX_SONGS_PER_USER` | 3 | Songs one person may have queued |
+| `MUSIC_REQUESTS_PER_USER` | 15 | Songs one person may request per 10 minutes |
+| `MUSIC_REQUESTS_PER_GUILD` | 40 | Songs one server may request per 10 minutes |
+| `MUSIC_CONTROLS_PER_USER` | 60 | Skips, pauses, volume changes and so on one person may use per 10 minutes |
+| `MUSIC_MAX_QUEUE_PER_GUILD` | 25 | Songs one server may queue |
+| `MUSIC_MAX_SONGS_PER_USER` | 8 | Songs one person may have queued |
+| `MUSIC_IDLE_SECONDS` | 600 | The bot leaves voice after this long with nothing playing and no music commands |
+| `MUSIC_ALONE_SECONDS` | 600 | The bot leaves voice after this long with nobody else in the channel |
 | `PDF_PAGE_NOTES` | `auto` | `auto`, `on` or `off`: whether the bot describes PDF pages from pictures of them |
 | `PDF_NOTES_KEEP_DAYS` | 7 | Days a PDF's page descriptions are kept |
 | `LOG_RETENTION_DAYS` | 30 | Days a log file is kept |
@@ -336,8 +341,11 @@ The bot plays music in the voice channel you are in. A Spotify link is looked up
 - `/queue` - Show the current queue
 - `/volume <0-100>` - Set the volume
 - `/relate` - Play a song related to the current one (YouTube recommendations)
+- `/help music` - How music works, who can control it, and the limits
 
 `/skip`, `/pause`, `/resume`, `/stop` and `/volume` need the Manage Server permission. A server may queue 25 songs, and one person may have 8 in the queue. One person may request 15 songs and use 60 controls per 10 minutes, and a server 40 songs. `MUSIC_MAX_QUEUE_PER_GUILD`, `MUSIC_MAX_SONGS_PER_USER`, `MUSIC_REQUESTS_PER_USER`, `MUSIC_REQUESTS_PER_GUILD` and `MUSIC_CONTROLS_PER_USER` in `.env` change them.
+
+The bot leaves voice after 10 minutes with nobody else in the channel, or 10 minutes with nothing playing and no music commands. A song that is still playing never counts as idle, so a long one is not cut off. `MUSIC_ALONE_SECONDS` and `MUSIC_IDLE_SECONDS` change the two times. Any YouTube link works (watch, playlist, Shorts, `music.youtube.com`, the mobile site), and a playlist plays its first song.
 
 Examples:
 

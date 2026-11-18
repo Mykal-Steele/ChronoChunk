@@ -10,6 +10,21 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.24.0 (2026-11-18)
+
+### Added
+
+- `/help music` shows how music works: how to start a song, every music command, who can control playback, and the real limits. Typing `/help music` in chat shows the same page, and `/help` points to it.
+- The two voice timeouts are settings: `MUSIC_IDLE_SECONDS` and `MUSIC_ALONE_SECONDS`, both 600 by default.
+
+### Fixed
+
+- A song longer than 10 minutes no longer gets cut off. The idle check only counted commands, so a long song with nobody typing looked idle. A song that is playing now never counts as idle.
+- Someone coming back to the voice channel stops the "alone" timer. Before, the bot left 10 minutes after the channel first emptied, even with people listening again.
+- Playlist links, `music.youtube.com` links, Shorts and mobile YouTube links play. They used to be treated as search words and came back as "couldn't find any songs". A playlist plays its first song and only that song is looked up, instead of every song in it.
+- Removed a members-only filter from the song lookup that never ran. It was written backwards: it would have skipped every normal video, and crashed while doing it.
+- The bot knows when it leaves voice on its own and points people to `/help music`.
+
 ## 3.23.0 (2026-11-18)
 
 ### Changed

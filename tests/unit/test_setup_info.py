@@ -382,6 +382,15 @@ def test_the_bot_knows_music_is_slash_commands_with_real_limits(monkeypatch):
     assert "never say u queued" in text
 
 
+def test_the_bot_knows_when_it_leaves_voice_and_where_the_music_help_is(monkeypatch):
+    monkeypatch.setattr(Config, "MUSIC_IDLE_SECONDS", 900, raising=False)
+    monkeypatch.setattr(Config, "MUSIC_ALONE_SECONDS", 300, raising=False)
+    text = setup_info.self_prompt("gemini-3.1-flash-lite")
+    assert "5 min with nobody else in the channel" in text
+    assert "15 min with nothing playing" in text
+    assert "/help music" in text
+
+
 BUSY_CHANGELOG = """# Changelog
 
 ## 9.1.2 (2026-11-18)
