@@ -35,7 +35,7 @@ Accepted with these decisions: something said in a small server can come up in a
 
 - Trust: what someone says about themselves is believed. A claim about the world is stored as "X told me", and checked with a web search before the bot states it as fact. One person cannot overwrite a fact others confirmed.
 - Every memory has a source (person, server, channel, time) and an importance score.
-- Memory stays encrypted at rest where the reply log already is, and in the R2 backups.
+- Where it is stored: memories, like facts and conversations, are plain SQLite in `state/chronochunk.db` on the VM, which only root and the bot's user can read. The reply log is encrypted row by row. Every copy that leaves the VM (the R2 backups) is encrypted. Encrypting the database itself would mean a key on the same disk, so it would not protect against anyone who can already read the file.
 - Provider-neutral: works on Vertex, Azure or any OpenAI-compatible API, same as the rest of the bot.
 
 ## Cost

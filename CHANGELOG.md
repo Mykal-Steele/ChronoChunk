@@ -14,7 +14,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 ### Added
 
-- Long-term memory, layer 1 of `docs/memory-plan.md`. The bot saves what people teach it with the `remember` tool, with who said it, when, and the server and channel, and every server it is in shares that memory. Before it answers, memories that share words with the message are put in front of it with who told it and when, so it can say "kruskal said it got moved to tuesday" in another server. `recall` searches with other words. A correction replaces the old memory. Only the person can change what they said about themselves, and one person cannot overwrite a claim someone else confirmed. `/forget` deletes what you taught.
+- Long-term memory, layer 1 of `docs/memory-plan.md`. The bot saves what people teach it with the `remember` tool, with who said it, when, and the server and channel, and every server it is in shares that memory. Before it answers, memories that share words with the message are put in front of it with who told it and when, so it can say "kruskal said it got moved to tuesday" in another server. `recall` searches with other words. A correction replaces the old memory. Only the person can change what they said about themselves, and one person cannot overwrite a claim someone else confirmed. `/forget` deletes what you taught and takes your name off what you confirmed, and a reply that was already being written when you ran it cannot save a memory for you afterwards. A cached answer is never reused once a memory changed.
 - PRIVACY.md and `/help` say that what you teach the bot is shared by every server. PRIVACY.md also names the current AI provider and the nightly encrypted copy in Cloudflare R2.
 
 ## 3.24.3 (2026-11-19)

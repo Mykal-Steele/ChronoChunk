@@ -77,7 +77,10 @@ class RememberMemory(Tool):
         except (TypeError, ValueError):
             replaces = None
         saved = self.store.remember(content, str(args.get("about") or ""), str(args.get("kind") or "claim"),
-                                    speaker, getattr(turn, "place", None) or Place(), replaces=replaces)
+                                    speaker, getattr(turn, "place", None) or Place(), replaces=replaces,
+                                    started_at=turn.started_at)
+        if saved.memory_id is None:
+            return ToolResult(saved.note)
         return ToolResult(f"saved as memory #{saved.memory_id}" + (f". {saved.note}" if saved.note else ""))
 
 

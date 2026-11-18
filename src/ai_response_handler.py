@@ -5,6 +5,7 @@ import json
 import re
 import urllib.parse
 import logging
+from src.memory_store import MemoryStore
 from src.tools.memory import AUTO_RECALL_LIMIT, RecallMemory
 from src.clock import BANGKOK
 from types import SimpleNamespace
@@ -971,6 +972,8 @@ class AIResponseHandler:
 
         # Per-user cache, keyed by user identity + query + tail of history + what was attached
         cache_key = f"{user_id or username}|{query}|{conversation_history[-120:] if conversation_history else ''}"
+        # A saved, corrected or forgotten memory can change the answer, so it starts a new key
+        cache_key += f"|m{MemoryStore().revision()}"
         if attached_context or images:
             attached_digest = hashlib.sha1((attached_context + "".join(images)).encode("utf-8")).hexdigest()
             cache_key += f"|{attached_digest}"

@@ -233,3 +233,73 @@ async def test_no_memory_block_when_nothing_matches(database, mock_openai_client
     await handler.generate_reply("/hows the weather", "", "Mint", "222", allow_files=True, place=XLRX)
     joined = "\n".join(str(m["content"]) for m in mock_openai_client.chat.completions.create.call_args[1]["messages"])
     assert "=== MEMORIES" not in joined
+
+
+# ── review on #54 ────────────────────────────────────────────────────────────
+
+def test_two_people_with_the_same_name_keep_separate_self_reports(store):
+    alex_one, alex_two = Speaker("1", "Alex"), Speaker("2", "Alex")
+    first = store.remember("i am vegetarian", "Alex", "self", alex_one, KMUTT)
+    second = store.remember("i am vegetarian", "Alex", "self", alex_two, XLRX)
+    assert second.memory_id != first.memory_id
+
+
+def test_a_correction_to_text_that_already_exists_still_replaces(store):
+    friday = store.remember("the proposal is due friday", "csc340", "claim", KRUSKAL, KMUTT)
+    monday = store.remember("the proposal is due monday", "csc340", "claim", SLADE, KMUTT)
+    fix = store.remember("the proposal is due monday", "csc340", "claim", KRUSKAL, KMUTT, replaces=friday.memory_id)
+    assert fix.replaced == friday.memory_id and fix.memory_id == monday.memory_id
+    assert [m.content for m in store.recall("proposal due")] == ["the proposal is due monday"]
+
+
+def test_the_owner_can_correct_a_self_report_someone_confirmed(store):
+    mine = store.remember("i am vegetarian", "Slade", "self", SLADE, KMUTT)
+    store.remember("i am vegetarian", "Slade", "claim", MINT, KMUTT)
+    fix = store.remember("i eat fish now", "Slade", "self", SLADE, KMUTT, replaces=mine.memory_id)
+    assert fix.replaced == mine.memory_id
+
+
+def test_the_confirmer_alone_cannot_overwrite_a_confirmed_claim(store):
+    claim = store.remember("the exam is in room 410", "exam", "claim", KRUSKAL, KMUTT)
+    store.remember("the exam is in room 410", "exam", "claim", SLADE, KMUTT)
+    attempt = store.remember("the exam is in room 302", "exam", "claim", SLADE, KMUTT, replaces=claim.memory_id)
+    assert attempt.replaced is None
+
+
+def test_forget_also_removes_their_confirmations(store):
+    store.remember("the exam is in room 410", "exam", "claim", KRUSKAL, KMUTT)
+    store.remember("the exam is in room 410", "exam", "claim", SLADE, KMUTT)
+    store.forget_user("760")
+    assert store.recall("exam room")[0].confirmed_by == []
+
+
+def test_a_memory_from_a_reply_that_started_before_forget_is_refused(store):
+    started = datetime.now(timezone.utc) - timedelta(seconds=5)
+    store.forget_user("760")
+    saved = store.remember("i am vegetarian", "Slade", "self", SLADE, KMUTT, started_at=started)
+    assert saved.memory_id is None and "forget" in saved.note
+    assert store.recall("vegetarian") == []
+    later = store.remember("i am vegetarian", "Slade", "self", SLADE, KMUTT, started_at=datetime.now(timezone.utc))
+    assert later.memory_id
+
+
+def test_every_memory_change_moves_the_revision(store):
+    seen = {store.revision()}
+    saved = store.remember("the exam is in room 410", "exam", "claim", KRUSKAL, KMUTT)
+    seen.add(store.revision())
+    store.remember("the exam is in room 410", "exam", "claim", SLADE, KMUTT)
+    seen.add(store.revision())
+    store.remember("room 302", "exam", "claim", MINT, KMUTT, replaces=saved.memory_id)
+    seen.add(store.revision())
+    store.forget_user("111")
+    seen.add(store.revision())
+    assert len(seen) == 5
+
+
+async def test_a_cached_reply_is_not_reused_after_a_memory_changes(database, mock_openai_client):
+    mock_openai_client.chat.completions.create.side_effect = [_message(content="friday"), _message(content="monday")]
+    handler = _handler(mock_openai_client)
+    ask = dict(allow_files=True, session_key="66:222", place=XLRX)
+    assert (await handler.generate_reply("/when is the csc340 proposal due", "", "Mint", "222", **ask)).text == "friday"
+    MemoryStore(database).remember("the csc340 proposal is due monday", "csc340", "claim", KRUSKAL, KMUTT)
+    assert (await handler.generate_reply("/when is the csc340 proposal due", "", "Mint", "222", **ask)).text == "monday"

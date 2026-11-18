@@ -1,5 +1,6 @@
 """What every tool shares: the state of the reply being built, and the interface a tool implements."""
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, List, Optional
 
@@ -59,6 +60,8 @@ class Turn:
     channel_id: Optional[str] = None
     # The server and channel the reply is in, for what remember saves. A Place from memory_store
     place: Optional[Any] = None
+    # When the reply began, in wall time. remember refuses a memory when they ran /forget after this
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     routing: Optional[dict] = None
     # True when the routing call asked for a web lookup before the answer
     needs_web: bool = False
