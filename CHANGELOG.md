@@ -18,7 +18,8 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 ### Added
 
-- Every music limit is a setting: `MUSIC_REQUESTS_PER_USER`, `MUSIC_REQUESTS_PER_GUILD`, `MUSIC_CONTROLS_PER_USER`, `MUSIC_MAX_QUEUE_PER_GUILD` and `MUSIC_MAX_SONGS_PER_USER`. Changing one needs only `.env` and a restart.
+- Every music limit is a setting: `MUSIC_REQUESTS_PER_USER`, `MUSIC_REQUESTS_PER_GUILD`, `MUSIC_CONTROLS_PER_USER`, `MUSIC_MAX_QUEUE_PER_GUILD` and `MUSIC_MAX_SONGS_PER_USER`. Changing one needs only `.env` and a restart. A value below 1 or one that is not a whole number falls back to the default, since 0 used to crash the rate limiter.
+
 ## 3.22.4 (2026-11-18)
 
 ### Fixed
