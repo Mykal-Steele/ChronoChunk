@@ -159,13 +159,13 @@ To go back to Azure, set the Azure endpoint and key in `.env` and use the commen
 
 ### Backups off the server
 
-The bot copies its database to `state/backups` at startup and once a day, but those copies sit on the VM's own disk. The Azure shutdown in November 2026 lost everything that way, so a nightly job also uploads them to the Cloudflare R2 bucket `chronochunk-backups`, encrypted on the VM before they leave. R2 deletes them after 30 days.
+The bot copies its database to `state/backups` at startup and once a day, but those copies sit on the VM's own disk. The Azure shutdown in November 2026 lost everything that way, so a nightly job also uploads them to the Cloudflare R2 bucket `chronochunk-backups`, with a copy of the reply log and its key, encrypted on the VM before they leave. R2 deletes them after 30 days.
 
 | Piece | Where |
 |---|---|
 | Upload script | `deployment/backup/chronochunk-backup`, installed at `/usr/local/bin/chronochunk-backup` |
 | Timer | `deployment/backup/chronochunk-backup.timer` and `.service`, daily at 04:00 UTC |
-| rclone config | `/etc/chronochunk/rclone.conf` on the VM, root only. Template: `deployment/backup/rclone.conf.example` |
+| rclone config | `/etc/chronochunk/rclone.conf` on the VM, root only, mode 600. Template: `deployment/backup/rclone.conf.example`. It holds the R2 token and the encryption password in a form rclone can reverse, so it can decrypt every backup on its own. Treat it like the password |
 | Encryption password and salt | Kept off the VM by the owner. Without them the backups cannot be read |
 
 How to restore is in `docs/memory-plan.md`.
@@ -200,6 +200,21 @@ gcloud compute instances create chronochunk --project adorio --zone us-central1-
 2. Copy `deployment/docker-compose.yml` and `deployment/update.sh` to `/opt/chronochunk/`, and create `/opt/chronochunk/.env` with the secrets above.
 3. Give the data folders to the container's user: `sudo chown -R 1000:1000 /opt/chronochunk/data`.
 4. Start it: `cd /opt/chronochunk && docker compose up -d --build`.
+5. Set up the nightly backup to R2. The owner supplies the R2 token and the encryption password and salt:
+
+```bash
+cd /opt/chronochunk/app
+sudo apt-get install -y rclone
+sudo install -m 755 deployment/backup/chronochunk-backup /usr/local/bin/chronochunk-backup
+sudo install -m 644 deployment/backup/chronochunk-backup.service deployment/backup/chronochunk-backup.timer /etc/systemd/system/
+sudo install -d -m 700 /etc/chronochunk
+# write /etc/chronochunk/rclone.conf from deployment/backup/rclone.conf.example, then:
+sudo chmod 600 /etc/chronochunk/rclone.conf
+sudo systemctl daemon-reload && sudo systemctl enable --now chronochunk-backup.timer
+sudo systemctl start chronochunk-backup.service && sudo journalctl -u chronochunk-backup.service -n 5
+```
+
+The last line should end with "backup done". Without this step the new server has no backups off its own disk.
 
 ## Commands
 

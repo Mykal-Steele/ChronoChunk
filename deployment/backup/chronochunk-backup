@@ -1,11 +1,32 @@
 #!/bin/sh
-# Uploads ChronoChunk's daily database copies to Cloudflare R2, encrypted by rclone's crypt
-# remote ("backup" in /etc/chronochunk/rclone.conf). R2 deletes anything older than 30 days.
+# Uploads ChronoChunk's daily database copies and its reply log to Cloudflare R2, encrypted by
+# rclone's crypt remote ("backup" in /etc/chronochunk/rclone.conf). R2 deletes anything older than 30 days.
 set -eu
 CONF=/etc/chronochunk/rclone.conf
 STATE=/opt/chronochunk/data/state
-# The bot writes chronochunk-<day>.db into state/backups at startup and once a day
-rclone --config "$CONF" copy "$STATE/backups" backup:db --max-age 48h --log-level NOTICE
-# Without this key the backed-up reply log cannot be read
-rclone --config "$CONF" copyto "$STATE/reply_log.key" backup:keys/reply_log.key --log-level NOTICE
+DAY=$(date -u +%F)
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+# Every finished daily copy the bot keeps (it keeps 7). Files already in R2 are skipped, and a
+# day missed while R2 was down goes up on the next good run. The .partial file the bot writes
+# before renaming it is never sent.
+rclone --config "$CONF" copy "$STATE/backups" backup:db --include '/chronochunk-*.db' --log-level NOTICE
+
+# The reply log, copied through SQLite so a write in progress cannot leave a torn file
+if [ -f "$STATE/replies.sqlite3" ]; then
+  python3 - "$STATE/replies.sqlite3" "$TMP/replies-$DAY.sqlite3" <<'PY'
+import sqlite3, sys
+source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+target = sqlite3.connect(sys.argv[2])
+source.backup(target)
+target.close()
+source.close()
+PY
+  rclone --config "$CONF" copyto "$TMP/replies-$DAY.sqlite3" "backup:replies/replies-$DAY.sqlite3" --log-level NOTICE
+fi
+
+# The key the reply log is encrypted with. Sent again every run, so R2's 30 day expiry never
+# removes it while a reply log backup still needs it.
+rclone --config "$CONF" copyto "$STATE/reply_log.key" backup:keys/reply_log.key --ignore-times --log-level NOTICE
 echo "backup done $(date -u +%FT%TZ)"

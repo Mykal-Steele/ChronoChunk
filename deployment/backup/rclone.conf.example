@@ -1,7 +1,9 @@
 # /etc/chronochunk/rclone.conf on the VM, mode 600, owned by root. No real values here.
 # Build the two obscured values with `rclone obscure <password>` and `rclone obscure <salt>`.
+# rclone can turn the obscured values back into the password and salt, so this file alone can
+# decrypt every backup. Treat it as a secret: root only, mode 600, never in the repo.
 # The plain password and salt are kept off the VM too (see README, "Backups off the server"),
-# because without them the backups cannot be decrypted.
+# because without them the backups cannot be decrypted once the VM is gone.
 
 [r2]
 type = s3

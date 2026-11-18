@@ -50,11 +50,35 @@ A fixed script teaches the bot facts, then asks about them later in other channe
 
 ## Restoring a backup
 
-On the VM:
+What the nightly job keeps in R2, under rclone's `backup:` remote (encrypted, kept 30 days):
+
+- `db/chronochunk-<day>.db`: the bot's memory, one copy per day.
+- `replies/replies-<day>.sqlite3`: the reply log. Its rows are encrypted with the key below.
+- `keys/reply_log.key`: that key, sent again every night so R2 never expires it.
+
+On the VM, pick a day from the list, then put the three files where the bot reads them. The current files are moved to `before-restore` first, not deleted:
 
 ```bash
-sudo rclone --config /etc/chronochunk/rclone.conf lsl backup:db
-sudo rclone --config /etc/chronochunk/rclone.conf copy backup:db/chronochunk-<day>.db /tmp/restore
+C="sudo rclone --config /etc/chronochunk/rclone.conf"
+S=/opt/chronochunk/data/state
+$C lsl backup:
+cd /opt/chronochunk && sudo docker compose stop bot
+sudo mkdir -p $S/before-restore && sudo mv $S/chronochunk.db* $S/replies.sqlite3 $S/reply_log.key $S/before-restore/
+$C copyto backup:db/chronochunk-<day>.db $S/chronochunk.db
+$C copyto backup:replies/replies-<day>.sqlite3 $S/replies.sqlite3
+$C copyto backup:keys/reply_log.key $S/reply_log.key
+sudo chown -R 1000:1000 $S && sudo chmod 600 $S/replies.sqlite3 $S/reply_log.key
+sudo docker compose start bot
 ```
 
-Without the VM: make a new R2 token for `chronochunk-backups`, rebuild `rclone.conf` from `deployment/backup/rclone.conf.example` with the password and salt kept off the server, then run the same commands.
+The folder has to stay writable by the bot's user (uid 1000): SQLite writes a small file next to a database in WAL mode even to read it. If `REPLY_LOG_KEY` is set in `.env`, the bot uses that key and not the file.
+
+Check it worked:
+
+- `sudo docker logs --tail 20 chronochunk` shows "Logged in as ChronoChunk".
+- `sudo docker compose exec bot python -m src.reply_log --tail 1` prints the newest reply in plain text, so the key matches.
+- `/info` in Discord shows what the bot remembers about you.
+
+Without the VM: build a new one with "Setting up a new server" in the README, make a new R2 token for `chronochunk-backups`, write `rclone.conf` from `deployment/backup/rclone.conf.example` with the password and salt kept off the server, then run the same commands.
+
+Tested on 2026-11-18 by restoring into a scratch folder on the VM: the bot's own code opened the database (integrity ok, 5 users, 43 conversations) and decrypted the reply log with the restored key.
