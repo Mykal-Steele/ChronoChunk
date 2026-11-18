@@ -150,3 +150,52 @@ def test_the_voice_timeouts_can_be_changed_from_env():
     code = "from config.config import Config as C; print(C.MUSIC_IDLE_SECONDS, C.MUSIC_ALONE_SECONDS)"
     out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
     assert out.stdout.split() == ["900", "120"]
+
+
+def _bot_member(member_id=42):
+    return SimpleNamespace(bot=True, id=member_id)
+
+
+async def test_the_bot_moved_into_an_empty_channel_starts_the_alone_timer(monkeypatch):
+    manager = _manager(monkeypatch)
+    state = _connect(manager, channel_id=10)
+    state.voice_client.user.id = 42
+    await manager.on_voice_state_update(
+        _bot_member(), _voice_state(_channel(10)), _voice_state(_channel(20, [_bot_member()])))
+    assert state.alone_since is not None
+
+
+async def test_the_bot_moved_to_people_stops_the_alone_timer(monkeypatch):
+    manager = _manager(monkeypatch)
+    state = _connect(manager, channel_id=10)
+    state.voice_client.user.id = 42
+    state.alone_since = NOW - 300
+    await manager.on_voice_state_update(
+        _bot_member(), _voice_state(_channel(10)), _voice_state(_channel(20, [_bot_member(), _member()])))
+    assert state.alone_since is None
+
+
+async def _play_into_a_full_queue(manager, state):
+    from config.config import Config
+    from src.music_manager import Song
+    state.queue = [Song("u", "t", 100, "x") for _ in range(Config.MUSIC_MAX_QUEUE_PER_GUILD)]
+    await manager.play(1, "some song", "Kruskal", "7")
+
+
+async def test_a_request_from_outside_the_bots_channel_keeps_the_alone_timer(monkeypatch):
+    # /relate does not move the bot, so a request from another channel adds no listener
+    manager = _manager(monkeypatch)
+    state = _connect(manager, channel_id=10)
+    state.voice_client.channel.members = [_bot_member()]
+    state.alone_since = NOW - 300
+    await _play_into_a_full_queue(manager, state)
+    assert state.alone_since == NOW - 300
+
+
+async def test_a_request_with_someone_listening_stops_the_alone_timer(monkeypatch):
+    manager = _manager(monkeypatch)
+    state = _connect(manager, channel_id=10)
+    state.voice_client.channel.members = [_bot_member(), _member()]
+    state.alone_since = NOW - 300
+    await _play_into_a_full_queue(manager, state)
+    assert state.alone_since is None

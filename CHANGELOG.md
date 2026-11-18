@@ -20,7 +20,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 ### Fixed
 
 - A song longer than 10 minutes no longer gets cut off. The idle check only counted commands, so a long song with nobody typing looked idle. A song that is playing now never counts as idle.
-- Someone coming back to the voice channel stops the "alone" timer. Before, the bot left 10 minutes after the channel first emptied, even with people listening again.
+- Someone coming back to the voice channel stops the "alone" timer. Before, the bot left 10 minutes after the channel first emptied, even with people listening again. The timer also follows the bot when someone drags it to another channel, and a `/relate` from someone outside the bot's channel no longer resets it.
 - Playlist links, `music.youtube.com` links, Shorts and mobile YouTube links play. They used to be treated as search words and came back as "couldn't find any songs". A playlist plays its first song and only that song is looked up, instead of every song in it.
 - Removed a members-only filter from the song lookup that never ran. It was written backwards: it would have skipped every normal video, and crashed while doing it.
 - The bot knows when it leaves voice on its own and points people to `/help music`.

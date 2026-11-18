@@ -75,8 +75,7 @@ def build_music_help_embed() -> discord.Embed:
         "`/skip`, `/pause`, `/resume` - the song playing now",
         "`/volume <0-100>` - how loud i am",
         "`/stop` - stop, clear the queue and leave voice",
-        "skip, pause, resume, volume and stop need Manage Server, so one person cant skip everyone's songs. "
-        "a server can hand them to other roles in Server Settings > Integrations",
+        "skip, pause, resume, volume and stop need Manage Server, so one person cant skip everyone's songs",
     ]
     embed.add_field(name="🎛️ controls", value="\n".join(control), inline=False)
     limits = [

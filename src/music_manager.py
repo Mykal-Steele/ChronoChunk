@@ -82,6 +82,12 @@ class Song:
         seconds = duration_seconds % 60
         return f"{minutes}:{seconds:02d}"
 
+def _has_listener(voice, channel=None) -> bool:
+    """True when a person, not a bot, is in the bot's voice channel (or in channel, when given)."""
+    channel = channel if channel is not None else getattr(voice, "channel", None)
+    return any(not getattr(m, "bot", False) for m in (getattr(channel, "members", None) or []))
+
+
 class GuildMusicState:
     """Manages music playback state for a specific guild"""
     def __init__(self):
@@ -320,8 +326,10 @@ class MusicManager:
             # Update activity timestamp whenever there's user interaction
             self.update_activity(guild_id)
             
-            # There's user activity, so the bot is no longer counted as alone
-            state.alone_since = None
+            # Someone listening in the bot's channel ends the alone timer. /relate can come from
+            # another channel without moving the bot, and that adds no listener
+            if _has_listener(state.voice_client):
+                state.alone_since = None
 
             async with state.lock:
                 # Check the caps before doing an expensive yt-dlp lookup.
@@ -703,6 +711,12 @@ Request: "{query}"
     async def on_voice_state_update(self, member, before, after):
         """Start the alone timer when the last person leaves the bot's channel, and stop it when someone comes back."""
         if member.bot:
+            # Only the bot's own moves matter, such as someone dragging it into another channel
+            joined = after.channel if after else None
+            for state in self.guild_music_states.values():
+                voice = state.voice_client
+                if voice and getattr(voice.user, "id", None) == getattr(member, "id", None) and joined is not None:
+                    state.alone_since = None if _has_listener(voice, joined) else (state.alone_since or time.time())
             return
         left = before.channel if before else None
         joined = after.channel if after else None

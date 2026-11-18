@@ -45,6 +45,9 @@ def test_the_music_page_states_the_limits_from_the_settings(monkeypatch):
 def test_the_music_page_says_who_can_control_playback():
     text = _text(build_music_help_embed())
     assert "Manage Server" in text
+    # The controls check Manage Server when they run, so giving a role the command in
+    # Integrations does not let it skip or stop. The page must not say it does (review on #50)
+    assert "Integrations" not in text
 
 
 def test_the_music_page_says_chat_cannot_play_songs():
