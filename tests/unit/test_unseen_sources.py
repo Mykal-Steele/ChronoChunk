@@ -78,3 +78,15 @@ async def test_a_reply_with_no_tools_is_told_it_cannot_look_things_up(handler, m
     system = mock_openai_client.chat.completions.create.call_args_list[-1][1]["messages"][0]["content"]
     assert "cant search the web" in system
     assert "never write a Source line" in system
+
+
+def test_course_source_links_count_as_seen():
+    # course_sources maps a passage number to (name, link). Only the numbers were passed at first,
+    # which would have removed every course citation
+    from src.ai_response_handler import seen_material
+    from src.tools.base import Turn
+    link = "https://kmutt.sharepoint.com/sites/csc340/slides.pdf#page=44"
+    turn = Turn(query="what is a* search", username="K", history="", attached="", images=[])
+    turn.course_sources = {"10": ("Search slides, page 44", link)}
+    text = f"a* adds the heuristic [10]\n-# Source: [Search slides, page 44](<{link}>)"
+    assert drop_unseen_sources(text, seen_material(turn, [])) == text

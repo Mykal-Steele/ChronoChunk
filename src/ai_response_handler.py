@@ -343,6 +343,12 @@ def drop_unseen_sources(text: str, found: List[str], given: Sequence[str] = ()) 
     return "\n".join(kept).rstrip()
 
 
+def seen_material(request, material: List[str]) -> List[str]:
+    """Everything the tools put in front of the model: search results, pages, saved material and course links."""
+    courses = [f"{name} {link}" for name, link in (request.course_sources or {}).values()]
+    return list(request.findings) + list(material) + courses
+
+
 def _text_length(text: str) -> int:
     """How much a reply says: its length without code blocks, source lines and links."""
     text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
@@ -1197,7 +1203,7 @@ class AIResponseHandler:
                         shown = render_sources(shown, request.course_sources)
                     shown = repair_links(shown, request.findings)
                     # A source the bot never saw is made up, whatever the model says
-                    found = request.findings + material + [str(source) for source in (request.course_sources or [])]
+                    found = seen_material(request, material)
                     shown = drop_unseen_sources(shown, found, given=[query, request.attached, request.history])
                     reply = Reply(shown, files)
                 # An answer from the web or the course material goes stale, so it is looked up again next time
