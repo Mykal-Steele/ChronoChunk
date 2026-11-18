@@ -10,6 +10,20 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.23.0 (2026-11-18)
+
+### Changed
+
+- Music limits are looser. Per 10 minutes, one person may request 15 songs (was 5) and use 60 controls (was 20), and a server may request 40 songs (was 10). A server's queue holds 25 songs (was 10), and one person may have 8 of them (was 3).
+
+### Added
+
+- Every music limit is a setting: `MUSIC_REQUESTS_PER_USER`, `MUSIC_REQUESTS_PER_GUILD`, `MUSIC_CONTROLS_PER_USER`, `MUSIC_MAX_QUEUE_PER_GUILD` and `MUSIC_MAX_SONGS_PER_USER`. Changing one needs only `.env` and a restart. A value below 1 or one that is not a whole number falls back to the default, since 0 used to crash the rate limiter.
+
+### Fixed
+
+- What the bot knows about its recent updates keeps the big news, such as the move to Google Cloud and the memory wipe, when small fixes pile up. "Changed" lines go in first, and the size limit counts everything it adds.
+
 ## 3.22.4 (2026-11-18)
 
 ### Fixed

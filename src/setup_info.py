@@ -29,7 +29,7 @@ AZURE_METADATA_TIMEOUT_SECONDS = 3
 GOOGLE_METADATA_URL = "http://metadata.google.internal/computeMetadata/v1/instance/?recursive=true"
 # The newest entry is what the bot knows about its own latest update (moves, resets, fixes)
 CHANGELOG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "CHANGELOG.md")
-CHANGELOG_LIMIT = 2400
+CHANGELOG_LIMIT = 2200
 CHANGELOG_RECENT_DAYS = 14
 
 
@@ -45,9 +45,11 @@ PROVIDER_NAMES = {
 
 def latest_changes() -> str:
     """
-    What changed lately, from CHANGELOG.md: every entry from the last two weeks, newest
-    first, or just the newest one when nothing is that recent. Each entry is its heading,
-    "3.22.0 (2026-11-17)", then its bullets, cut to CHANGELOG_LIMIT characters in all.
+    What changed lately, from CHANGELOG.md: the entries from the last two weeks, newest
+    first, or just the newest one when nothing is that recent. Lines under "Changed"
+    (moves, resets, new behavior) go in first so a pile of small fixes cannot push them
+    out, then the other lines while there is room. The whole text stays within
+    CHANGELOG_LIMIT characters, counting the headings and line breaks too.
     """
     try:
         with open(CHANGELOG_PATH, encoding="utf-8") as f:
@@ -60,22 +62,34 @@ def latest_changes() -> str:
         found = re.search(r"\((\d{4}-\d{2}-\d{2})\)", title)
         if not found:
             continue
-        bullets = [line.strip()[2:] for line in body.splitlines() if line.strip().startswith("- ")]
+        bullets, kind = [], ""
+        for line in body.splitlines():
+            if line.startswith("### "):
+                kind = line[4:].strip().lower()
+            elif line.strip().startswith("- "):
+                bullets.append((kind, line.strip()[2:]))
         entries.append((datetime.strptime(found.group(1), "%Y-%m-%d").date(), title.strip(), bullets))
     if not entries:
         return ""
     recent = [e for e in entries if (_today() - e[0]).days <= CHANGELOG_RECENT_DAYS] or entries[:1]
-    lines, size = [], 0
-    for _, title, bullets in recent:
-        if size + len(title) > CHANGELOG_LIMIT:
-            break
-        lines.append(title)
-        size += len(title)
-        for bullet in bullets:
-            if size + len(bullet) > CHANGELOG_LIMIT:
-                break
-            lines.append(f"  - {bullet}")
-            size += len(bullet)
+
+    order = [(i, j) for i, e in enumerate(recent) for j, (kind, _) in enumerate(e[2]) if kind == "changed"]
+    order += [(i, j) for i, e in enumerate(recent) for j, (kind, _) in enumerate(e[2]) if kind != "changed"]
+    chosen, headed, size = set(), set(), -1  # -1: the first line has no line break before it
+    for i, j in order:
+        cost = len(recent[i][2][j][1]) + len("\n  - ") + (0 if i in headed else len(recent[i][1]) + 1)
+        if size + cost > CHANGELOG_LIMIT:
+            continue
+        chosen.add((i, j))
+        headed.add(i)
+        size += cost
+    if not headed:
+        return recent[0][1]
+    lines = []
+    for i, (_, title, bullets) in enumerate(recent):
+        if i in headed:
+            lines.append(title)
+            lines.extend(f"  - {bullet}" for j, (_, bullet) in enumerate(bullets) if (i, j) in chosen)
     return "\n".join(lines)
 
 

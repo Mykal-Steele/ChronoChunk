@@ -380,3 +380,45 @@ def test_the_bot_knows_music_is_slash_commands_with_real_limits(monkeypatch):
         assert command in text
     assert "25 songs" in text and "8 per person" in text and "15" in text and "40" in text
     assert "never say u queued" in text
+
+
+BUSY_CHANGELOG = """# Changelog
+
+## 9.1.2 (2026-11-18)
+
+### Fixed
+
+""" + "\n".join(f"- small fix number {n} that took a lot of words to describe properly here" for n in range(40)) + """
+
+## 9.1.0 (2026-11-17)
+
+### Changed
+
+- Moved to a new host. Memory starts fresh.
+
+### Fixed
+
+- A fix.
+"""
+
+
+def test_big_news_stays_in_even_when_small_fixes_fill_the_space(monkeypatch, tmp_path):
+    # After five small releases the move to Google Cloud and the memory wipe dropped out
+    from datetime import date
+    path = tmp_path / "CHANGELOG.md"
+    path.write_text(BUSY_CHANGELOG)
+    monkeypatch.setattr(setup_info, "CHANGELOG_PATH", str(path))
+    monkeypatch.setattr(setup_info, "_today", lambda: date(2026, 11, 18))
+    text = setup_info.latest_changes()
+    assert "Moved to a new host. Memory starts fresh." in text
+    assert text.index("9.1.2") < text.index("9.1.0")
+
+
+def test_the_changelog_part_never_passes_its_limit_counting_what_it_adds(monkeypatch, tmp_path):
+    from datetime import date
+    many_short = "\n".join(f"- fix {n}" for n in range(400))
+    path = tmp_path / "CHANGELOG.md"
+    path.write_text(f"# Changelog\n\n## 9.9.9 (2026-11-18)\n\n### Fixed\n\n{many_short}\n")
+    monkeypatch.setattr(setup_info, "CHANGELOG_PATH", str(path))
+    monkeypatch.setattr(setup_info, "_today", lambda: date(2026, 11, 18))
+    assert len(setup_info.latest_changes()) <= setup_info.CHANGELOG_LIMIT
