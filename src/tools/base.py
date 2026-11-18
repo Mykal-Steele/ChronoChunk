@@ -1,7 +1,7 @@
 """What every tool shares: the state of the reply being built, and the interface a tool implements."""
 import time
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, List, Optional
+from typing import Any, Awaitable, Callable, List, Optional
 
 from src.document_builder import BuiltFile
 
@@ -57,6 +57,8 @@ class Turn:
     # The Discord channel and user, and the routing call's answer, for the local debug log
     user_id: Optional[str] = None
     channel_id: Optional[str] = None
+    # The server and channel the reply is in, for what remember saves. A Place from memory_store
+    place: Optional[Any] = None
     routing: Optional[dict] = None
     # True when the routing call asked for a web lookup before the answer
     needs_web: bool = False

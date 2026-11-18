@@ -10,6 +10,8 @@ When you talk to the bot (a `/` message, a slash command, a ping or a reply to i
 - Your last 20 messages to the bot and its answers.
 - Short facts it picks out of what you tell it, such as "likes hiking", and the topics you talk about.
 
+- What you teach it. When you tell the bot something worth keeping ("remember that the exam moved to tuesday", "i'm allergic to peanuts"), it saves that sentence with your name, the server, the channel and the time. These memories are shared by every server the bot is in, so it can tell someone in another server "Slade told me he is allergic to peanuts". A correction replaces the old memory. Only you can change what you said about yourself.
+
 It uses these to remember you between conversations: the facts and your last 3 exchanges with the bot are given to the AI model when you talk to it. The database is not shared with anyone and is not in this repository. It also keeps the time of your recent messages, files, PDF reads and web lookups for up to a day, to enforce the limits in `/help`, and a daily total of what your requests cost in AI spending, which is what `/usage` shows you.
 
 ## What the bot reads, and how long it keeps it
@@ -32,23 +34,24 @@ The bot cannot answer without sending some of what you write to other services:
 
 | Service | What it gets | When |
 |---|---|---|
-| Microsoft Azure OpenAI | Your message, the recent channel messages, the facts stored about you, your last 3 exchanges with the bot, and any image or file you point the bot at | Every answer |
-| Microsoft Azure OpenAI | The picture and name of each custom server emoji | Once per new emoji |
-| Microsoft Azure OpenAI | Your message, to turn it into a search of the course material, and the passages that search found | When your message is in course mode |
+| The AI provider (Google Vertex AI, Gemini, since November 2026) | Your message, the recent channel messages, the facts stored about you, memories that match your message, your last 3 exchanges with the bot, and any image or file you point the bot at | Every answer |
+| The AI provider | The picture and name of each custom server emoji | Once per new emoji |
+| The AI provider | Your message, to turn it into a search of the course material, and the passages that search found | When your message is in course mode |
 | Tavily | Your search words, and links the bot cannot open on its own | When the bot searches the web or opens a link |
 | The website behind a link | A normal page request from the bot's server | When you give the bot a link |
 | mermaid.ink, and kroki.io as a backup | The text of a diagram | When the bot draws a diagram |
 | YouTube and Spotify | Your song search or link | When you play music |
+| Cloudflare R2 | Encrypted copies of the database (profiles, facts, memories, conversations) and of the encrypted reply log. They are encrypted on the bot's server before they leave, and R2 deletes them after 30 days | Every night |
 
 ## See or delete your data
 
 - `/info` or `/mydata` shows what the bot has stored about you. Only you see the answer.
-- `/forget` deletes everything stored about you, including the encrypted reply-log rows tied to your user hash.
+- `/forget` deletes everything stored about you, including what you taught the bot and the encrypted reply-log rows tied to your user hash.
 - `/forget <text>` deletes the one fact that matches.
 
 Your profile, facts and conversations stay until you run `/forget`, or until the person running the bot removes them. The encrypted reply log is kept for `REPLY_LOG_KEEP_DAYS` (30 days by default) and then deleted. Each row holds the message that asked for a reply, the recent channel messages that went to the model, any file, PDF or web-page text the bot read, and the reply. `/forget` deletes the rows tied to your user hash, so a message of yours that appears inside someone else's row stays until that row expires. By default the encryption key is stored next to the database, so the encryption protects the database file on its own, not someone who can read the whole server.
 
-The bot copies its database once a day, on the same server, so a damaged file does not lose everyone's data. It keeps 7 copies. What you delete with `/forget` is gone from the database at once and from the last copy 7 days later. The copies are not shared with anyone.
+The bot copies its database once a day, on the same server, so a damaged file does not lose everyone's data. It keeps 7 copies. Each night those copies and the reply log are also sent, encrypted, to Cloudflare R2, which keeps them for 30 days, so the data survives losing the server. What you delete with `/forget` is gone from the database at once, from the copies on the server 7 days later, and from R2 30 days later. Only the person running the bot can read the R2 copies.
 
 ## Questions
 

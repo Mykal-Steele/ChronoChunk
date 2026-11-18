@@ -176,6 +176,7 @@ def build_help_embed() -> discord.Embed:
 
     privacy = [
         "i keep ur last 20 messages to me, my answers, and facts i pick up about u, so i remember u next time",
+        "what u teach me is kept with ur name and shared with every server im in",
         "what u send me goes to the ai model to get an answer",
         "`/info` shows what i stored, `/forget` deletes it",
         f"the full list is at <{PRIVACY_URL}>"

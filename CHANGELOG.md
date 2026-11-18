@@ -10,6 +10,13 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.25.0 (2026-11-19)
+
+### Added
+
+- Long-term memory, layer 1 of `docs/memory-plan.md`. The bot saves what people teach it with the `remember` tool, with who said it, when, and the server and channel, and every server it is in shares that memory. Before it answers, memories that share words with the message are put in front of it with who told it and when, so it can say "kruskal said it got moved to tuesday" in another server. `recall` searches with other words. A correction replaces the old memory. Only the person can change what they said about themselves, and one person cannot overwrite a claim someone else confirmed. `/forget` deletes what you taught.
+- PRIVACY.md and `/help` say that what you teach the bot is shared by every server. PRIVACY.md also names the current AI provider and the nightly encrypted copy in Cloudflare R2.
+
 ## 3.24.3 (2026-11-19)
 
 ### Changed

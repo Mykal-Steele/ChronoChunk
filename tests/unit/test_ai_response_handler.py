@@ -372,7 +372,8 @@ async def test_tools_are_only_offered_when_files_are_allowed(handler, mock_opena
     assert "tools" not in mock_openai_client.chat.completions.create.call_args[1]
     await handler.generate_reply("/make a pdf", "", "Kruskal", "1", allow_files=True)
     offered = mock_openai_client.chat.completions.create.call_args[1]["tools"]
-    assert {tool["function"]["name"] for tool in offered} == {"create_document", "create_diagram", "open_url"}
+    assert {tool["function"]["name"] for tool in offered} == {"create_document", "create_diagram", "open_url",
+                                                               "remember", "recall"}
 
 
 # ── the web ───────────────────────────────────────────────────────────────────
@@ -394,7 +395,7 @@ async def test_search_is_offered_only_when_its_key_is_set(handler, mock_openai_c
     await handler.generate_reply("/whats new", "", "Kruskal", "1", allow_files=True)
     call = mock_openai_client.chat.completions.create.call_args[1]
     assert {tool["function"]["name"] for tool in call["tools"]} == {
-        "create_document", "create_diagram", "open_url", "web_search"}
+        "create_document", "create_diagram", "open_url", "web_search", "remember", "recall"}
     system = call["messages"][0]["content"]
     assert "web_search" in system and "today is" in system
 
