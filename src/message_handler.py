@@ -4,6 +4,7 @@ from collections import Counter, deque
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from config.config import Config
+from src.clock import as_time, days_ago
 from src.conversation_link import LIVE_WINDOW
 
 # Setup logging
@@ -97,6 +98,15 @@ class MessageHandler:
         if sent.tzinfo is None:
             sent = sent.astimezone()  # naive timestamps are local time
         return max(datetime.now(timezone.utc) - sent, timedelta(0))
+
+    @staticmethod
+    def _fact_line(fact) -> str:
+        """One stored fact with when they said it, so an old one is not taken as true right now."""
+        if not isinstance(fact, dict):
+            return f"- {fact}"
+        sent = as_time(fact.get("timestamp"))
+        when = f" (they said this {days_ago(sent)})" if sent else ""
+        return f"- {fact.get('content', '')}{when}"
 
     @staticmethod
     def _hours_ago(age: timedelta) -> str:
@@ -303,7 +313,7 @@ class MessageHandler:
             if facts:
                 context_parts.append("\nWHAT YOU KNOW ABOUT THEM (background only, dont bring it up unless it matters to what they just said):")
                 for fact in facts[-15:]:
-                    context_parts.append(f"  {fact}")
+                    context_parts.append(f"  {self._fact_line(fact)}")
 
         messages = self._usable_messages(channel_id, str(current_id) if current_id is not None else "")
         positions = self._select(messages, asker_id, session_start)

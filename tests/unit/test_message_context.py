@@ -291,7 +291,11 @@ async def test_channel_messages_are_listed_oldest_first():
         fake_message(fake_author("Sam", 888), "cant, meeting", message_id=2),
     ]
     context = await read_channel_messages(messages)
-    assert context.text.startswith("=== LAST 2 MESSAGES IN THIS CHANNEL, OLDEST FIRST ===\nAlex: lunch at 12?\nSam: cant, meeting")
+    lines = context.text.splitlines()
+    assert lines[0] == "=== LAST 2 MESSAGES IN THIS CHANNEL, OLDEST FIRST ==="
+    # Since 3.24.2 each day of messages starts with a line naming the day
+    assert lines[1].startswith("--- ") and lines[1].endswith("(today) ---")
+    assert lines[2:4] == ["Alex: lunch at 12?", "Sam: cant, meeting"]
     assert context.images == []
 
 

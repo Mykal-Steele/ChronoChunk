@@ -5,6 +5,7 @@ import json
 import re
 import urllib.parse
 import logging
+from src.clock import BANGKOK
 from types import SimpleNamespace
 import time
 from datetime import datetime, timedelta, timezone
@@ -73,8 +74,7 @@ def _echo_tool_call(call) -> dict:
     return echoed
 
 
-# The friend group lives in Bangkok, so "now" is told in its time
-_BANGKOK = timezone(timedelta(hours=7))
+_BANGKOK = BANGKOK
 
 
 def _now() -> datetime:
