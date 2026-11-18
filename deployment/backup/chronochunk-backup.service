@@ -1,0 +1,10 @@
+[Unit]
+Description=Upload ChronoChunk database backups to R2
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/chronochunk-backup
+# A oneshot has no start timeout by default, so a stalled upload would block every later run
+TimeoutStartSec=1h

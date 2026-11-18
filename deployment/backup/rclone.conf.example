@@ -1,0 +1,26 @@
+# /etc/chronochunk/rclone.conf on the VM, mode 600, owned by root. No real values here.
+# Build the two obscured values with `rclone obscure <password>` and `rclone obscure <salt>`.
+# rclone can turn the obscured values back into the password and salt, so this file alone can
+# decrypt every backup. Treat it as a secret: root only, mode 600, never in the repo.
+# The plain password and salt are kept off the VM too (see README, "Backups off the server"),
+# because without them the backups cannot be decrypted once the VM is gone.
+
+[r2]
+type = s3
+provider = Cloudflare
+access_key_id = <R2 token access key id, Object Read & Write on chronochunk-backups only>
+secret_access_key = <R2 token secret>
+endpoint = https://<cloudflare account id>.r2.cloudflarestorage.com
+acl = private
+# A bucket-scoped token cannot list buckets
+no_check_bucket = true
+# R2 answers 501 to the HEAD ?versionId= check rclone does after each upload,
+# which fails every first attempt. R2 still checks the upload's Content-MD5.
+no_head = true
+
+[backup]
+type = crypt
+remote = r2:chronochunk-backups/chronochunk
+password = <obscured password>
+password2 = <obscured salt>
+filename_encryption = standard
