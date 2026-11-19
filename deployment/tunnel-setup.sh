@@ -15,16 +15,17 @@ umask 077
 mkdir -p "$DIR"
 chmod 700 "$DIR"
 
-# login always saves its certificate in ~/.cloudflared, so the folder is mounted there
+# login always saves its certificate in ~/.cloudflared, so the folder is mounted there. Not under
+# /home/nonroot: the image's own user owns that, and this runs as chrono
 cloudflared() {
-    docker run --rm --user "$(id -u):$(id -g)" -e HOME=/home/nonroot \
-        -v "$DIR:/home/nonroot/.cloudflared" "$IMAGE" "$@"
+    docker run --rm --user "$(id -u):$(id -g)" -e HOME=/cf \
+        -v "$DIR:/cf/.cloudflared" "$IMAGE" "$@"
 }
 
 if [ ! -f "$DIR/credentials.json" ]; then
     # cert.pem lets cloudflared make tunnels and DNS records in the account, so it is only kept for this
     [ -f "$DIR/cert.pem" ] || cloudflared tunnel login
-    cloudflared tunnel create --credentials-file /home/nonroot/.cloudflared/credentials.json "$NAME"
+    cloudflared tunnel create --credentials-file /cf/.cloudflared/credentials.json "$NAME"
     cloudflared tunnel route dns "$NAME" "$HOSTNAME"
 fi
 
