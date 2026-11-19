@@ -67,7 +67,7 @@ The live bot runs on one small Google Cloud VM, inside Google's free tier. It ra
 | What | Value |
 | --- | --- |
 | Host | Google Cloud VM `chronochunk`, type `e2-micro` (1 GiB of RAM), zone `us-central1-a`, Ubuntu 24.04, project `adorio`. Runs as the service account `chronochunk-bot`, which may only call Vertex AI |
-| Swap | 2 GiB, because image builds need more than 1 GiB |
+| Swap | 2 GiB, because image builds need more than 1 GiB. `vm.swappiness` is 10 (in `/etc/sysctl.d/90-chronochunk.conf`), so the idle bot stays in RAM: at the default of 60 it was swapped out and slash commands timed out |
 | Runs in | Docker Compose, from `deployment/docker-compose.yml`. One container named `chronochunk`. |
 | Container limits | 640 MB of memory, 256 processes, user 1000, no Linux capabilities. It restarts by itself unless stopped. |
 | Health check | `http://localhost:8080/health` once a minute. `/status` on the same port gives the version and uptime as JSON. |

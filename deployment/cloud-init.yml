@@ -24,7 +24,16 @@ swap:
   size: 2G
   maxsize: 2G
 
+# Swap only under real memory pressure. At the default of 60 the kernel moved the idle bot to
+# the swap file while half the RAM was free, and the next slash command took longer than
+# Discord's 3 seconds to answer while it was read back from disk.
+write_files:
+  - path: /etc/sysctl.d/90-chronochunk.conf
+    content: |
+      vm.swappiness = 10
+
 runcmd:
+  - sysctl --system
   - systemctl enable --now docker
   - usermod -aG docker chrono
   - install -d -o chrono -g chrono /opt/chronochunk /opt/chronochunk/data /opt/chronochunk/data/user_data /opt/chronochunk/data/logs /opt/chronochunk/data/state
