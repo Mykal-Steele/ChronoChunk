@@ -322,7 +322,7 @@ def self_prompt(chat_model: str) -> str:
 
 
 def setup_summary(chat_model: str) -> str:
-    """The bot's setup as a code block: host, runtime, models, budget, limits and what it has used so far."""
+    """The bot's setup as plain lines with bold labels: host, runtime, models, budget, limits and what it has used so far."""
     background = Config.AI_BACKGROUND_DEPLOYMENT or chat_model
     limits = Config.RATE_LIMITS
     runtime = f"Python {platform.python_version()}, discord.py {discord.__version__}"

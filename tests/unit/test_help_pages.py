@@ -27,7 +27,8 @@ def test_every_slash_command_is_on_a_help_page():
     commands = set(re.findall(r'tree\.command\(name="([\w-]+)"', source))
     assert len(commands) > 20
     text = _all_help()
-    missing = sorted(name for name in commands if f"`/{name}" not in text)
+    # The whole name, so `/stop` is not satisfied by `/stopwatch`
+    missing = sorted(name for name in commands if not re.search(rf"`/{re.escape(name)}[` ]", text))
     assert missing == []
 
 
@@ -115,3 +116,33 @@ def test_usage_setup_and_stats_are_not_code_blocks(database):
 def test_no_footer_has_backticks_since_footers_show_no_formatting(topic):
     embed = build_help_embed() if topic is None else build_topic_help(topic)
     assert "`" not in (embed.footer.text or "")
+
+
+
+def test_the_start_page_still_says_what_is_kept_and_shared():
+    text = _text(build_help_embed())
+    assert "shared with every server" in text and "private" in text
+
+
+def test_the_memory_page_does_not_promise_more_control_than_there_is():
+    text = _text(build_topic_help("memory"))
+    assert "only u can change what u said about urself" not in text
+    assert "server manager" in text
+
+
+def test_every_page_has_the_same_footer():
+    footers = {build_topic_help(topic).footer.text for topic in PAGES}
+    assert len(footers) == 1
+
+
+# ── labelled rows ────────────────────────────────────────────────────────────
+
+def test_labelled_rows_read_as_plain_discord_text():
+    from src.stats import labelled
+    rows = [("version", "3.30.0"), ("", ""), ("by job", ""), ("  chat", "5 calls"), ("  pending", "")]
+    assert labelled(rows) == "**version**: 3.30.0\n\n**by job**\n- chat: 5 calls\n- pending"
+
+
+def test_labelled_values_cannot_turn_into_italics_or_strikes():
+    from src.stats import labelled
+    assert labelled([("host", "Standard_D2_v3 ~~x~~ *y*")]) == "**host**: Standard\\_D2\\_v3 \\~\\~x\\~\\~ \\*y\\*"

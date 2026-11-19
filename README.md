@@ -262,7 +262,7 @@ You do not have to reply to something that was just posted. If your message poin
 
 Reading recent posts means other people's images and files go to the model when someone chats right after them. Someone who can manage a channel can turn that off there with `/recent-posts off`. Replies, attachments and `/tldr` keep working.
 
-Limits (also shown by `/help`):
+Limits (also shown by `/help limits`):
 
 - Images up to 5 MB each, files up to 15 MB each.
 - 3 images and 4 files per message.
@@ -272,7 +272,7 @@ Limits (also shown by `/help`):
 - `/tldr`: 5 to 200 messages, plus the newest 6 images and 3 files in them (each cut at 6,000 characters), and 6 recaps per hour per user.
 - GIFs, videos, voice messages and Word, Excel or PowerPoint files are not read.
 
-The numbers live at the top of `src/message_context.py` and in `RATE_LIMITS` in `config/config.py`. `/help` reads them from there.
+The numbers live at the top of `src/message_context.py` and in `RATE_LIMITS` in `config/config.py`. `/help limits` reads them from there.
 
 ## Writing, documents and diagrams
 

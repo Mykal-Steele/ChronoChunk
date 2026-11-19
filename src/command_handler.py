@@ -2,13 +2,12 @@ import discord
 from datetime import date
 from typing import List, Optional
 
-from src.stats import labelled
 from src.ai_response_handler import Reply
 from src.exceptions import RateLimitError
 from src.help_menu import TOPICS, build_help_embed, build_topic_help
 from src.rate_limiter import RateLimiter
 from src.setup_info import setup_summary
-from src.stats import stats_summary
+from src.stats import labelled, stats_summary
 from src.tools.courses import courses_summary
 from src.message_context import read_channel_messages
 from src.usage_guard import get_usage_guard

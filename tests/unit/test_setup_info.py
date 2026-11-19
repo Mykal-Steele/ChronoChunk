@@ -82,7 +82,8 @@ async def test_on_azure_the_host_line_names_the_vm(monkeypatch):
         await setup_info.find_host()
     finally:
         await runner.cleanup()
-    assert "**host**: Azure VM chronochunk-vm, Standard_B2ats_v2, southeastasia" in setup_info.setup_summary("gpt-6-luna")
+    # Underscores are escaped so Discord shows the name as written, not in italics
+    assert "**host**: Azure VM chronochunk-vm, Standard\\_B2ats\\_v2, southeastasia" in setup_info.setup_summary("gpt-6-luna")
 
 
 async def test_an_address_that_answers_something_else_is_not_taken_for_azure(monkeypatch):

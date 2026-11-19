@@ -57,27 +57,20 @@ def build_music_help_embed() -> discord.Embed:
     per_user, window = Config.RATE_LIMITS["music"]
     per_guild, guild_window = Config.RATE_LIMITS["music_guild"]
     controls, control_window = Config.RATE_LIMITS["music_control"]
-    embed = discord.Embed(
-        title="ChronoChunk Music",
-        description="how music works, my g:",
-        color=0x9B59B6,
-    )
     playing = [
         "join a voice channel first, then `/music <song or link>`",
         "a YouTube link, a Spotify track link, or just words: `/music never gonna give you up`, `/music sad lofi for studying`",
         "a playlist link only plays its first song",
-        "`/relate` - add a song like the one playing, picked from YouTube's mix",
+        "`/relate` adds a song like the one playing, picked from YouTube's mix",
         "i cant start songs from chat. ask me in chat and i'll point u to `/music`",
     ]
-    embed.add_field(name="▶️ playing", value="\n".join(playing), inline=False)
     control = [
-        "`/queue` - what's playing and what's next",
-        "`/skip`, `/pause`, `/resume` - the song playing now",
-        "`/volume <0-100>` - how loud i am",
-        "`/stop` - stop, clear the queue and leave voice",
+        "`/queue` what's playing and what's next",
+        "`/skip`, `/pause`, `/resume` the song playing now",
+        "`/volume <0-100>` how loud i am",
+        "`/stop` stop, clear the queue and leave voice",
         "skip, pause, resume, volume and stop need Manage Server, so one person cant skip everyone's songs",
     ]
-    embed.add_field(name="🎛️ controls", value="\n".join(control), inline=False)
     limits = [
         f"{per_user} songs per person {_window(window)}, {per_guild} per server {_window(guild_window)}"
         if guild_window != window else f"{per_user} songs per person and {per_guild} per server {_window(window)}",
@@ -86,9 +79,7 @@ def build_music_help_embed() -> discord.Embed:
         f"i leave voice after {_span(Config.MUSIC_ALONE_SECONDS)} with nobody else in the channel, "
         f"or after {_span(Config.MUSIC_IDLE_SECONDS)} with nothing playing. a long song never gets cut off",
     ]
-    embed.add_field(name="📏 limits", value="\n".join(f"- {line}" for line in limits), inline=False)
-    embed.set_footer(text=f"ChronoChunk v{__version__} | /help shows everything else")
-    return embed
+    return _page("ChronoChunk music", "how music works, my g", [("playing", playing), ("controls", control), ("limits", limits)])
 
 
 def _bullets(lines: List[str]) -> str:
@@ -136,7 +127,9 @@ def build_help_embed() -> discord.Embed:
         "`/model` which ai im on. `/setup` how im set up. `/stats` what i used so far. `/code` my source code",
     ]), inline=False)
     embed.add_field(name="ur data", value=_bullets([
-        "what u send me goes to the ai model to answer. what i keep, and how to delete it, is in `/help memory`",
+        "what u teach me is kept with ur name and shared with every server im in, unless u make it a private note",
+        f"i keep what's said in server channels for {Config.CHANNEL_LOG_KEEP_DAYS} days, and ur last 20 messages to me",
+        "what u send me goes to the ai model to answer. `/help memory` has the rest and how to delete it",
         f"the full list is at <{PRIVACY_URL}>",
     ]), inline=False)
     embed.set_footer(text=f"ChronoChunk v{__version__}")
@@ -148,7 +141,7 @@ def _memory_page() -> discord.Embed:
     return _page("how my memory works", "i remember what people tell me, across every server im in. heres how it works and how to clean it up", [
         ("teaching me", [
             "just say it: `remember the exam moved to tuesday` or `btw im vegetarian`. i keep who told me, when and where",
-            "if u correct something i swap the old one out. only u can change what u said about urself",
+            "if u correct something i swap the old one out. what u say about urself only u can correct, though a server manager can still delete it",
             "ask about it later in any server, in ur own words, and ill tell u who said it",
         ]),
         ("notes", [
@@ -225,7 +218,7 @@ def _courses_page() -> discord.Embed:
 
 def _limits_page() -> discord.Embed:
     return _page("limits", "so nobody burns through everything. `/usage` shows what u have left", [
-        ("limits", [f"- {line}" for line in limit_lines()]),
+        ("limits", limit_lines()),
     ])
 
 

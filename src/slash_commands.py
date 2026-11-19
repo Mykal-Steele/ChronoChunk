@@ -664,7 +664,7 @@ class SlashCommandManager:
     async def _register_help_command(self):
         """Register the help command"""
         @self.bot.tree.command(name="help", description="How to use me, or pick a topic for more")
-        @app_commands.describe(topic="memory, files, courses, music or limits")
+        @app_commands.describe(topic=", ".join(TOPICS))
         @app_commands.choices(topic=[app_commands.Choice(name=name, value=name) for name in TOPICS])
         async def help(interaction: discord.Interaction, topic: Optional[str] = None):
             embed = build_topic_help(topic) if topic in TOPICS else build_help_embed()
