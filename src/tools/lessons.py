@@ -55,4 +55,7 @@ class LearnLesson(Tool):
         if refused:
             return ToolResult(f"not saved: {refused}")
         added = self.store.add(lesson, scope, speaker, place)
-        return ToolResult("learned it, u will see it from now on" if added else "already knew that one")
+        if not added:
+            return ToolResult("already knew that one")
+        turn.receipts.append(f"learned as l{added}")
+        return ToolResult("learned it, u will see it from now on")

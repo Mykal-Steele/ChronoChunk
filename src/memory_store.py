@@ -97,6 +97,8 @@ class Memory:
     channel_name: str
     created_at: datetime
     confirmed_by: List[str] = field(default_factory=list)
+    # Only its source gets it back
+    private: bool = False
 
 
 @dataclass
@@ -160,7 +162,7 @@ class MemoryStore:
         return ""
 
     @staticmethod
-    def _duplicate(connection, content: str, about: str, kind: str, speaker: Speaker):
+    def _duplicate(connection, content: str, about: str, kind: str, speaker: Speaker, private: bool = False):
         """A live memory that already says this. Two people's reports about themselves never merge."""
         for row in connection.execute(
                 "SELECT * FROM memories WHERE replaced_by IS NULL AND about = ? COLLATE NOCASE", (about,)):
@@ -168,6 +170,9 @@ class MemoryStore:
                 continue
             if kind == "self" and row["source_id"] != speaker.user_id:
                 # Their own word about themselves stays theirs, see remember
+                continue
+            # A private note only matches the same person's private notes, and a public save only public memories
+            if bool(row["private"]) != private or (private and row["source_id"] != speaker.user_id):
                 continue
             return row
         return None
@@ -179,7 +184,8 @@ class MemoryStore:
         report takes over, so only they can change it, and the others count as confirming it.
         """
         claims = [r for r in connection.execute(
-            "SELECT * FROM memories WHERE replaced_by IS NULL AND kind = 'claim' AND about = ? COLLATE NOCASE AND id != ?",
+            "SELECT * FROM memories WHERE replaced_by IS NULL AND kind = 'claim' AND private = 0 AND about = ? COLLATE NOCASE "
+            "AND id != ?",
             (about, memory_id)) if _same(r["content"]) == _same(content)]
         if not claims:
             return
@@ -192,7 +198,7 @@ class MemoryStore:
         connection.execute("UPDATE memories SET confirmed_by = ? WHERE id = ?", (json.dumps(confirmed), memory_id))
 
     def remember(self, content: str, about: str, kind: str, speaker: Speaker, place: Place,
-                 replaces: Optional[int] = None, started_at: Optional[datetime] = None) -> Saved:
+                 replaces: Optional[int] = None, started_at: Optional[datetime] = None, private: bool = False) -> Saved:
         """
         Save one memory. started_at is when the reply began: a memory from a reply that was
         already running when they ran /forget is refused, so /forget cannot be undone by it.
@@ -218,7 +224,7 @@ class MemoryStore:
                 else:
                     target = rows[0]
 
-            existing = self._duplicate(connection, content, about, kind, speaker)
+            existing = self._duplicate(connection, content, about, kind, speaker, private)
             if existing is not None:
                 if target is not None and target["id"] != existing["id"]:
                     # The corrected version is already known, so the old one just points to it
@@ -238,12 +244,12 @@ class MemoryStore:
 
             memory_id = connection.execute(
                 "INSERT INTO memories (content, about, kind, source_id, source_name, guild_id, guild_name, "
-                "channel_id, channel_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "channel_id, channel_name, created_at, private) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (content, about, kind, speaker.user_id, speaker.name, place.guild_id, place.guild_name,
-                 place.channel_id, place.channel_name, datetime.now(timezone.utc).isoformat())).lastrowid
+                 place.channel_id, place.channel_name, datetime.now(timezone.utc).isoformat(), int(private))).lastrowid
             if target is not None:
                 connection.execute("UPDATE memories SET replaced_by = ? WHERE id = ?", (memory_id, target["id"]))
-            if kind == "self" and memory_id is not None:
+            if kind == "self" and not private and memory_id is not None:
                 self._absorb_claims(connection, memory_id, content, about)
             self._bump(connection)
         assert memory_id is not None
@@ -252,19 +258,21 @@ class MemoryStore:
         return Saved(memory_id, note=note)
 
     def recall(self, query: str, limit: int = RECALL_LIMIT, vector: Optional[Sequence[float]] = None,
-               model: Optional[str] = None) -> List[Memory]:
+               model: Optional[str] = None, viewer_id: Optional[str] = None) -> List[Memory]:
         """
         The live memories that fit the query best. With vector, the query's embedding from
         model, a memory with a vector from the same model is judged by meaning and comes back
         when it is close enough and nearly as close as the best one. Any other memory is judged by the words it shares with the
         query. Among those that fit, newer, more confirmed and more word-sharing ones go first.
+        Private notes only come back for viewer_id, the person who saved them.
         """
         wanted = set(_words(query))
         packed = _pack(vector) if vector else None
         rows = self.db.query(
             "SELECT *, CASE WHEN ? IS NOT NULL AND embedding_model = ? AND length(embedding) = length(?) "
-            "THEN vec_distance_cosine(embedding, ?) END AS distance FROM memories WHERE replaced_by IS NULL",
-            (packed, model, packed, packed))
+            "THEN vec_distance_cosine(embedding, ?) END AS distance FROM memories WHERE replaced_by IS NULL "
+            "AND (private = 0 OR source_id = ?)",
+            (packed, model, packed, packed, str(viewer_id or "")))
         now = datetime.now(timezone.utc)
         best = max((1.0 - row["distance"] for row in rows if row["distance"] is not None), default=0.0)
         scored = []
@@ -307,6 +315,7 @@ class MemoryStore:
             "WHERE a.replaced_by IS NULL AND b.replaced_by IS NULL AND a.embedding_model = ? AND b.embedding_model = ? "
             "AND length(a.embedding) = length(b.embedding) "
             "AND NOT (a.kind = 'self' AND b.kind = 'self' AND a.source_id != b.source_id) "
+            "AND NOT ((a.private = 1 OR b.private = 1) AND NOT (a.private = 1 AND b.private = 1 AND a.source_id = b.source_id)) "
             "AND NOT EXISTS (SELECT 1 FROM memory_pairs_checked c WHERE c.first = a.id AND c.second = b.id)) "
             "WHERE similarity >= ? ORDER BY similarity DESC LIMIT ?",
             (model, model, TIDY_SIMILARITY, limit))
@@ -443,4 +452,5 @@ def _memory(row) -> Memory:
         source_id=row["source_id"], source_name=row["source_name"], guild_name=row["guild_name"],
         channel_name=row["channel_name"], created_at=datetime.fromisoformat(row["created_at"]),
         confirmed_by=[name for _, name in json.loads(row["confirmed_by"])],
+        private=bool(row["private"]) if "private" in row.keys() else False,
     )

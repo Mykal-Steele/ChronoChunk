@@ -15,6 +15,8 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 ### Added
 
 - `/memory`, layer 5 of `docs/memory-plan.md`. It shows you, privately, what you taught the bot, what others told it about you, the lessons about you, and how many of your messages and day summaries it keeps. Each item has a code (`m12`, `l3`, `d5`), and `/memory delete:m12` deletes that one thing. You can delete what you taught, what is about you and the days you spoke on.
+- Notes can be public or private. When you ask the bot to note something ("note down this link, it's for my korean presentation") without saying who can see it, it asks first. A public note is like any memory, and anyone can ask for it. A private note only comes back for you, in any server or DM, never shows in the server view of `/memory`, and is never merged with anyone else's memories.
+- A save receipt. When a reply saved something, it ends with a small line such as "saved as m12", "saved as m12 (private)", "saved as m14, replacing m12" or "learned as l3". No line means nothing was saved, even if the bot said "noted".
 - `/memory view:server` shows a server manager what the bot learned in their server: memories taught there, the server's lessons and the days it wrote down. A manager can delete any of those, but nothing from another server.
 
 ## 3.28.0 (2026-11-19)

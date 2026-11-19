@@ -81,31 +81,31 @@ class LessonStore:
                 return "a lesson can only be about how u act with the person asking, not about someone else"
         return ""
 
-    def add(self, lesson: str, scope: str, speaker: Speaker, place: Place, target_id: Optional[str] = None) -> bool:
+    def add(self, lesson: str, scope: str, speaker: Speaker, place: Place, target_id: Optional[str] = None) -> Optional[int]:
         """
         Keep one lesson. A person lesson is about target_id, the speaker by default. A server
-        lesson is for the place's server, so it needs one. False when nothing was added.
+        lesson is for the place's server, so it needs one. Returns its number, or None when nothing was added.
         """
         lesson = " ".join(lesson.split())[:MAX_LENGTH]
         if scope not in SCOPES or not lesson:
-            return False
+            return None
         target = (target_id or speaker.user_id) if scope == "person" else place.guild_id
         own_name = speaker.name if scope == "person" and target == speaker.user_id else ""
         if not target or (scope == "person" and target != speaker.user_id) or self.refusal(lesson, scope, place, own_name):
-            return False
+            return None
         with self.db.transaction() as connection:
             for row in connection.execute("SELECT lesson FROM lessons WHERE scope = ? AND target_id = ?", (scope, target)):
                 if _same(row["lesson"]) == _same(lesson):
-                    return False
-            connection.execute(
+                    return None
+            lesson_id = connection.execute(
                 "INSERT INTO lessons (scope, target_id, lesson, source_id, source_name, guild_id, guild_name, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (scope, str(target), lesson, speaker.user_id, speaker.name, place.guild_id, place.guild_name,
-                 datetime.now(timezone.utc).isoformat()))
+                 datetime.now(timezone.utc).isoformat())).lastrowid
             connection.execute(
                 "INSERT INTO meta (key, value) VALUES (?, '1') "
                 "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1", (_REVISION,))
-        return True
+        return lesson_id
 
     def for_reply(self, user_id: Optional[str], guild_id: Optional[str]) -> ReplyLessons:
         """The newest lessons for how to act with this person, and in this server."""

@@ -182,7 +182,7 @@ async def test_a_reply_saves_a_memory_with_the_server_and_channel(database, mock
     ]
     reply = await handler.generate_reply("/remember the exam is in room 410", "", "Kruskal", "111",
                                          allow_files=True, session_key="55:111", place=KMUTT)
-    assert reply.text == "got it, room 410"
+    assert reply.text == "got it, room 410\n-# saved as m1"
     memory = MemoryStore(database).recall("exam room")[0]
     assert (memory.source_name, memory.guild_name, memory.channel_name) == ("Kruskal", "cs-kmutt", "general")
 

@@ -46,7 +46,8 @@ def _fit(sections: List[tuple]) -> str:
 
 def _memory_line(row) -> str:
     where = f"{row['guild_name']} #{row['channel_name']}" if row["guild_name"] else "a DM"
-    return f"`m{row['id']}` {row['source_name']} told me, {days_ago(datetime.fromisoformat(row['created_at']))}, in {where}: {_short(row['content'])}"
+    private = " (private)" if row["private"] else ""
+    return f"`m{row['id']}`{private} {row['source_name']} told me, {days_ago(datetime.fromisoformat(row['created_at']))}, in {where}: {_short(row['content'])}"
 
 
 def about_me(user_id: str, username: str) -> str:
@@ -54,7 +55,8 @@ def about_me(user_id: str, username: str) -> str:
     taught = memories.db.query("SELECT * FROM memories WHERE replaced_by IS NULL AND source_id = ? ORDER BY id DESC",
                                (str(user_id),))
     about = memories.db.query(
-        "SELECT * FROM memories WHERE replaced_by IS NULL AND source_id != ? AND about = ? COLLATE NOCASE ORDER BY id DESC",
+        "SELECT * FROM memories WHERE replaced_by IS NULL AND private = 0 AND source_id != ? AND about = ? COLLATE NOCASE "
+        "ORDER BY id DESC",
         (str(user_id), username))
     taught_lessons = lessons.db.query(
         "SELECT * FROM lessons WHERE (scope = 'person' AND target_id = ?) OR source_id = ? ORDER BY id DESC",
@@ -80,8 +82,8 @@ def about_me(user_id: str, username: str) -> str:
 
 def about_server(guild_id: str) -> str:
     memories, lessons, log = MemoryStore(), LessonStore(), ChannelLog()
-    taught = memories.db.query("SELECT * FROM memories WHERE replaced_by IS NULL AND guild_id = ? ORDER BY id DESC",
-                               (str(guild_id),))
+    taught = memories.db.query("SELECT * FROM memories WHERE replaced_by IS NULL AND private = 0 AND guild_id = ? "
+                               "ORDER BY id DESC", (str(guild_id),))
     server_lessons = lessons.db.query("SELECT * FROM lessons WHERE scope = 'server' AND target_id = ? ORDER BY id DESC",
                                       (str(guild_id),))
     days = log.db.query("SELECT * FROM episodes WHERE guild_id = ? ORDER BY day DESC", (str(guild_id),))
@@ -113,6 +115,8 @@ def delete_item(code: str, user_id: str, guild_id: str, is_admin: bool, username
         if not rows:
             return f"theres no memory m{number}"
         row = rows[0]
+        if row["private"] and row["source_id"] != user_id:
+            return "u cant delete that one, its someone's private note"
         mine = row["source_id"] == user_id or (username and row["about"].lower() == username.lower())
         if not (mine or (is_admin and guild_id and row["guild_id"] == guild_id)):
             return "u cant delete that one. only who taught it, who its about, or a manager of the server it was taught in can"

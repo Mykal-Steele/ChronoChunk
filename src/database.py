@@ -188,6 +188,10 @@ MIGRATIONS = [
     -- Reactions on the bot's own messages, such as "👎 Mint", for the night to learn from
     ALTER TABLE channel_messages ADD COLUMN feedback TEXT NOT NULL DEFAULT '';
     """,
+    """
+    -- A note only the person who saved it gets back. The bot asks public or private when it saves one
+    ALTER TABLE memories ADD COLUMN private INTEGER NOT NULL DEFAULT 0;
+    """,
 ]
 
 

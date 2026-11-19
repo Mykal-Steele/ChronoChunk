@@ -1126,7 +1126,7 @@ class AIResponseHandler:
                     except Exception as e:
                         logger.warning(f"Recall by meaning failed, using words: {e}")
                 remembered = recall.matching(clean_query, AUTO_RECALL_LIMIT, vector=vector,
-                                             model=request.memory_model if vector else None)
+                                             model=request.memory_model if vector else None, viewer_id=user_id)
                 if remembered:
                     user_parts.insert(-1, remembered)
                 # Only days from channels they can see. Without a way to check, only this channel
@@ -1298,7 +1298,8 @@ class AIResponseHandler:
                     shown = drop_unseen_sources(shown, found, given=[query, request.attached, request.history])
                     reply = Reply(shown, files)
                 # An answer from the web or the course material goes stale, so it is looked up again next time
-                if not files and not study and not request.lookups and not request.course_searches and not in_course:
+                if (not files and not study and not request.lookups and not request.course_searches and not in_course
+                        and not request.receipts):
                     self.response_cache[cache_key] = reply.text
                     self._cached_at[cache_key] = time.monotonic()
                     if len(self.response_cache) > self.cache_size:
@@ -1306,6 +1307,9 @@ class AIResponseHandler:
                             self.response_cache.pop(k, None)
                             self._cached_at.pop(k, None)
 
+            if request.receipts and reply.ok:
+                # Discord shows a line that starts with "-# " as small grey text
+                reply.text += "\n-# " + ", ".join(request.receipts)
             if user_id and get_usage_guard().take_daily_warning(user_id):
                 # Discord shows a line that starts with "-# " as small grey text
                 reply.text += "\n-# Heads up, u used 80% of ur ai for today. `/usage` shows whats left"

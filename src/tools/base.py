@@ -74,6 +74,8 @@ class Turn:
     effort: str = ""
     # Every tool call made for this reply, with its arguments and the text the model read back
     tool_calls: List[dict] = field(default_factory=list)
+    # What this reply saved, such as "saved as m12", shown under the answer so a "noted" without a save shows
+    receipts: List[str] = field(default_factory=list)
     calls: int = 0
     cost: float = 0.0
     started: float = field(default_factory=time.monotonic)
