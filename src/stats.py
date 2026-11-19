@@ -1,5 +1,6 @@
 """What /stats shows: everything the bot has used since its spending record began."""
 import logging
+import re
 import sqlite3
 from datetime import date, datetime, timezone
 from typing import List, Tuple
@@ -41,8 +42,33 @@ def _day(day: date) -> str:
     return f"{day:%b} {day.day}, {day.year}"
 
 
+def _plain(value: str) -> str:
+    """A value as literal text: a host like Standard_D2_v3 must not turn into italics."""
+    return re.sub(r"([\\*_~|`])", r"\\\1", value)
+
+
+def labelled(rows: List[Tuple[str, str]]) -> str:
+    """
+    Rows of (label, value) as plain Discord text, not a code block, so bold and lists work:
+    "**label**: value". A label with no value is a heading, an indented label is a list item
+    under it, and an empty row is a blank line.
+    """
+    lines: List[str] = []
+    for label, value in rows:
+        if not label and not value:
+            if lines and lines[-1]:
+                lines.append("")
+        elif label.startswith(" "):
+            lines.append(f"- {label.strip()}: {_plain(value)}" if value else f"- {label.strip()}")
+        elif not value:
+            lines.append(f"**{label}**")
+        else:
+            lines.append(f"**{label}**: {_plain(value)}")
+    return "\n".join(lines).strip("\n")
+
+
 def _block(title: str, rows: List[Tuple[str, str]]) -> str:
-    return f"**{title}**\n```\n" + "\n".join(f"{label:<14} {value}".rstrip() for label, value in rows) + "\n```"
+    return f"**{title}**\n" + labelled(rows)
 
 
 def usage_rows() -> List[Tuple[str, str]]:

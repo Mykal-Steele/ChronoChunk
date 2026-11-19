@@ -32,21 +32,21 @@ def test_the_totals_cover_every_day_job_and_model(database, tmp_path, monkeypatc
     text = stats.stats_summary()
 
     days = _today().toordinal() - date(2025, 1, 20).toordinal() + 1
-    assert f"counting       since Jan 20, 2025, {days:,} days, used on 3 of them" in text
-    assert "ai calls       1,550" in text
-    assert "tokens         5.2M in, 86.5K out" in text
-    assert "ai cost        $1.40, $0.0009 a call" in text
-    assert "today          50 calls, $0.08" in text
-    assert "last 7 days    50 calls, $0.08" in text
-    assert "busiest day    Jan 20, 2025: 1,000 calls, $1.00" in text
-    assert "  earlier      1,000 calls, $1.00" in text
-    assert "  chat         340 calls, $0.35" in text
-    assert "  memory       200 calls, $0.02" in text
-    assert "  pdf pages    10 calls, $0.03" in text
-    assert "  gpt-6-luna   350 calls, $0.38" in text
-    assert "  gpt-5-mini   1,000 calls, $1.00" in text
-    assert "people         1 remembered, 1 facts about them" in text
-    assert "last copy      none yet" in text
+    assert f"**counting**: since Jan 20, 2025, {days:,} days, used on 3 of them" in text
+    assert "**ai calls**: 1,550" in text
+    assert "**tokens**: 5.2M in, 86.5K out" in text
+    assert "**ai cost**: $1.40, $0.0009 a call" in text
+    assert "**today**: 50 calls, $0.08" in text
+    assert "**last 7 days**: 50 calls, $0.08" in text
+    assert "**busiest day**: Jan 20, 2025: 1,000 calls, $1.00" in text
+    assert "- earlier: 1,000 calls, $1.00" in text
+    assert "- chat: 340 calls, $0.35" in text
+    assert "- memory: 200 calls, $0.02" in text
+    assert "- pdf pages: 10 calls, $0.03" in text
+    assert "- gpt-6-luna: 350 calls, $0.38" in text
+    assert "- gpt-5-mini: 1,000 calls, $1.00" in text
+    assert "**people**: 1 remembered, 1 facts about them" in text
+    assert "**last copy**: none yet" in text
     assert len(text) < 1900
 
 
@@ -63,7 +63,7 @@ def test_forgetting_a_person_keeps_the_totals(database):
     database.execute("INSERT INTO users(user_id, username, created_at, last_interaction) VALUES ('7', 'Prim', 'x', 'x')")
     UserStore(database).forget("7")
     text = stats.stats_summary()
-    assert "ai calls       5" in text and "people         0 remembered" in text
+    assert "**ai calls**: 5" in text and "**people**: 0 remembered" in text
 
 
 def test_the_last_copy_is_named_by_its_day(database, tmp_path, monkeypatch):
@@ -71,4 +71,4 @@ def test_the_last_copy_is_named_by_its_day(database, tmp_path, monkeypatch):
     _use(database, "2025-01-20", "chat", "gpt-6-luna", 5, 1000, 100, 0.01)
     backups.backup_now(database, str(tmp_path))
     today = _today()
-    assert f"last copy      {today:%b} {today.day}, {today.year}" in stats.stats_summary()
+    assert f"**last copy**: {today:%b} {today.day}, {today.year}" in stats.stats_summary()

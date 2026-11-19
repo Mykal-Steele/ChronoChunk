@@ -229,6 +229,7 @@ Slash commands:
 - `/tldr <count>` - Sum up the last messages in the channel (default 50, max 200). It also looks at the newest images and files posted in them.
 - `/tldr <count> <request>` - Ask about those messages or have the bot make something from them, for example `/tldr 60 what is the best option?` or `/tldr 55 make a pdf of the design discussed here`
 - `/info` or `/mydata` - See what the bot has stored about you. Only you see the answer.
+- `/help` - How to use the bot. `/help memory`, `/help files`, `/help courses`, `/help music` and `/help limits` explain one topic each.
 - `/memory` - See what the bot remembers about you, and `/memory delete:m12` deletes one thing. `/memory view:server` shows a server manager what it learned in their server.
 - `/forget` - Delete everything the bot has stored about you. `/forget <text>` deletes one fact.
 - `/game <max>`, `/guess <number>`, `/end` - The number guessing game
@@ -239,7 +240,6 @@ Slash commands:
 - `/stats` - Everything the bot has used so far: AI calls, tokens and cost, by day, by job and by model
 - `/recent-posts on|off` - Turn reading of just-posted images and files on or off in a channel (needs Manage Channels)
 - `/join-in on|off` - Turn the bot's joining in on messages nobody sent to it on or off in a channel (needs Manage Channels)
-- `/help` - Show every command and the limits below
 - `/code` - Link to this repository
 - The music commands are listed under [Music commands](#music-commands).
 
@@ -262,7 +262,7 @@ You do not have to reply to something that was just posted. If your message poin
 
 Reading recent posts means other people's images and files go to the model when someone chats right after them. Someone who can manage a channel can turn that off there with `/recent-posts off`. Replies, attachments and `/tldr` keep working.
 
-Limits (also shown by `/help`):
+Limits (also shown by `/help limits`):
 
 - Images up to 5 MB each, files up to 15 MB each.
 - 3 images and 4 files per message.
@@ -272,7 +272,7 @@ Limits (also shown by `/help`):
 - `/tldr`: 5 to 200 messages, plus the newest 6 images and 3 files in them (each cut at 6,000 characters), and 6 recaps per hour per user.
 - GIFs, videos, voice messages and Word, Excel or PowerPoint files are not read.
 
-The numbers live at the top of `src/message_context.py` and in `RATE_LIMITS` in `config/config.py`. `/help` reads them from there.
+The numbers live at the top of `src/message_context.py` and in `RATE_LIMITS` in `config/config.py`. `/help limits` reads them from there.
 
 ## Writing, documents and diagrams
 

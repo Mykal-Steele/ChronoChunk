@@ -566,7 +566,8 @@ async def test_typed_help_shows_the_menu_without_calling_the_ai(pipeline):
 
     ai_handler.generate_reply.assert_not_called()
     embed = trigger.channel.send.call_args[1]["embed"]
-    assert any("limits" in field.name for field in embed.fields)
+    # The start page points to the limits page, which holds them since the help was split (2026-11-19)
+    assert any("`/help limits`" in field.value for field in embed.fields)
 
 
 async def test_help_with_more_words_is_chat(pipeline):
@@ -679,7 +680,7 @@ async def test_typed_setup_shows_where_and_how_the_bot_runs(pipeline):
     _channel_with(trigger)
     await processor.process_message(trigger)
     sent = trigger.channel.send.call_args[0][0]
-    assert sent.startswith("**how im set up**") and "chat model  gpt-6-luna" in sent
+    assert sent.startswith("**how im set up**") and "**chat model**: gpt-6-luna" in sent
     ai_handler.generate_reply.assert_not_called()
 
 

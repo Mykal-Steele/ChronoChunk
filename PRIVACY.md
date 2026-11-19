@@ -12,7 +12,7 @@ When you talk to the bot (a `/` message, a slash command, a ping or a reply to i
 
 - What you teach it. When you tell the bot something worth keeping ("remember that the exam moved to tuesday", "i'm allergic to peanuts"), it saves that sentence with your name, the server, the channel and the time. These memories are shared by every server the bot is in, so it can tell someone in another server "Slade told me he is allergic to peanuts". A correction replaces the old memory. Only you can change what you said about yourself.
 
-It uses these to remember you between conversations: the facts and your last 3 exchanges with the bot are given to the AI model when you talk to it. The database is not shared with anyone and is not in this repository. It also keeps the time of your recent messages, files, PDF reads and web lookups for up to a day, to enforce the limits in `/help`, and a daily total of what your requests cost in AI spending, which is what `/usage` shows you.
+It uses these to remember you between conversations: the facts and your last 3 exchanges with the bot are given to the AI model when you talk to it. The database is not shared with anyone and is not in this repository. It also keeps the time of your recent messages, files, PDF reads and web lookups for up to a day, to enforce the limits in `/help limits`, and a daily total of what your requests cost in AI spending, which is what `/usage` shows you.
 
 ## What the bot reads, and how long it keeps it
 
