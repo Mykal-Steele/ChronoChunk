@@ -83,6 +83,12 @@ def about_me(user_id: str, username: str) -> str:
     days = log.db.query("SELECT * FROM episodes WHERE people LIKE ? ORDER BY day DESC", (f'%"{user_id}"%',))
     if not (taught or about or taught_lessons or messages or days):
         return "i know nothing about u yet"
+    if not (taught or about or taught_lessons or days):
+        # Only kept messages, which have no codes: say that, instead of how to delete what isnt there
+        plural = "s" if messages != 1 else ""
+        return (f"nothing saved about u yet. tell me something like `remember the exam is tuesday` and it shows "
+                f"up here with a code to delete it\n-# i also keep {messages} message{plural} of urs from server "
+                f"channels for {Config.CHANNEL_LOG_KEEP_DAYS} days, so i can follow along. `/forget` deletes them now")
     counts = []
     if messages:
         counts.append(f"{messages} message{'s' if messages != 1 else ''} of urs from server channels, "

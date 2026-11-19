@@ -19,6 +19,10 @@ The time in each heading is when that version went out, in Bangkok time. For the
 - The bot can use Uniloom for you. Ask it about your board or a ticket like `TG-12`, or to plan work there, and it reads and changes Uniloom as you, with exactly the access your account has. The first time, it gives you a Connect Uniloom button: you sign in to uniAuth on a link only you see, allow ChronoChunk, and it answers what you asked. Lookups happen straight away. A change waits until you press do it under its message, and only you can press it. Someone else asking uses their own account, never yours. `/uniloom connect`, `/uniloom status` and `/uniloom disconnect` manage the sign-in, `/forget` signs it out too, and `/help uniloom` explains it.
 - The Uniloom tools are only given to the model for someone who connected, and only when a message needs them: one small tool loads the rest, the same way Claude Code does. A reply working in Uniloom gets 8 tool rounds and the stronger model.
 
+### Fixed
+
+- `/memory` for someone with nothing saved showed only their kept messages and the line about deleting with a code like `m12`, so it looked like the list was missing. It now says nothing is saved yet and how to save something, and that the kept messages go after 30 days or with `/forget`.
+
 ### For whoever runs the bot
 
 - Uniloom needs the bot to have its own HTTPS address for the sign-in: `PUBLIC_URL`, `https://chrono.oakar.dev` in production. A Cloudflare Tunnel (the new `tunnel` service in `deployment/docker-compose.yml`) puts only `/oauth/callback` and `/oauth/client.json` there, without opening a port. `deployment/tunnel-setup.sh` makes the tunnel once. Without `PUBLIC_URL`, Uniloom stays off.
