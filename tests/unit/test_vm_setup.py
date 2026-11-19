@@ -13,7 +13,14 @@ def test_the_vm_keeps_the_bot_in_ram_instead_of_swapping_it_out():
     # disk, took over Discord's 3 seconds, and /help failed with "Unknown interaction" (2026-11-19)
     text = _cloud_init()
     assert re.search(r"path: /etc/sysctl\.d/90-chronochunk\.conf\n\s+content: \|\n\s+vm\.swappiness = 10", text)
-    assert re.search(r"runcmd:(\n\s+- .*)*\n\s+- sysctl --system", text)
+    assert re.search(r"runcmd:(\n\s+- .*)*\n\s+- sysctl -p /etc/sysctl\.d/90-chronochunk\.conf", text)
+
+
+def test_the_vm_setup_never_reloads_every_sysctl_file():
+    # "sysctl --system" also reloads Google's 60-gce-network-security.conf, which sets
+    # net.ipv4.ip_forward=0. Docker turns forwarding on when it starts, and turning it off again
+    # cut the container off from Discord: the bot was offline for 18 minutes on 2026-11-19
+    assert "sysctl --system" not in _cloud_init()
 
 
 def test_the_vm_still_has_swap_for_image_builds():

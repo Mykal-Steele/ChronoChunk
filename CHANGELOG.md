@@ -10,6 +10,12 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.30.2 (2026-11-19)
+
+### Fixed
+
+- The bot was offline for 18 minutes after 3.30.1 went out. Applying the swap setting with `sysctl --system` also reloaded Google's own settings file, which turns off the IP forwarding Docker needs, so the container could not reach Discord and kept restarting. Forwarding is back on, and `deployment/cloud-init.yml` now loads only the bot's own settings file.
+
 ## 3.30.1 (2026-11-19)
 
 ### Fixed

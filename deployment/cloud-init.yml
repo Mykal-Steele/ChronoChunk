@@ -32,8 +32,11 @@ write_files:
     content: |
       vm.swappiness = 10
 
+# Load only the bot's settings file. Reloading every sysctl file would also apply Google's
+# 60-gce-network-security.conf, which turns off the IP forwarding Docker needs, and the
+# container would lose the internet.
 runcmd:
-  - sysctl --system
+  - sysctl -p /etc/sysctl.d/90-chronochunk.conf
   - systemctl enable --now docker
   - usermod -aG docker chrono
   - install -d -o chrono -g chrono /opt/chronochunk /opt/chronochunk/data /opt/chronochunk/data/user_data /opt/chronochunk/data/logs /opt/chronochunk/data/state
