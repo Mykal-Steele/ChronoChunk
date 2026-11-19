@@ -77,6 +77,11 @@ def _convert(node: Any, root: dict, depth: int) -> Dict[str, Any]:
         out["format"] = node["format"]
     if kind == "array":
         out["items"] = _convert(node.get("items", {"type": "string"}), root, depth + 1)
+    if kind == "object" and depth > 0 and not node.get("properties"):
+        # Gemini may refuse an object with no fields inside a declaration, such as a free-form map
+        out["type"] = "string"
+        _with_note(out, "a JSON object as text")
+        kind = "string"
     if kind == "object":
         found = node.get("properties")
         properties: Dict[str, Any] = found if isinstance(found, dict) else {}

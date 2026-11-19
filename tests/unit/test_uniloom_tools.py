@@ -112,7 +112,10 @@ def test_the_schema_the_model_gets_is_the_gemini_safe_one(uniloom):
 
 @pytest.mark.parametrize("text,expected", [
     ("whats left on my uniloom board", True),
-    ("move TG-12 to in progress", True),
+    # A key alone does not load the tools: SHA-256 and UTF-8 look like keys. The model calls
+    # uniloom itself for a real one (review of PR #62)
+    ("move TG-12 to in progress", False),
+    ("what is SHA-256", False),
     ("what is covid-19", False),
     ("hey whats up", False),
 ])
@@ -187,3 +190,10 @@ async def test_a_reply_that_cant_show_buttons_gets_no_uniloom(handler, mock_open
     await handler.generate_reply("/whats on my uniloom board", "", "Oakar", "760", allow_files=True)
     call = mock_openai_client.chat.completions.create.call_args[1]
     assert "uniloom" not in [t["function"]["name"] for t in call.get("tools") or []]
+
+
+async def test_uniloom_refusing_the_person_is_said_instead_of_breaking_the_reply(uniloom):
+    from src.uniloom.service import Forbidden
+    uniloom.tools.side_effect = Forbidden("Complete the shared Unicorp terms step through UniAuth")
+    result = await OpenUniloom(uniloom).run({}, _turn())
+    assert "Unicorp terms" in result.text

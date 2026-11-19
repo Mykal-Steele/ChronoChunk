@@ -259,3 +259,9 @@ def test_the_client_metadata_document_describes_a_public_client():
     assert document["response_types"] == ["code"]
     assert document["client_name"] == "ChronoChunk"
     assert document["scope"] == "openid profile offline_access"
+
+
+def test_a_nonce_that_is_not_plain_text_is_refused_not_a_crash():
+    token = _jwt({"iss": ISSUER, "aud": CLIENT_ID, "sub": "u-1", "exp": 4102444800, "nonce": "é"})
+    with pytest.raises(oauth.OAuthError):
+        oauth.read_id_token(token, ISSUER, CLIENT_ID, "abc")

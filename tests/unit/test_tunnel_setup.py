@@ -48,7 +48,7 @@ def test_the_tunnel_and_setup_use_the_same_cloudflared():
 
 def test_only_the_sign_in_pages_go_through_the_tunnel():
     text = _setup()
-    assert r"path: ^/oauth/(callback|client\.json)$" in text
+    assert r"path: ^/oauth/(start|callback|client\.json)$" in text
     assert "service: http://bot:8080" in text
     # Everything else, such as /status, gets a 404 at Cloudflare
     assert re.search(r"- service: http_status:404\s*$", text.split("EOF")[1].strip() + "\n", re.MULTILINE)

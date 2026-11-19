@@ -15,6 +15,13 @@ logger = logging.getLogger(__name__)
 
 # How long the buttons work. A sign-in link works as long, so the two run out together
 BUTTON_SECONDS = LOGIN_SECONDS
+# The confirm message, with room under Discord's 2000 characters
+QUESTION_CHARS = 1900
+CANCELLED = "\n-# cancelled, nothing changed"
+
+
+def _cut(text: str, room: int) -> str:
+    return text if len(text) <= room else text[:max(1, room - 3)].rstrip() + "..."
 
 
 class _OwnedView(discord.ui.View):
@@ -69,8 +76,12 @@ async def send_sign_in_link(interaction: discord.Interaction, uniloom: Any,
         if on_connected is not None:
             await on_connected()
 
+    user = interaction.user
+    handle = getattr(user, "name", "") or ""
+    shown = getattr(user, "display_name", "") or handle
+    name = f"{shown} (@{handle})" if handle and handle != shown else shown
     try:
-        url = await uniloom.start_login(str(interaction.user.id), connected)
+        url = await uniloom.start_login(str(user.id), connected, name=name)
     except Exception as e:
         logger.warning(f"Could not start a Uniloom sign-in: {e!r}")
         await interaction.followup.send("couldnt reach Uniloom's sign-in right now, try again in a bit", ephemeral=True)
@@ -105,9 +116,12 @@ class ConfirmView(_OwnedView):
         self.done = False
 
     def question(self) -> str:
-        lines = [f"- {write.summary}" for write in self.writes]
+        """Every queued change, each cut short enough that the whole list fits one message."""
         many = "these changes" if len(self.writes) > 1 else "this change"
-        return f"want me to make {many} in Uniloom?\n" + "\n".join(lines)
+        head = f"want me to make {many} in Uniloom?"
+        room = (QUESTION_CHARS - len(head) - len(CANCELLED)) // max(1, len(self.writes)) - 3
+        lines = [f"- {_cut(write.summary, room)}" for write in self.writes]
+        return head + "\n" + "\n".join(lines)
 
     def _finish(self) -> bool:
         """Switches the buttons off. False when they were already used, so nothing runs twice."""
@@ -129,7 +143,7 @@ class ConfirmView(_OwnedView):
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not self._finish():
             return
-        await interaction.response.edit_message(content=self.question() + "\n-# cancelled, nothing changed", view=self)
+        await interaction.response.edit_message(content=self.question() + CANCELLED, view=self)
 
     async def on_timeout(self) -> None:
         self.done = True

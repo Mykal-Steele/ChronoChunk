@@ -208,13 +208,19 @@ class SlashCommandManager:
                 if not fact:
                     # Signed out of Uniloom here first, so nothing can use the sign-in after this
                     uniloom = get_uniloom()
-                    signed_in = uniloom.take_account(user_id)
+                    try:
+                        signed_in = uniloom.take_account(user_id)
+                    except Exception as e:
+                        # forget_user still deletes the row. Only revoking at uniAuth is lost
+                        logger.warning(f"Could not take the Uniloom sign-in for /forget: {e!r}")
+                        signed_in = None
                     # Clear all user data. forget_user opens and writes sqlite, so keep it
                     # off the event loop; the reply log may be locked by a background write.
                     await asyncio.to_thread(self.user_data_manager.forget_user, user_id)
                     await interaction.response.send_message("bet, wiped all your data. fresh start 💀", ephemeral=True)
                     # Then cancelled at uniAuth, which takes a moment, after they have their answer
-                    await uniloom.revoke(signed_in)
+                    if signed_in is not None:
+                        await uniloom.revoke(signed_in)
                 else:
                     # Try to remove specific fact
                     result = self.user_data_manager.remove_fact(user_id, fact, username)

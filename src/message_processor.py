@@ -594,6 +594,16 @@ is_correction: bool) -> None:
 
     # ── Uniloom (docs/uniloom-plan.md) ───────────────────────────────────────
 
+    def _user_data(self, user_id: str, username: str) -> dict:
+        """What the normal path knows about the asker, for answering their message again."""
+        if not self.user_data_manager:
+            return {}
+        try:
+            return self.user_data_manager.load_user_data(user_id, username)
+        except Exception as e:
+            logger.warning(f"Could not load user data for a follow-up: {e!r}")
+            return {}
+
     def _connect_view(self, message: discord.Message, reply: Reply, user_id: str, username: str,
                       channel_id: str, query: str, referenced: Optional[discord.Message]) -> Optional[ConnectView]:
         """The Connect Uniloom button, when the answer needs it. Signing in answers the message again."""
@@ -604,7 +614,8 @@ is_correction: bool) -> None:
         async def answer_again() -> None:
             note = (f"UNILOOM: {username} just connected their Uniloom account. do what they asked in this "
                     "message now")
-            await self._respond(message, user_id, username, channel_id, query, {}, referenced, note=note)
+            await self._respond(message, user_id, username, channel_id, query, self._user_data(user_id, username),
+                                referenced, note=note)
 
         return ConnectView(user_id, get_uniloom(), on_connected=answer_again)
 
@@ -626,7 +637,8 @@ is_correction: bool) -> None:
                 try:
                     text = await uniloom.call(user_id, write.tool, write.arguments)
                 except NotConnected:
-                    text = "error: their Uniloom sign-in ran out before this could be done"
+                    text = ("error: their Uniloom sign-in ran out before this could be done. tell them to run "
+                            "/uniloom connect, then ask again")
                 lines.append(f"- {write.summary}\n  Uniloom said: {text}")
                 if text.startswith("error:"):
                     skipped = writes[n + 1:]
@@ -641,14 +653,15 @@ is_correction: bool) -> None:
                     "they asked needs more changes after these, queue the next ones now. never queue one of "
                     "these again")
             try:
-                await self._respond(message, user_id, username, channel_id, query, {}, referenced, note=note)
+                await self._respond(message, user_id, username, channel_id, query,
+                                    self._user_data(user_id, username), referenced, note=note)
             except Exception as e:
                 logger.warning(f"Could not answer after Uniloom changes: {e!r}")
                 await self._safe_send(message.channel, f"done in Uniloom:\n{done}"[:1900])
 
         view = ConfirmView(user_id, state.writes, run)
         try:
-            view.message = await message.reply(view.question()[:1900], view=view, mention_author=False,
+            view.message = await message.reply(view.question(), view=view, mention_author=False,
                                                allowed_mentions=NO_PINGS)
         except discord.HTTPException as e:
             logger.warning(f"Could not ask to confirm Uniloom changes: {e}")

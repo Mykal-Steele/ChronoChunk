@@ -27,6 +27,7 @@ class WebServer:
         self.app.router.add_get("/", self.handle_root)
         self.app.router.add_get("/health", self.handle_health)
         self.app.router.add_get("/status", self.handle_status)
+        self.app.router.add_get("/oauth/start", self.handle_oauth_start)
         self.app.router.add_get("/oauth/callback", self.handle_oauth_callback)
         self.app.router.add_get("/oauth/client.json", self.handle_client_metadata)
         
@@ -38,6 +39,20 @@ class WebServer:
             from src.uniloom.service import get_uniloom
             self._uniloom = get_uniloom()
         return self._uniloom
+
+    async def handle_oauth_start(self, request):
+        """
+        Where a sign-in link opens: which Discord user the Uniloom account will be tied to,
+        before going on to uniAuth. Someone sent another person's link can see it isn't theirs.
+        """
+        found = self.uniloom.start_page(request.query.get("state", ""))
+        if found is None:
+            return _page("that link didnt work", "it ran out or was already used. run /uniloom connect in Discord "
+                         "for a new one", 400)
+        name, authorize_url = found
+        return _page("connect Uniloom", f"this connects ur Uniloom account to the Discord user {name}, so "
+                     "ChronoChunk can use it when they ask. only go on if that's u. if someone sent u this "
+                     "link, close this page", 200, link=(authorize_url, "sign in to Uniloom"))
 
     async def handle_oauth_callback(self, request):
         """Where uniAuth sends people back after they sign in to Uniloom."""
@@ -107,19 +122,22 @@ _PAGE = """<!doctype html>
   main {{ background: var(--card); padding: 28px 32px; border-radius: 12px; max-width: 26rem; margin: 16px; }}
   h1 {{ font-size: 1.25rem; margin: 0 0 8px; }}
   p {{ margin: 0; color: var(--soft); }}
+  a {{ display: inline-block; margin-top: 18px; padding: 10px 16px; border-radius: 8px; background: #5865f2;
+       color: #fff; text-decoration: none; font-weight: 600; }}
 </style>
 </head>
-<body><main><h1>{title}</h1><p>{message}</p></main></body>
+<body><main><h1>{title}</h1><p>{message}</p>{link}</main></body>
 </html>
 """
 
 
-def _page(title: str, message: str, status: int) -> web.Response:
+def _page(title: str, message: str, status: int, link: Optional[tuple] = None) -> web.Response:
     """
     A small page for the end of a sign-in. The address bar still holds the code, so the
     page loads nothing, sends no referrer and is never cached.
     """
-    response = web.Response(text=_PAGE.format(title=html.escape(title), message=html.escape(message)),
+    button = f'<a href="{html.escape(link[0])}">{html.escape(link[1])}</a>' if link else ""
+    response = web.Response(text=_PAGE.format(title=html.escape(title), message=html.escape(message), link=button),
                             content_type="text/html", status=status)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"

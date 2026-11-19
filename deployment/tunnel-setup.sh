@@ -38,7 +38,7 @@ tunnel: $ID
 credentials-file: /etc/cloudflared/credentials.json
 ingress:
   - hostname: $HOSTNAME
-    path: ^/oauth/(callback|client\.json)$
+    path: ^/oauth/(start|callback|client\.json)$
     service: http://bot:8080
   - service: http_status:404
 EOF

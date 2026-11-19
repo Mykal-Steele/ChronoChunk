@@ -82,6 +82,10 @@ class Login:
     started: float
     # Called with the saved Account once the sign-in is done
     on_done: Optional[Callable[..., Awaitable[None]]] = None
+    # uniAuth's sign-in page for this login, shown after the bot's own page names the Discord user
+    authorize_url: str = ""
+    # The Discord user the sign-in will be tied to, as the start page shows it
+    discord_name: str = ""
 
 
 def _same_url(a: str, b: str) -> bool:
@@ -183,7 +187,21 @@ class Logins:
             # OIDC: a refresh token (offline_access) is only given with the consent screen
             "prompt": "consent",
         }
-        return f"{server.authorization_endpoint}?{urlencode(query)}", login
+        login.authorize_url = f"{server.authorization_endpoint}?{urlencode(query)}"
+        return login.authorize_url, login
+
+    def peek(self, state: str, now: Optional[float] = None) -> Optional[Login]:
+        """The login for this state, left in place. None when unknown or too old."""
+        now = time.monotonic() if now is None else now
+        login = self._by_state.get(state or "")
+        if login is None or now - login.started > LOGIN_SECONDS:
+            return None
+        return login
+
+    def cancel(self, user_id: str) -> None:
+        """Drop a person's open sign-in, so signing out can't be undone by finishing an old link."""
+        for state in [s for s, login in self._by_state.items() if login.user_id == str(user_id)]:
+            del self._by_state[state]
 
     def take(self, state: str, now: Optional[float] = None) -> Optional[Login]:
         """The login for this state, removed so it can't be used twice. None when unknown or too old."""
@@ -223,7 +241,7 @@ def read_id_token(token: str, issuer: str, client_id: str, nonce: str, now: Opti
         raise OAuthError("the ID token is for another client")
     if not isinstance(claims.get("exp"), (int, float)) or claims["exp"] <= now:
         raise OAuthError("the ID token has expired")
-    if not secrets.compare_digest(str(claims.get("nonce", "")), nonce):
+    if not secrets.compare_digest(str(claims.get("nonce", "")).encode("utf-8"), nonce.encode("utf-8")):
         raise OAuthError("the ID token is from another sign-in")
     if not isinstance(claims.get("sub"), str) or not claims["sub"]:
         raise OAuthError("the ID token names nobody")

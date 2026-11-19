@@ -13,14 +13,12 @@ from typing import Any, Optional
 
 from src.tools.base import Tool, ToolResult, Turn
 from src.uniloom.schema import for_gemini
-from src.uniloom.service import NotConnected, ToolSpec, UniloomUnavailable, get_uniloom
+from src.uniloom.service import Forbidden, NotConnected, ToolSpec, Unauthorized, UniloomUnavailable, get_uniloom
 from src.uniloom.state import PendingWrite
 
 # How many changes one reply may queue for one press of do it
 MAX_WRITES = 10
 _WORD = re.compile(r"\buniloom\b", re.IGNORECASE)
-# A ticket key such as TG-12. Upper case only, so "covid-19" is not one
-_KEY = re.compile(r"\b[A-Z][A-Z0-9]{1,9}-\d{1,6}\b")
 
 # The parts of Uniloom's skill (uniloom/skill/SKILL.md) that matter when chatting. The
 # server's own instructions come with them and hold the rules
@@ -36,11 +34,12 @@ HOW TO WORK IN UNILOOM:
 - answer in ur normal short style, with the keys and links Uniloom gave"""
 
 
-def mentions_uniloom(text: str, connected: bool = True) -> bool:
-    """True for a message that is clearly about Uniloom. A ticket key only counts for someone connected."""
-    if _WORD.search(text or ""):
-        return True
-    return connected and bool(_KEY.search(text or ""))
+def mentions_uniloom(text: str) -> bool:
+    """
+    True for a message that names Uniloom. A ticket key alone does not count: SHA-256, UTF-8
+    and COVID-19 look the same, so for a key the model calls `uniloom` itself.
+    """
+    return bool(_WORD.search(text or ""))
 
 
 def _value(value: Any) -> str:
@@ -138,7 +137,7 @@ class OpenUniloom(Tool):
     def should_preload(self, text: str, user_id: Optional[str]) -> bool:
         if not user_id:
             return False
-        return mentions_uniloom(text, connected=self.service.is_connected(user_id))
+        return mentions_uniloom(text)
 
     async def run(self, args: dict, turn: Turn) -> ToolResult:
         state = turn.uniloom
@@ -155,6 +154,9 @@ class OpenUniloom(Tool):
             return ToolResult(_not_connected_text(e.expired))
         except UniloomUnavailable:
             return ToolResult("error: couldnt reach Uniloom right now. tell them to try again in a bit")
+        except (Forbidden, Unauthorized) as e:
+            # Such as terms not accepted, or no Uniloom account yet: Uniloom's own words say what to do
+            return ToolResult(f"error: Uniloom refused their account: {e}. tell them what it said")
         new = [UniloomTool(spec, self.service) for spec in specs if f"uniloom_{spec.name}" not in state.loaded]
         state.loaded.update(tool.name for tool in new)
         turn.added_tools.extend(new)

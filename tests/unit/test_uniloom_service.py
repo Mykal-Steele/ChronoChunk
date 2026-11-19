@@ -89,9 +89,14 @@ def test_it_is_off_without_a_public_address(database, tmp_path):
 
 # ── signing in ───────────────────────────────────────────────────────────────
 
-async def _sign_in(uniloom, auth, user_id="760", on_done=None):
+async def _authorize_query(uniloom, user_id="760", on_done=None):
     url = await uniloom.start_login(user_id, on_done)
-    query = {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
+    _, authorize = uniloom.start_page(parse_qs(urlparse(url).query)["state"][0])
+    return {k: v[0] for k, v in parse_qs(urlparse(authorize).query).items()}
+
+
+async def _sign_in(uniloom, auth, user_id="760", on_done=None):
+    query = await _authorize_query(uniloom, user_id, on_done)
     auth.nonce = query["nonce"]
     return await uniloom.finish_login({"code": "c", "state": query["state"], "iss": ISSUER}), query
 
@@ -253,3 +258,20 @@ async def test_disconnecting_forgets_the_token_even_when_revoking_fails(uniloom,
     uniloom.http = httpx2.AsyncClient(transport=httpx2.MockTransport(auth.handle))
     await uniloom.disconnect("760")
     assert not uniloom.is_connected("760")
+
+
+async def test_the_link_goes_to_the_bots_own_page_first(uniloom):
+    url = await uniloom.start_login("760", name="Kruskal (@kruskal_oakar)")
+    assert url.startswith(f"{PUBLIC_URL}/oauth/start?state=")
+    state = parse_qs(urlparse(url).query)["state"][0]
+    name, authorize = uniloom.start_page(state)
+    assert name == "Kruskal (@kruskal_oakar)" and authorize.startswith(f"{ISSUER}/oauth2/authorize?")
+    assert uniloom.start_page("made-up") is None
+
+
+async def test_signing_out_cancels_a_sign_in_still_open(uniloom, auth):
+    query = await _authorize_query(uniloom)
+    auth.nonce = query["nonce"]
+    uniloom.take_account("760")
+    outcome = await uniloom.finish_login({"code": "c", "state": query["state"], "iss": ISSUER})
+    assert not outcome.ok and not uniloom.is_connected("760")

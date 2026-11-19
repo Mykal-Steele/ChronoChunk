@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Callable, Dict, List, Mapping, Optional, Tuple
 
+from urllib.parse import urlencode
+
 import httpx2
 
 from config.config import Config
@@ -171,11 +173,22 @@ class UniloomService:
 
     # ── signing in ───────────────────────────────────────────────────────────
 
-    async def start_login(self, user_id: str, on_done: Optional[Callable[[Account], Any]] = None) -> str:
-        """A sign-in link for this person. on_done(account) runs once they have signed in."""
-        url, _ = self.logins.start(str(user_id), await self.auth_server(), self.client_id, self.redirect_uri,
-                                   on_done=on_done)
-        return url
+    async def start_login(self, user_id: str, on_done: Optional[Callable[[Account], Any]] = None,
+                          name: str = "") -> str:
+        """
+        A sign-in link for this person. on_done(account) runs once they have signed in. The
+        link opens the bot's own page first, which says which Discord user (name) the sign-in
+        will be tied to, so someone sent another person's link can see it isn't theirs.
+        """
+        _, login = self.logins.start(str(user_id), await self.auth_server(), self.client_id, self.redirect_uri,
+                                     on_done=on_done)
+        login.discord_name = name or "this Discord account"
+        return f"{self.public_url}/oauth/start?{urlencode({'state': login.state})}"
+
+    def start_page(self, state: str) -> Optional[Tuple[str, str]]:
+        """The Discord user a sign-in link is for and uniAuth's page to go on to, or None for a bad link."""
+        login = self.logins.peek(state)
+        return (login.discord_name, login.authorize_url) if login else None
 
     async def finish_login(self, params: Mapping[str, str]) -> LoginOutcome:
         """The redirect back from uniAuth, with what the page should tell them."""
@@ -358,6 +371,7 @@ class UniloomService:
 
     def take_account(self, user_id: str) -> Optional[Account]:
         """Forget a sign-in now and hand it back, so revoke can cancel it at uniAuth after."""
+        self.logins.cancel(str(user_id))
         return self.store.delete(str(user_id))
 
     async def revoke(self, account: Optional[Account]) -> None:

@@ -311,3 +311,61 @@ async def test_buttons_for_someone_else_are_never_shown():
                                                                           writes=list(WRITES))))
     await processor._handle_ai_response(message, "760", "Oakar", "c", "hi", "")
     assert message.reply.await_count == 1 and "view" not in message.reply.call_args[1]
+
+
+# ── from the review of PR #62 ────────────────────────────────────────────────
+
+async def test_the_answer_after_do_it_knows_who_is_asking(monkeypatch, uniloom):
+    from src import message_processor
+    from src.ai_response_handler import Reply
+    from src.uniloom.state import UniloomState
+    monkeypatch.setattr(message_processor, "get_uniloom", lambda: uniloom)
+    processor, message, ai = _processor(Reply("ok", uniloom=UniloomState("760", writes=list(WRITES))))
+    processor.user_data_manager.load_user_data = MagicMock(return_value={"facts": ["vegetarian"]})
+    await processor._handle_ai_response(message, "760", "Oakar", "c", "add a login slice", "")
+    view = message.reply.call_args_list[-1][1]["view"]
+    processor._respond = AsyncMock()
+    await view.do_it.callback(_interaction())
+    assert processor._respond.call_args[0][5] == {"facts": ["vegetarian"]}
+    processor.user_data_manager.load_user_data.assert_called_with("760", "Oakar")
+
+
+async def test_a_lost_sign_in_during_do_it_says_how_to_connect_again(monkeypatch, uniloom):
+    from src import message_processor
+    from src.ai_response_handler import Reply
+    from src.uniloom.service import NotConnected
+    from src.uniloom.state import UniloomState
+    monkeypatch.setattr(message_processor, "get_uniloom", lambda: uniloom)
+    uniloom.call.side_effect = NotConnected(expired=True)
+    processor, message, ai = _processor(Reply("ok", uniloom=UniloomState("760", writes=list(WRITES))))
+    await processor._handle_ai_response(message, "760", "Oakar", "c", "add it", "")
+    view = message.reply.call_args_list[-1][1]["view"]
+    processor._respond = AsyncMock()
+    await view.do_it.callback(_interaction())
+    assert "/uniloom connect" in processor._respond.call_args[1]["note"]
+
+
+def test_the_question_always_shows_every_change_and_fits_a_message():
+    writes = [PendingWrite("save_item", {}, f"save item {n}: " + "long words " * 40) for n in range(10)]
+    text = ConfirmView("760", writes, run=AsyncMock()).question()
+    assert len(text) <= 1900
+    assert all(f"save item {n}:" in text for n in range(10))
+
+
+async def test_the_sign_in_link_first_says_which_discord_user_it_connects(web):
+    client, uniloom = web
+    uniloom.start_page = MagicMock(return_value=("Kruskal (@kruskal_oakar)", "https://auth.example/authorize?x=1"))
+    response = await client.get("/oauth/start?state=s")
+    text = await response.text()
+    assert response.status == 200 and "Kruskal (@kruskal_oakar)" in text
+    assert 'href="https://auth.example/authorize?x=1"' in text
+    assert response.headers["Cache-Control"] == "no-store"
+    uniloom.start_page.return_value = None
+    assert (await client.get("/oauth/start?state=old")).status == 400
+
+
+async def test_forget_still_wipes_everything_when_uniloom_breaks(commands, uniloom):
+    uniloom.take_account = MagicMock(side_effect=ValueError("bad key"))
+    interaction = _interaction()
+    await commands["forget"](interaction)
+    assert "wiped" in interaction.response.send_message.call_args[0][0]

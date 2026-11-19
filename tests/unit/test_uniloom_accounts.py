@@ -72,3 +72,10 @@ def test_forgetting_someone_removes_their_sign_in_too(store):
     store.save(_account())
     UserDataManager().forget_user("760")
     assert not store.exists("760")
+
+
+def test_an_empty_key_file_left_by_a_crash_is_replaced(database, tmp_path):
+    (tmp_path / "uniloom.key").write_bytes(b"")
+    store = AccountStore(database, key_path=str(tmp_path / "uniloom.key"))
+    store.save(_account())
+    assert store.get("760") is not None

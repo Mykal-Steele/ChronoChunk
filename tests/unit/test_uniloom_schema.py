@@ -67,3 +67,9 @@ def test_a_tool_with_no_input_gets_an_empty_object():
 def test_required_only_names_fields_that_exist():
     schema = for_gemini({"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a", "b"]})
     assert schema["required"] == ["a"]
+
+
+def test_a_nested_object_with_no_fields_becomes_a_json_string():
+    # Gemini may refuse an empty object schema inside a declaration (review of PR #62)
+    schema = for_gemini({"type": "object", "properties": {"meta": {"type": "object", "description": "Extra"}}})
+    assert schema["properties"]["meta"]["type"] == "string" and "JSON" in schema["properties"]["meta"]["description"]

@@ -38,18 +38,36 @@ class Account:
 
 
 def _load_key(path: str) -> bytes:
-    """The key in path, or a new one written there that only the bot's user can read."""
-    directory = os.path.dirname(path)
-    if directory:
-        os.makedirs(directory, exist_ok=True)
+    """
+    The key in path, or a new one written there that only the bot's user can read. The new
+    key is written to a temporary file first and then put in place, so a crash can't leave
+    an empty key behind. An empty one (from before that) can't have sealed anything, so it is replaced.
+    """
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
     try:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
         with open(path, "rb") as handle:
-            return handle.read().strip()
+            key = handle.read().strip()
+        if key:
+            return key
+        os.remove(path)
+    except FileNotFoundError:
+        pass
     key = Fernet.generate_key()
+    temporary = os.path.join(directory, f".{os.path.basename(path)}.{os.getpid()}.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "wb") as handle:
         handle.write(key + b"\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    try:
+        # link fails when another process put a key there first, and then that one is used
+        os.link(temporary, path)
+    except FileExistsError:
+        with open(path, "rb") as handle:
+            key = handle.read().strip()
+    finally:
+        os.remove(temporary)
     return key
 
 
