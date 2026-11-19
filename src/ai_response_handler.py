@@ -1220,6 +1220,12 @@ class AIResponseHandler:
                 raw = message.content if isinstance(message.content, str) else ""
                 calls = message.tool_calls if isinstance(message.tool_calls, list) else []
                 if not calls:
+                    if not raw.strip() and not request.files:
+                        # Gemini sometimes sends no text at all, often right after a tool call. Asked
+                        # once more with no tools, it answers. A second empty one gets the stand-in.
+                        logger.warning("The model sent an empty answer, asking once more")
+                        message = await self._chat(messages, max_tokens, None, effort, None, request, model)
+                        raw = message.content if isinstance(message.content, str) else ""
                     break
 
                 messages.append({

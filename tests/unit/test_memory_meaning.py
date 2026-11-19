@@ -375,3 +375,34 @@ def test_the_embedding_model_can_be_changed_from_env():
     embedder = make_embedder(settings, client=MagicMock(),
                              env={"VERTEX_PROJECT": "proj", "AI_MEMORY_EMBEDDING_MODEL": "gemini-embedding-001"})
     assert embedder.model == "gemini-embedding-001"
+
+
+# ── an empty answer ──────────────────────────────────────────────────────────
+
+def _call(name, arguments):
+    import json
+    return SimpleNamespace(id="call_1", type="function",
+                           function=SimpleNamespace(name=name, arguments=json.dumps(arguments)))
+
+
+async def test_an_empty_answer_after_a_tool_call_is_asked_for_again(database, mock_openai_client):
+    # Seen live: Gemini saved the memory, then sent no text, and Slade got "brain fried, hit me up again"
+    mock_openai_client.chat.completions.create.side_effect = [
+        _message(tool_calls=[_call("remember", {"content": "Slade has the flu", "about": "Slade", "kind": "self"})]),
+        _message(content=""),
+        _message(content="damn get well soon"),
+    ]
+    handler = _handler(mock_openai_client, FakeEmbedder())
+    reply = await handler.generate_reply("/i got the flu", "", "Slade", "760", allow_files=True, place=KMUTT)
+    assert reply.text == "damn get well soon"
+    last = mock_openai_client.chat.completions.create.call_args_list[-1][1]
+    assert not last.get("tools")
+
+
+async def test_an_empty_answer_is_asked_for_only_once(database, mock_openai_client):
+    mock_openai_client.chat.completions.create.side_effect = [_message(content=""), _message(content=""),
+                                                              _message(content="never sent")]
+    handler = _handler(mock_openai_client, FakeEmbedder())
+    reply = await handler.generate_reply("/yo", "", "Slade", "760", allow_files=True, place=KMUTT)
+    assert reply.text == "brain fried, hit me up again"
+    assert mock_openai_client.chat.completions.create.call_count == 2

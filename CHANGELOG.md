@@ -21,6 +21,10 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 - The memory rules tell the model to use only the memories that answer the message, and never to say it saved something without calling `remember`. In a check it answered "aight, got it. noted." and saved nothing.
 
+### Fixed
+
+- When Gemini sends an empty answer, often right after a tool call, the bot asks once more with no tools instead of saying "brain fried, hit me up again". It happened in the memory check after a memory was saved.
+
 ## 3.25.0 (2026-11-19)
 
 ### Added
