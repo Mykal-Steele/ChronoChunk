@@ -10,6 +10,13 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.30.1 (2026-11-19)
+
+### Fixed
+
+- `/help` sometimes failed with "the application did not respond". The VM swapped the idle bot out to disk while half its RAM was free, so the first command after a quiet stretch took longer than Discord's 3 seconds while the bot was read back in, and Discord threw the answer away. The VM now keeps the bot in RAM (`vm.swappiness` 10), set by `deployment/cloud-init.yml` for new VMs and already set on the live one.
+- The bot's own list of recent updates always starts with its newest version. A fix-only release after a day of long changes was left out, so the bot did not know about it.
+
 ## 3.30.0 (2026-11-19)
 
 ### Changed

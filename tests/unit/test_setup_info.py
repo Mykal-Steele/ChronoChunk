@@ -432,3 +432,19 @@ def test_the_changelog_part_never_passes_its_limit_counting_what_it_adds(monkeyp
     monkeypatch.setattr(setup_info, "CHANGELOG_PATH", str(path))
     monkeypatch.setattr(setup_info, "_today", lambda: date(2026, 11, 18))
     assert len(setup_info.latest_changes()) <= setup_info.CHANGELOG_LIMIT
+
+
+def test_the_newest_version_is_always_in_the_recent_changes(tmp_path, monkeypatch):
+    # A fix-only release after a day of long "Changed" entries was left out, so the bot did not
+    # know about its own newest update (3.30.1, 2026-11-19)
+    from datetime import date
+    # Long enough that the changes from earlier the same day leave no room for it
+    fix = "help no longer times out " * 12
+    older = "\n".join(f"## 3.{n}.0 (2026-11-19)\n\n### Changed\n\n- {'a change ' * 21}\n" for n in range(20, 30))
+    path = tmp_path / "CHANGELOG.md"
+    path.write_text(f"# Changelog\n\n## 3.30.1 (2026-11-19)\n\n### Fixed\n\n- {fix}\n\n" + older)
+    monkeypatch.setattr(setup_info, "CHANGELOG_PATH", str(path))
+    monkeypatch.setattr(setup_info, "_today", lambda: date(2026, 11, 19))
+    text = setup_info.latest_changes()
+    assert text.startswith(f"3.30.1 (2026-11-19)\n  - {fix.strip()}")
+    assert len(text) <= setup_info.CHANGELOG_LIMIT

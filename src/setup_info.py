@@ -73,8 +73,12 @@ def latest_changes() -> str:
         return ""
     recent = [e for e in entries if (_today() - e[0]).days <= CHANGELOG_RECENT_DAYS] or entries[:1]
 
-    order = [(i, j) for i, e in enumerate(recent) for j, (kind, _) in enumerate(e[2]) if kind == "changed"]
-    order += [(i, j) for i, e in enumerate(recent) for j, (kind, _) in enumerate(e[2]) if kind != "changed"]
+    # The newest version's first line comes first, so the running version is always named
+    order = [(0, 0)] if recent[0][2] else []
+    order += [(i, j) for i, e in enumerate(recent) for j, (kind, _) in enumerate(e[2])
+              if kind == "changed" and (i, j) != (0, 0)]
+    order += [(i, j) for i, e in enumerate(recent) for j, (kind, _) in enumerate(e[2])
+              if kind != "changed" and (i, j) != (0, 0)]
     chosen, headed, size = set(), set(), -1  # -1: the first line has no line break before it
     for i, j in order:
         cost = len(recent[i][2][j][1]) + len("\n  - ") + (0 if i in headed else len(recent[i][1]) + 1)
