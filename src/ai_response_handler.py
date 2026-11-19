@@ -9,7 +9,8 @@ from src.memory_store import MemoryStore
 from src.tools.memory import AUTO_RECALL_LIMIT, RecallMemory, embed_missing
 from src.embedder import make_embedder
 from src.channel_log import ChannelLog
-from src.tools.memory import past_days_block
+from src.lessons import LessonStore, lessons_block
+from src.tools.memory import in_dm, past_days_block
 from src.clock import BANGKOK
 from types import SimpleNamespace
 import time
@@ -999,7 +1000,8 @@ class AIResponseHandler:
         # Per-user cache, keyed by user identity + query + tail of history + what was attached
         cache_key = f"{user_id or username}|{query}|{conversation_history[-120:] if conversation_history else ''}"
         # A saved, corrected or forgotten memory can change the answer, so it starts a new key
-        cache_key += f"|m{MemoryStore().revision()}"
+        revisions = (MemoryStore().revision(), LessonStore().revision())
+        cache_key += f"|m{revisions[0]}|l{revisions[1]}"
         # Each server has its own past days, so an answer is only served again where it was made
         cache_key += f"|{getattr(request.place, 'guild_id', '')}:{getattr(request.place, 'channel_id', '')}"
         if attached_context or images:
@@ -1061,8 +1063,9 @@ class AIResponseHandler:
             detail = wants_detail(clean_query)
             # A kept plain answer costs nothing and needs no routing call. Course mode and
             # study replies are never kept, so they always get a fresh decision.
+            # A memory or lesson can change while the steps above wait on the model
             if (cache_key in self.response_cache and fresh and not flagged and session is None
-                    and not asked_study):
+                    and not asked_study and (MemoryStore().revision(), LessonStore().revision()) == revisions):
                 return await self._finish(request, Reply(self.response_cache[cache_key]))
 
             # The request already exists; fill in the parts the routing call decided.
@@ -1125,7 +1128,8 @@ class AIResponseHandler:
                     except Exception as e:
                         logger.warning(f"Recall by meaning failed, using words: {e}")
                 remembered = recall.matching(clean_query, AUTO_RECALL_LIMIT, vector=vector,
-                                             model=request.memory_model if vector else None)
+                                             model=request.memory_model if vector else None, viewer_id=user_id,
+                                             private_ok=in_dm(request))
                 if remembered:
                     user_parts.insert(-1, remembered)
                 # Only days from channels they can see. Without a way to check, only this channel
@@ -1134,6 +1138,11 @@ class AIResponseHandler:
                 past = past_days_block(log.find_episodes(vector, request.memory_model, guild_id, visible=visible))
                 if past:
                     user_parts.insert(-1, past)
+            if user_id:
+                # How the people here asked the bot to act (memory plan, layer 4). No model call.
+                taught = lessons_block(LessonStore().for_reply(user_id, getattr(request.place, "guild_id", "")), username)
+                if taught:
+                    user_parts.insert(-1, taught)
 
             def keep(block: str) -> None:
                 if session is not None:
@@ -1292,7 +1301,8 @@ class AIResponseHandler:
                     shown = drop_unseen_sources(shown, found, given=[query, request.attached, request.history])
                     reply = Reply(shown, files)
                 # An answer from the web or the course material goes stale, so it is looked up again next time
-                if not files and not study and not request.lookups and not request.course_searches and not in_course:
+                if (not files and not study and not request.lookups and not request.course_searches and not in_course
+                        and not request.receipts):
                     self.response_cache[cache_key] = reply.text
                     self._cached_at[cache_key] = time.monotonic()
                     if len(self.response_cache) > self.cache_size:
@@ -1300,6 +1310,9 @@ class AIResponseHandler:
                             self.response_cache.pop(k, None)
                             self._cached_at.pop(k, None)
 
+            if request.receipts and reply.ok:
+                # Discord shows a line that starts with "-# " as small grey text
+                reply.text += "\n-# " + ", ".join(request.receipts)
             if user_id and get_usage_guard().take_daily_warning(user_id):
                 # Discord shows a line that starts with "-# " as small grey text
                 reply.text += "\n-# Heads up, u used 80% of ur ai for today. `/usage` shows whats left"

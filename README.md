@@ -229,6 +229,7 @@ Slash commands:
 - `/tldr <count>` - Sum up the last messages in the channel (default 50, max 200). It also looks at the newest images and files posted in them.
 - `/tldr <count> <request>` - Ask about those messages or have the bot make something from them, for example `/tldr 60 what is the best option?` or `/tldr 55 make a pdf of the design discussed here`
 - `/info` or `/mydata` - See what the bot has stored about you. Only you see the answer.
+- `/memory` - See what the bot remembers about you, and `/memory delete:m12` deletes one thing. `/memory view:server` shows a server manager what it learned in their server.
 - `/forget` - Delete everything the bot has stored about you. `/forget <text>` deletes one fact.
 - `/game <max>`, `/guess <number>`, `/end` - The number guessing game
 - `/usage` - What you have left today: messages, PDFs, files, web lookups, course searches and your AI limit. Only you see the answer.

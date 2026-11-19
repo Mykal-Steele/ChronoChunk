@@ -34,6 +34,14 @@ def _day_of(when: datetime) -> date:
     return when.astimezone(BANGKOK).date()
 
 
+def _feedback(value: str) -> list:
+    try:
+        entries = json.loads(value or "[]")
+    except ValueError:
+        return []
+    return [e for e in entries if isinstance(e, list) and len(e) == 3] if isinstance(entries, list) else []
+
+
 class ChannelLog:
     def __init__(self, database: Optional[Database] = None):
         self.db = database or get_database()
@@ -61,6 +69,29 @@ class ChannelLog:
     def edit(self, message_id, content: str) -> None:
         with self.db.transaction() as connection:
             connection.execute("UPDATE channel_messages SET content = ? WHERE message_id = ?", (content, str(message_id)))
+
+    def add_feedback(self, message_id, emoji: str, name: str, user_id: str = "") -> bool:
+        """
+        Note a reaction on one of the bot's own messages, for the night to learn from, with who
+        reacted so /forget can take it out. False for anyone else's message.
+        """
+        with self.db.transaction() as connection:
+            row = connection.execute("SELECT feedback FROM channel_messages WHERE message_id = ? AND is_bot = 1",
+                                     (str(message_id),)).fetchone()
+            if row is None:
+                return False
+            kept = _feedback(row["feedback"])
+            entry = [str(user_id), name, emoji]
+            if entry not in kept:
+                kept.append(entry)
+            connection.execute("UPDATE channel_messages SET feedback = ? WHERE message_id = ?",
+                               (json.dumps(kept, ensure_ascii=False), str(message_id)))
+        return True
+
+    @staticmethod
+    def feedback_text(row) -> str:
+        """The reactions on a message as "👎 Mint, 👍 Slade"."""
+        return ", ".join(f"{emoji} {name}" for _, name, emoji in _feedback(row["feedback"]))
 
     def delete(self, message_id) -> None:
         with self.db.transaction() as connection:
@@ -136,6 +167,10 @@ class ChannelLog:
         return [Episode(row["id"], row["guild_name"], row["channel_name"], date.fromisoformat(row["day"]), row["summary"])
                 for _, row in kept[:limit]]
 
+    def delete_episode(self, episode_id: int) -> None:
+        with self.db.transaction() as connection:
+            connection.execute("DELETE FROM episodes WHERE id = ?", (int(episode_id),))
+
     def prune(self, today: date, keep_days: int) -> int:
         """Delete the raw messages older than keep_days. Their days' summaries stay."""
         cutoff = (today - timedelta(days=keep_days)).isoformat()
@@ -147,5 +182,10 @@ class ChannelLog:
         user_id = str(user_id)
         with self.db.transaction() as connection:
             removed = connection.execute("DELETE FROM channel_messages WHERE author_id = ?", (user_id,)).rowcount
+            for row in connection.execute("SELECT message_id, feedback FROM channel_messages WHERE feedback LIKE ?",
+                                          (f'%"{user_id}"%',)).fetchall():
+                kept = [e for e in _feedback(row["feedback"]) if e[0] != user_id]
+                connection.execute("UPDATE channel_messages SET feedback = ? WHERE message_id = ?",
+                                   (json.dumps(kept, ensure_ascii=False) if kept else "", row["message_id"]))
             connection.execute("DELETE FROM episodes WHERE people LIKE ?", (f'%"{user_id}"%',))
         return removed

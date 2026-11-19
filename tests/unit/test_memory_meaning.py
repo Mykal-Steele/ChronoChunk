@@ -394,7 +394,7 @@ async def test_an_empty_answer_after_a_tool_call_is_asked_for_again(database, mo
     ]
     handler = _handler(mock_openai_client, FakeEmbedder())
     reply = await handler.generate_reply("/i got the flu", "", "Slade", "760", allow_files=True, place=KMUTT)
-    assert reply.text == "damn get well soon"
+    assert reply.text == "damn get well soon\n-# saved as m1"
     last = mock_openai_client.chat.completions.create.call_args_list[-1][1]
     assert not last.get("tools")
 

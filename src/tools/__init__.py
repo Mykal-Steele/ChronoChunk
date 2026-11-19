@@ -2,6 +2,7 @@
 The tools the chat model can call. Each tool is a class in its own module with the
 same small interface (see base.Tool). To add one, write the class and list it here.
 """
+from src.tools.lessons import LearnLesson
 from src.tools.memory import RecallMemory, RememberMemory
 from typing import List
 
@@ -15,4 +16,4 @@ __all__ = ["Tool", "ToolResult", "Turn", "default_tools"]
 
 def default_tools() -> List[Tool]:
     """Every tool the bot has, in the order their prompt sections are added to the system prompt."""
-    return [CreateDocument(), CreateDiagram(), OpenUrl(), WebSearch(), SearchCourse(), RememberMemory(), RecallMemory()]
+    return [CreateDocument(), CreateDiagram(), OpenUrl(), WebSearch(), SearchCourse(), RememberMemory(), RecallMemory(), LearnLesson()]

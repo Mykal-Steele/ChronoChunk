@@ -171,6 +171,29 @@ MIGRATIONS = [
     -- When recall last showed a memory. A memory nobody uses fades in the ranking
     ALTER TABLE memories ADD COLUMN last_used_at TEXT;
     """,
+    """
+    -- Memory plan, layer 4. How people want the bot to act, for one person or a whole server
+    CREATE TABLE lessons (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        scope       TEXT NOT NULL,           -- 'person': how to act with target_id. 'server': in guild target_id
+        target_id   TEXT NOT NULL,
+        lesson      TEXT NOT NULL,
+        source_id   TEXT NOT NULL,           -- who asked for it
+        source_name TEXT NOT NULL,
+        guild_id    TEXT NOT NULL DEFAULT '',
+        guild_name  TEXT NOT NULL DEFAULT '',
+        created_at  TEXT NOT NULL
+    );
+    CREATE INDEX lessons_target ON lessons(scope, target_id);
+    -- Reactions on the bot's own messages, such as "👎 Mint", for the night to learn from
+    ALTER TABLE channel_messages ADD COLUMN feedback TEXT NOT NULL DEFAULT '';
+    """,
+    """
+    -- A note only the person who saved it gets back. The bot asks public or private when it saves one
+    ALTER TABLE memories ADD COLUMN private INTEGER NOT NULL DEFAULT 0;
+    -- The user id of who a memory is about, when that is known for sure, so /memory can let them delete it
+    ALTER TABLE memories ADD COLUMN about_id TEXT NOT NULL DEFAULT '';
+    """,
 ]
 
 
