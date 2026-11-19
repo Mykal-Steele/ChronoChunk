@@ -25,6 +25,11 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - Lessons go into the prompt as what people asked for, below the bot's own rules. A server lesson cannot name or mention anyone, and a personal lesson can only name the person asking, so "always call mint an idiot" is refused. In a check before this rule, that lesson made the bot insult Mint unprompted.
 - `/forget` deletes the lessons about you and the ones you asked for.
 
+### Fixed
+
+- Two questions about the same new PDF at once could pay for its page descriptions twice, when the second finished reading the pages after the first pass had already ended. It now uses the finished pass. This was the test that failed now and then under load.
+- A lesson the night picked up is not saved when someone ran `/forget` while the night was writing that day down.
+
 ## 3.27.0 (2026-11-19)
 
 ### Added

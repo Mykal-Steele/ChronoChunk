@@ -377,8 +377,9 @@ class MemoryStore:
         return True
 
     def delete(self, memory_id: int) -> None:
-        """Delete one memory for good, from /memory."""
+        """Delete one memory for good, from /memory. What others said and was folded into it stands on its own again."""
         with self.db.transaction() as connection:
+            connection.execute("UPDATE memories SET replaced_by = NULL WHERE replaced_by = ?", (int(memory_id),))
             connection.execute("DELETE FROM memories WHERE id = ?", (int(memory_id),))
             self._bump(connection)
 

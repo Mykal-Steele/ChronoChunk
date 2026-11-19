@@ -139,14 +139,6 @@ async def summarize_day(log: ChannelLog, client, model: str, embedder, channel_i
             max_completion_tokens=SUMMARY_MAX_TOKENS, reasoning_effort="low")
     summary, learned = _day_answer(response)
     place = Place(first["guild_id"], first["guild_name"], first["channel_id"], first["channel_name"])
-    for item in learned:
-        who = str(item.get("who") or "").strip().lower()
-        lesson = str(item.get("lesson") or "")
-        if who == "server":
-            lessons.add(lesson, "server", Speaker("", "feedback"), place)
-        elif who in speakers:
-            # Only about someone who spoke that day, so the night cannot invent a lesson about anyone else
-            lessons.add(lesson, "person", Speaker(*speakers[who]), place)
     if not summary:
         logger.warning(f"Empty summary for channel {channel_id} on {day}")
         return None
@@ -157,6 +149,15 @@ async def summarize_day(log: ChannelLog, client, model: str, embedder, channel_i
     if episode_id is None:
         logger.info(f"The day of {channel_id} on {day} changed while it was written down, trying again next night")
         return None
+    # Lessons only once the day is known to be unchanged, so /forget during the call is not undone
+    for item in learned:
+        who = str(item.get("who") or "").strip().lower()
+        lesson = str(item.get("lesson") or "")
+        if who == "server":
+            lessons.add(lesson, "server", Speaker("", "feedback"), place)
+        elif who in speakers:
+            # Only about someone who spoke that day, so the night cannot invent a lesson about anyone else
+            lessons.add(lesson, "person", Speaker(*speakers[who]), place)
     if embedder is not None:
         try:
             vector, _ = await embedder.embed(summary, "document")

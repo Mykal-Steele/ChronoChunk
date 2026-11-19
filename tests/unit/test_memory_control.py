@@ -200,3 +200,15 @@ async def test_slash_memory_delete_uses_the_permission_of_the_person(memory_comm
     interaction = _interaction(admin=True)
     await memory_command(interaction, delete=f"m{memory_id}")
     assert "deleted" in interaction.response.send_message.call_args[0][0]
+
+
+def test_deleting_a_memory_others_were_merged_into_brings_theirs_back(stores):
+    from tests.unit.test_memory_sleep import _vector
+    memories, _, _ = stores
+    kept = memories.remember("the exam is in room 410", "exam", "claim", KRUSKAL, KMUTT).memory_id
+    merged = memories.remember("exam: room 410", "exam", "claim", MINT, KMUTT).memory_id
+    for memory_id in (kept, merged):
+        memories.set_embedding(memory_id, _vector("exam room"), "fake-1")
+    assert memories.merge(memories.get(kept), memories.get(merged))
+    delete_item(f"m{kept}", "111", "", is_admin=False)
+    assert [m.id for m in memories.recall("exam room")] == [merged]

@@ -265,3 +265,19 @@ def test_a_personal_lesson_cannot_be_aimed_at_someone_else(database):
 def test_a_personal_lesson_can_name_the_person_it_is_for(database):
     ChannelLog(database).add(_message("hi", MINT))
     assert LessonStore(database).add("stop roasting Mint", "person", MINT, KMUTT)
+
+
+async def test_a_night_lesson_is_dropped_when_they_ran_forget_during_the_call(database):
+    from unittest.mock import AsyncMock, MagicMock
+    from src.sleep import summarize_day
+    log = ChannelLog(database)
+    day = _day_with_feedback(log)
+
+    async def write(**kwargs):
+        log.forget_user(MINT.user_id)
+        LessonStore(database).forget_user(MINT.user_id)
+        return _write_day("- talk", [{"who": "Mint", "lesson": "dont roast Mint"}])
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(side_effect=write)
+    await summarize_day(log, client, "m", FakeEmbedder(), "55", day)
+    assert LessonStore(database).for_reply("222", "1280").person == []

@@ -280,3 +280,29 @@ async def test_keep_days_zero_keeps_descriptions_in_memory_only(describer, datab
     await pdf_notes.page_notes(data, "deck.pdf")
     assert describer.await_count == 2
 
+
+
+async def test_a_request_that_finishes_reading_after_the_other_pass_ended_uses_its_result(describer, monkeypatch):
+    # Seen as a flaky failure under load: the second request read the pages slower than the
+    # first pass took, found no pass running and paid for a second one
+    real = pdf_notes._in_render_thread
+    first_done = asyncio.Event()
+    calls = 0
+
+    async def render(function, *args):
+        nonlocal calls
+        calls += 1
+        mine = calls
+        result = await real(function, *args)
+        if mine == 2:
+            await first_done.wait()
+        return result
+    monkeypatch.setattr(pdf_notes, "_in_render_thread", render)
+    data = _pdf(["picture"])
+
+    async def first():
+        notes = await pdf_notes.page_notes(data, "a.pdf")
+        first_done.set()
+        return notes
+    results = await asyncio.gather(first(), pdf_notes.page_notes(data, "a.pdf"))
+    assert results[0] == results[1] and describer.await_count == 1
