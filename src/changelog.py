@@ -6,11 +6,12 @@ first sentence so a page stays easy to scan. /changelog version:<number> shows o
 import os
 import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, time, timezone
 from typing import List, Optional, Tuple
 
 import discord
 
+from src.clock import BANGKOK, days_ago
 from src.version import __version__
 
 CHANGELOG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "CHANGELOG.md")
@@ -42,8 +43,14 @@ KINDS = {
 class Version:
     number: str
     day: date
+    # When it went out, Bangkok time, from the heading "(2026-11-19 15:24)". None for a day only.
+    made: Optional[datetime] = None
     # (heading, the change) in the order they are written
     changes: List[Tuple[str, str]] = field(default_factory=list)
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def read_versions() -> List[Version]:
@@ -56,10 +63,13 @@ def read_versions() -> List[Version]:
     versions = []
     for section in re.split(r"^## ", text, flags=re.MULTILINE)[1:]:
         title, _, body = section.partition("\n")
-        found = re.match(r"(\S+) \((\d{4}-\d{2}-\d{2})\)", title.strip())
+        found = re.match(r"(\S+) \((\d{4}-\d{2}-\d{2})(?: (\d{2}):(\d{2}))?\)", title.strip())
         if not found:
             continue
-        version = Version(found.group(1), date.fromisoformat(found.group(2)))
+        day = date.fromisoformat(found.group(2))
+        made = (datetime.combine(day, time(int(found.group(3)), int(found.group(4))), BANGKOK)
+                if found.group(3) else None)
+        version = Version(found.group(1), day, made)
         kind = ""
         for line in body.splitlines():
             if line.startswith("### "):
@@ -84,8 +94,15 @@ def _kind(heading: str) -> str:
     return KINDS.get(heading, heading or "change")
 
 
+def _clock_time(when: datetime) -> str:
+    return f"{when.hour % 12 or 12}:{when.minute:02d} {'am' if when.hour < 12 else 'pm'}"
+
+
 def _heading(version: Version) -> str:
-    return f"**{version.number}** · {version.day.day} {version.day:%b %Y}"
+    """'**3.30.2** · 19 Nov 2026, 3:24 pm (today)': the version, when it went out, and how long ago."""
+    when = version.made or datetime.combine(version.day, time(12), BANGKOK)
+    at = f", {_clock_time(version.made)}" if version.made else ""
+    return f"**{version.number}** · {version.day.day} {version.day:%b %Y}{at} ({days_ago(when, _now())})"
 
 
 def _block(version: Version) -> str:

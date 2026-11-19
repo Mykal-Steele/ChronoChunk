@@ -10,26 +10,28 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
-## 3.31.0 (2026-11-19)
+The time in each heading is when that version went out, in Bangkok time. For the versions before 3.31.0 it was taken from the commit each version's tag points to, and a version tagged on an earlier commit than the one before it shows that one's time.
+
+## 3.31.0 (2026-11-19 16:28)
 
 ### Added
 
-- `/changelog` shows what changed in each version, newest first. A page holds five versions with each change in one line, and the newer and older buttons flip through the rest for ten minutes. `/changelog version:3.27.0` shows one version with every change in full.
+- `/changelog` shows what changed in each version, newest first. A page holds five versions with each change in one line, and the newer and older buttons flip through the rest for ten minutes. Each version shows when it went out, with the time and how long ago ("19 Nov 2026, 3:24 pm (today)"). `/changelog version:3.27.0` shows one version with every change in full.
 
-## 3.30.2 (2026-11-19)
+## 3.30.2 (2026-11-19 15:24)
 
 ### Fixed
 
 - The bot was offline for 18 minutes after 3.30.1 went out. Applying the swap setting with `sysctl --system` also reloaded Google's own settings file, which turns off the IP forwarding Docker needs, so the container could not reach Discord and kept restarting. Forwarding is back on, and `deployment/cloud-init.yml` now loads only the bot's own settings file.
 
-## 3.30.1 (2026-11-19)
+## 3.30.1 (2026-11-19 15:00)
 
 ### Fixed
 
 - `/help` sometimes failed with "the application did not respond". The VM swapped the idle bot out to disk while half its RAM was free, so the first command after a quiet stretch took longer than Discord's 3 seconds while the bot was read back in, and Discord threw the answer away. The VM now keeps the bot in RAM (`vm.swappiness` 10), set by `deployment/cloud-init.yml` for new VMs and already set on the live one.
 - The bot's own list of recent updates always starts with its newest version. A fix-only release after a day of long changes was left out, so the bot did not know about it.
 
-## 3.30.0 (2026-11-19)
+## 3.30.0 (2026-11-19 14:06)
 
 ### Changed
 
@@ -37,7 +39,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - `/usage`, `/setup` and `/stats` answer in plain text with bold labels and lists instead of a code block, which was hard to read and showed no formatting.
 - Help footers no longer show backticks, since Discord does not format footer text.
 
-## 3.29.0 (2026-11-19)
+## 3.29.0 (2026-11-19 13:32)
 
 ### Added
 
@@ -46,7 +48,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - A save receipt. When a reply saved something, it ends with a small line such as "saved as m12", "saved as m12 (private)", "saved as m14, replacing m12" or "learned as l3". No line means nothing was saved, even if the bot said "noted".
 - `/memory view:server` shows a server manager what the bot learned in their server: memories taught there, the server's lessons and the days it wrote down. A manager can delete any of those, but nothing from another server.
 
-## 3.28.0 (2026-11-19)
+## 3.28.0 (2026-11-19 13:32)
 
 ### Added
 
@@ -63,7 +65,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - `/memory delete` counts who a memory is about by user ID, not display name. `/memory` lists the days you are in with their codes, and its answer always fits one Discord message.
 - A cached reply is not served when a memory or lesson changed while the reply was being checked.
 
-## 3.27.0 (2026-11-19)
+## 3.27.0 (2026-11-19 12:26)
 
 ### Added
 
@@ -78,7 +80,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - A reply kept for reuse was served again in any server and channel. It is now only served where it was made, since each server has its own past days.
 - What someone says about themselves is saved as their own word even when the model marks it as a claim, so others cannot overwrite it. When someone else had already claimed the same thing about them, their own report takes over and the other person counts as confirming it.
 
-## 3.26.0 (2026-11-19)
+## 3.26.0 (2026-11-19 11:20)
 
 ### Added
 
@@ -93,21 +95,21 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 - When Gemini sends an empty answer, often right after a tool call, the bot asks once more with no tools instead of saying "brain fried, hit me up again". It happened in the memory check after a memory was saved.
 
-## 3.25.0 (2026-11-19)
+## 3.25.0 (2026-11-19 04:39)
 
 ### Added
 
 - Long-term memory, layer 1 of `docs/memory-plan.md`. The bot saves what people teach it with the `remember` tool, with who said it, when, and the server and channel, and every server it is in shares that memory. Before it answers, memories that share words with the message are put in front of it with who told it and when, so it can say "kruskal said it got moved to tuesday" in another server. `recall` searches with other words. A correction replaces the old memory. Only the person can change what they said about themselves, and one person cannot overwrite a claim someone else confirmed. `/forget` deletes what you taught and takes your name off what you confirmed, and a reply that was already being written when you ran it cannot save a memory for you afterwards. A cached answer is never reused once a memory changed.
 - PRIVACY.md and `/help` say that what you teach the bot is shared by every server. PRIVACY.md also names the current AI provider and the nightly encrypted copy in Cloudflare R2.
 
-## 3.24.3 (2026-11-19)
+## 3.24.3 (2026-11-19 03:30)
 
 ### Changed
 
 - The bot runs on Python 3.15 (was 3.12). discord.py's voice libraries moved up with it: `davey` 0.2.0, which has 3.15 wheels, and `audioop-lts`, which replaces the `audioop` module Python dropped in 3.13. `pydantic` must be at least 2.14.2, the first whose core has 3.15 wheels.
 - Package updates from Dependabot #45: `openai` 3.51.0, `pypdf` 7.1.0, `pypdfium2` 5.15.2, and for the tests `pytest` 9.2.0, `pytest-asyncio` 1.5.0, `ruff` 0.17.5 and `nodeenv` 1.12.0.
 
-## 3.24.2 (2026-11-18)
+## 3.24.2 (2026-11-19 03:26)
 
 ### Fixed
 
@@ -116,13 +118,13 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - A "-# Source:" line is removed when the bot never saw its link in a search, a page, the course material or the message. With no tools it had cited a results page it never opened, for an answer that was wrong.
 - After an hour of silence the bot no longer picks an old joke or topic back up. When the last message before theirs is over an hour old, one short check on the chat model reads both and decides whether the new message continues the old chat. If it does not, the old chat is left out of the answer. Messages over an hour old are marked as an earlier conversation, and the short-reply hint only follows a bot message from the last hour. In a test, "hi" five hours after a roast got "still thinking about that failed compile?" before and a plain hello after, while real follow-ups kept their context.
 
-## 3.24.1 (2026-11-18)
+## 3.24.1 (2026-11-19 02:48)
 
 ### Fixed
 
 - Music keeps working when YouTube starts requiring its JavaScript challenges. The image now has deno 2.9.8 and yt-dlp's challenge solver (`yt-dlp-ejs` 0.8.0). A song lookup still runs without JavaScript first, as fast as before (about 1 s). Only if YouTube refuses does it try once more with deno, which takes about 3 s and 320 MB.
 
-## 3.24.0 (2026-11-18)
+## 3.24.0 (2026-11-19 02:48)
 
 ### Added
 
@@ -137,7 +139,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - Removed a members-only filter from the song lookup that never ran. It was written backwards: it would have skipped every normal video, and crashed while doing it.
 - The bot knows when it leaves voice on its own and points people to `/help music`.
 
-## 3.23.0 (2026-11-18)
+## 3.23.0 (2026-11-18 14:08)
 
 ### Changed
 
@@ -151,7 +153,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 - What the bot knows about its recent updates keeps the big news, such as the move to Google Cloud and the memory wipe, when small fixes pile up. "Changed" lines go in first, and the size limit counts everything it adds.
 
-## 3.22.4 (2026-11-18)
+## 3.22.4 (2026-11-18 13:58)
 
 ### Fixed
 
@@ -160,7 +162,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - When Google answers a model call with 429 (its shared Gemini capacity is busy), the bot waits 2 seconds and then 5 seconds and tries again before giving up.
 - Before calling a tool, app, model or game dead, new or the latest, the bot searches first instead of answering from old knowledge.
 
-## 3.22.3 (2026-11-18)
+## 3.22.3 (2026-11-18 13:57)
 
 ### Fixed
 
@@ -168,21 +170,21 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - It no longer says "cooked". The word is gone from its examples and slang, it is told not to use it, and it counts as worn out if it slips through.
 - Its personality no longer says it lives on Azure.
 
-## 3.22.2 (2026-11-18)
+## 3.22.2 (2026-11-18 01:11)
 
 ### Fixed
 
 - Music: YouTube stream links expire after about 6 hours. A song now keeps its YouTube page, and gets a fresh link right before it plays if the old one would run out before the song ends. That covers songs that waited in a long queue and songs on loop. If the new lookup fails, the old link is still tried. If the bot leaves voice or another song starts during that lookup, nothing extra plays and the song goes back to the front of the queue.
 - Music: yt-dlp 2026.10.26, the newest release. YouTube changes often break older versions.
 
-## 3.22.1 (2026-11-18)
+## 3.22.1 (2026-11-18 00:49)
 
 ### Fixed
 
 - The bot knows it runs on a Google Cloud VM (machine type, zone and image from Google's metadata server, never the project or addresses). Before this it guessed wrong about where it lives.
 - It knows which provider its models come from, and what changed in its updates from the last two weeks, so it can say what really happened to it. `CHANGELOG.md` is now in the image for this.
 
-## 3.22.0 (2026-11-17)
+## 3.22.0 (2026-11-17 23:52)
 
 ### Added
 
@@ -205,7 +207,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - A leftover `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` is ignored when the provider is not Azure, so it is never sent to Vertex as a model name.
 - Only the bot's own "quota ran out" line is kept out of later context, not any answer that mentions a quota.
 
-## 3.21.0 (2026-10-22)
+## 3.21.0 (2026-10-23 21:04)
 
 ### Added
 
@@ -229,7 +231,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - A link inside a code block, or code inside a link label, is no longer duplicated when a source line is written.
 - A request that waited for a slot no longer keeps the queue marked as full while it runs, so a short burst does not turn away the next message.
 
-## 3.20.0 (2026-10-21)
+## 3.20.0 (2026-10-21 22:16)
 
 ### Added
 
@@ -256,7 +258,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - A source line long enough to split across messages could be cut through a link, which posted both halves as raw Markdown. Source lines now wrap between links, and the sender never splits a masked link or a bare URL.
 - A LaTeX command such as `\cap` crashed document cleanup and every reply that used it. Commands are now matched as literal text before their symbol is substituted.
 
-## 3.19.1 (2026-10-18)
+## 3.19.1 (2026-10-19 01:33)
 
 ### Fixed
 
@@ -269,7 +271,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - A web answer's source line written at the end of a sentence showed `-# Source:` as typed. It now goes on its own line.
 - A line holding only a stray token like `^(finish)` is taken out.
 
-## 3.19.0 (2026-10-13)
+## 3.19.0 (2026-10-14 16:51)
 
 ### Changed
 
@@ -307,13 +309,13 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - A sync stops before writing anything if an id from the parts of an assignment that are about people shows up in what it is about to keep.
 - `PRIVACY.md` says what the bot holds of the courses and that course mode keeps a person's lookups in memory for an hour.
 
-## 3.18.1 (2026-10-13)
+## 3.18.1 (2026-10-13 16:52)
 
 ### Fixed
 
 - A reply no longer goes out with the same answer in it twice. The model writes its answer, then writes it again on a new line in about 4 of 10 replies to some messages, and only when tools are offered with the request. The cut that existed caught a word for word copy of 200 characters or more. It now also catches a reworded copy, a short one, and one with stray text between the two. The later copy is the one sent.
 
-## 3.18.0 (2026-10-13)
+## 3.18.0 (2026-10-13 16:51)
 
 ### Added
 
@@ -326,14 +328,14 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 - The sync time has the hour and minute and is told in Bangkok time: "13 Oct 2026 at 14:06 Bangkok time". It was the day only, counted in UTC, which gave the day before for a sync between midnight and 7 in the morning.
 
-## 3.17.1 (2026-10-13)
+## 3.17.1 (2026-10-13 16:02)
 
 ### Changed
 
 - Day to day talk is typed in small letters again, with no capital at the start of a sentence. Only a long explanation, about 250 characters of text or more, gets a capital at each sentence. A capital the model adds to a short reply is taken off, and "I", short forms such as TCP and names such as FastAPI are kept.
 - The example replies in `config/voice_examples.md` follow the same rule.
 
-## 3.17.0 (2026-10-13)
+## 3.17.0 (2026-10-13 15:39)
 
 ### Changed
 
@@ -353,7 +355,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - A link the model changed while copying it is replaced with the link the search returned.
 - A star after a single letter, as in A*, no longer turns the text after it into italics.
 
-## 3.16.0 (2026-10-13)
+## 3.16.0 (2026-10-13 13:58)
 
 ### Added
 
@@ -368,7 +370,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - Embedding calls go through the spending cap and are counted in `/stats`, like chat calls.
 - With no course file on the server, nothing changes: the bot has no course search and does not mention courses.
 
-## 3.15.0 (2026-10-12)
+## 3.15.0 (2026-10-12 23:23)
 
 ### Changed
 
@@ -393,7 +395,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 - A second conversation memory that was written and never read, and a topic function nothing called.
 
-## 3.14.0 (2026-10-12)
+## 3.14.0 (2026-10-12 23:19)
 
 ### Added
 
@@ -401,7 +403,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - Nothing is saved about a person the bot answers this way, and the cost does not count against their own AI limit. It counts against the bot's daily and monthly caps and shows in `/stats` as "joining in".
 - When two or more people are talking to the bot in a channel within a minute, its answer pings the person it is for. With one person it stays a quiet reply, as before.
 
-## 3.13.0 (2026-10-12)
+## 3.13.0 (2026-10-12 23:14)
 
 ### Added
 
@@ -417,7 +419,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 - The old send function in the message handler. Nothing called it, and its emoji matching guessed at names.
 
-## 3.12.0 (2026-10-12)
+## 3.12.0 (2026-10-12 22:02)
 
 ### Added
 
@@ -430,20 +432,20 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - A long reply is no longer split through the middle of an emoji.
 - The chat history shows a custom emoji as `:name:` instead of its id, so the model does not copy ids.
 
-## 3.11.0 (2026-10-12)
+## 3.11.0 (2026-10-12 20:23)
 
 ### Added
 
 - The live bot can be tested by another bot. With `TEST_BOT_ID` and `TEST_CHANNEL_ID` set, the bot answers that one bot in that one channel. It still ignores every other bot, and that bot everywhere else. With either one empty, which is the default, nothing changes. `/setup` shows whether it is on.
 
-## 3.10.1 (2026-10-12)
+## 3.10.1 (2026-10-12 19:40)
 
 ### Fixed
 
 - The bot no longer waits for Discord to confirm the typing indicator before it starts on an answer. On the server that wait was about 0.3 seconds of every reply, and over 2.5 seconds on 2 of the first 15. The indicator still shows.
 - A typing indicator that Discord refuses no longer costs the answer.
 
-## 3.10.0 (2026-10-12)
+## 3.10.0 (2026-10-12 19:14)
 
 ### Added
 
@@ -456,7 +458,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - `/setup` no longer shows the path of the database file or of the deploy script.
 - The privacy page says that the copies keep something you delete for up to 7 more days.
 
-## 3.9.0 (2026-10-12)
+## 3.9.0 (2026-10-12 18:56)
 
 ### Added
 
@@ -464,14 +466,14 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - On an Azure VM the bot asks Azure for the VM's name, size and region at startup, so `/setup` names the real machine. Anywhere else it says it is not on an Azure VM.
 - The README has a "Where it runs" section: the server, its folders, every setting, how to deploy a change and how to set up a new server.
 
-## 3.8.0 (2026-10-12)
+## 3.8.0 (2026-10-12 18:44)
 
 ### Added
 
 - The log has one `Answered` line per answer that says how long each step took: reading the channel history, reading what the message points at, the model and its tools, and sending the answer. It also says how long the message took to reach the bot. A slow reply can be traced to the step that was slow.
 - The `Reply for` line says how much of the time went to tools, not counting the model calls a tool makes.
 
-## 3.7.1 (2026-10-12)
+## 3.7.1 (2026-10-12 18:43)
 
 ### Fixed
 
@@ -482,14 +484,14 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 - Every pull request is checked by a linter (ruff) and a type checker (pyright) before the tests run. Their first pass found the two problems above. Settings are in `pyproject.toml`.
 
-## 3.7.0 (2026-10-12)
+## 3.7.0 (2026-10-12 09:22)
 
 ### Changed
 
 - The descriptions the bot writes of a PDF's pages are kept in the database for 7 days after they were last used, for up to 200 files. A restart or a deploy no longer makes the bot read every slide deck again, and a deck one person has asked about is ready for everyone else that week. `PDF_NOTES_KEEP_DAYS` sets the number of days, and 0 keeps them in memory only, as before.
 - A stored description is found by the file's hash. No filename and no user is stored with it.
 
-## 3.6.0 (2026-10-12)
+## 3.6.0 (2026-10-12 09:13)
 
 ### Added
 
@@ -504,7 +506,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - The spending ledger records who each model call was for and what it was doing (chat, facts, document, pdf_notes, music).
 - The bot-wide caps of $2 a day and $15 a month stay as the backstop.
 
-## 3.5.0 (2026-10-11)
+## 3.5.0 (2026-10-11 23:26)
 
 ### Changed
 
@@ -524,7 +526,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - Nothing to do. The database is created in the `state` folder that already survives rebuilds.
 - To go back to 3.4.0, the JSON files are still there, as they were at the moment of the upgrade.
 
-## 3.4.0 (2026-10-11)
+## 3.4.0 (2026-10-11 22:48)
 
 ### Added
 
@@ -543,7 +545,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 - New package: `pypdfium2`, which turns PDF pages into pictures.
 - Describing a deck costs about the same as five questions about it: $0.003 for 21 slides and $0.012 for 88 on gpt-6-luna. Each question then costs 26% to 42% more than before, because the descriptions are part of the prompt.
 
-## 3.3.0 (2026-10-11)
+## 3.3.0 (2026-10-11 21:56)
 
 ### Added
 
@@ -553,7 +555,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 - The `openai` package moves from 2.28 to 3.26. Chat, image reading, web search, diagrams, documents, fact extraction and the music lookup were all run against the live service on the new version.
 
-## 3.2.0 (2026-10-11)
+## 3.2.0 (2026-10-11 21:35)
 
 ### Changed
 
@@ -565,7 +567,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 - Copy the new `deployment/docker-compose.yml` to the server. It needs a `gpt-6-luna` deployment on the Azure resource.
 
-## 3.1.1 (2026-10-11)
+## 3.1.1 (2026-10-11 21:06)
 
 Nothing changes for people using the bot. What is sent to the model is identical to 3.1.0.
 
@@ -573,7 +575,7 @@ Nothing changes for people using the bot. What is sent to the model is identical
 
 - The things the model can do (make a document, draw a diagram, open a link, search the web) are separate tools in `src/tools/`, each with the same small interface. Before this they were branches inside the reply code. A new ability is a new file plus one line in `default_tools()`.
 
-## 3.1.0 (2026-10-11)
+## 3.1.0 (2026-10-11 21:00)
 
 ### Added
 
@@ -588,7 +590,7 @@ Nothing changes for people using the bot. What is sent to the model is identical
 
 - Copy the new `deployment/docker-compose.yml` to the server. It sets `AZURE_OPENAI_BACKGROUND_DEPLOYMENT`.
 
-## 3.0.1 (2026-10-11)
+## 3.0.1 (2026-10-11 20:52)
 
 ### Fixed
 
@@ -598,7 +600,7 @@ Nothing changes for people using the bot. What is sent to the model is identical
 
 - The log line for each reply says how long the reply took and how much of that was spent waiting for the model.
 
-## 3.0.0 (2026-10-11)
+## 3.0.0 (2026-10-11 19:47)
 
 The first number changed because an existing install needs two steps before this version starts. See "Upgrading".
 
@@ -642,7 +644,7 @@ The first number changed because an existing install needs two steps before this
 - Links to the server itself, to private networks and to Azure's metadata address are refused, including after a redirect.
 - Answers that used the web are not cached, so the same question is looked up again.
 
-## 2.7.0 (2026-10-05)
+## 2.7.0 (2026-10-05 23:17)
 
 ### Added
 
@@ -653,7 +655,7 @@ The first number changed because an existing install needs two steps before this
 
 - `/status` no longer says `1.0.0`, which it had reported since April 2025.
 
-## 2.6.1 (2026-10-05)
+## 2.6.1 (2026-10-05 22:50)
 
 Commit `116f22d`.
 
@@ -661,7 +663,7 @@ Commit `116f22d`.
 
 - The backup diagram renderer gets a 10 second limit and a second try. Before this, a backup that hung added 30 seconds to a reply.
 
-## 2.6.0 (2026-10-05)
+## 2.6.0 (2026-10-05 22:45)
 
 Commit `4f29e3a`.
 
@@ -686,7 +688,7 @@ Commit `4f29e3a`.
 - Sequence diagrams showed quotes around names and cut off the text of notes.
 - A `/tldr` task list could contain tasks and deadlines nobody wrote.
 
-## 2.5.0 (2026-10-05)
+## 2.5.0 (2026-10-05 22:11)
 
 Commit `ee510cf`.
 
@@ -710,7 +712,7 @@ Commit `ee510cf`.
 
 - Diagrams came back as raw Mermaid text. Labels with brackets or with `<T>` in them made the renderer fail or lose text.
 
-## 2.4.0 (2026-10-05)
+## 2.4.0 (2026-10-05 17:23)
 
 Commit `cbc794d`.
 
@@ -730,7 +732,7 @@ Commit `cbc794d`.
 - A `state/` folder holds the spending ledger.
 - The Docker image now installs pandoc, pango and the Noto fonts.
 
-## 2.3.0 (2026-10-05)
+## 2.3.0 (2026-10-05 17:22)
 
 Commits `5a98c78` to `4d80068`.
 
@@ -748,7 +750,7 @@ Commits `5a98c78` to `4d80068`.
 
 - Chat history reached the AI in a scrambled order.
 
-## 2.2.0 (2026-07-18)
+## 2.2.0 (2026-07-18 09:59)
 
 Commits `8540e6f` to `bb5cbc7`.
 
@@ -762,7 +764,7 @@ Commits `8540e6f` to `bb5cbc7`.
 - The bot said it could not open a link it had already fetched.
 - Raw error text is no longer sent to people.
 
-## 2.1.0 (2026-07-17)
+## 2.1.0 (2026-07-17 22:43)
 
 Commits `7935952` to `ec7a9b4`.
 
@@ -779,7 +781,7 @@ Commits `7935952` to `ec7a9b4`.
 
 - The `/info` and `/mydata` slash commands crashed.
 
-## 2.0.0 (2026-07-16)
+## 2.0.0 (2026-07-16 21:10)
 
 Commits `c63be50` to `bbe0fa9`.
 
@@ -805,7 +807,7 @@ Commits `c63be50` to `bbe0fa9`.
 - Game state and its own error messages leaked into chat answers.
 - Emoji spam, announcing what it was about to do, and bringing old topics back.
 
-## 1.0.0 (2025-04-01)
+## 1.0.0 (2025-04-01 10:02)
 
 Commit `bf216cf`.
 
@@ -821,7 +823,7 @@ Commit `bf216cf`.
 
 - FFmpeg is needed for music.
 
-## 0.3.0 (2025-03-24)
+## 0.3.0 (2025-03-24 06:05)
 
 Commits `59cbe73` to `46ff2ce`.
 
@@ -837,7 +839,7 @@ Commits `59cbe73` to `46ff2ce`.
 - Requests such as "play a game" are spotted by patterns and no longer by the AI.
 - Rate limiting was removed. It came back in 2.4.0.
 
-## 0.2.0 (2025-03-19)
+## 0.2.0 (2025-03-19 04:05)
 
 Commits `8ca7867` and `3e3691c`.
 
@@ -859,7 +861,7 @@ Commits `8ca7867` and `3e3691c`.
 - `GEMINI_API_KEY` is needed.
 - The health server listens on port 8080. The `PORT` setting is no longer read.
 
-## 0.1.0 (2025-03-07)
+## 0.1.0 (2025-03-07 16:21)
 
 Commits `982d07d` to `9cf3252`.
 

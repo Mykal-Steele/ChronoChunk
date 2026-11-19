@@ -59,7 +59,7 @@ def latest_changes() -> str:
     entries = []
     for section in re.split(r"^## ", text, flags=re.MULTILINE)[1:]:
         title, _, body = section.partition("\n")
-        found = re.search(r"\((\d{4}-\d{2}-\d{2})\)", title)
+        found = re.search(r"\((\d{4}-\d{2}-\d{2})(?: \d{2}:\d{2})?\)", title)
         if not found:
             continue
         bullets, kind = [], ""

@@ -11,7 +11,7 @@ SAMPLE = """# Changelog
 
 Intro text that is not a version.
 
-## 3.2.0 (2026-11-19)
+## 3.2.0 (2026-11-19 15:24)
 
 ### Added
 
@@ -71,9 +71,27 @@ def test_each_change_says_what_kind_it_is(sample):
     assert "**for hosts** Set AI_PROVIDER to vertex." in page
 
 
-def test_each_version_has_a_heading_with_its_date(sample):
+def test_each_version_says_when_it_was_made(sample, monkeypatch):
+    # The user asked for when each update was made, not only the day (2026-11-19)
+    from datetime import datetime
+    from src.clock import BANGKOK
+    monkeypatch.setattr(changelog, "_now", lambda: datetime(2026, 11, 21, 9, 0, tzinfo=BANGKOK))
     page = changelog.pages(changelog.read_versions())[0]
-    assert "**3.2.0** · 19 Nov 2026" in page
+    assert "**3.2.0** · 19 Nov 2026, 3:24 pm (2 days ago)" in page
+    # An old entry with only a day still shows the day
+    assert "**3.1.0** · 18 Nov 2026 (3 days ago)" in page
+
+
+def test_the_time_is_read_as_bangkok_time(sample):
+    from src.clock import BANGKOK
+    made = changelog.read_versions()[0].made
+    assert (made.hour, made.minute, made.utcoffset()) == (15, 24, BANGKOK.utcoffset(None))
+
+
+def test_every_released_version_in_the_real_changelog_has_a_time():
+    versions = changelog.read_versions()
+    untimed = [v.number for v in versions if v.made is None]
+    assert untimed == []
 
 
 def test_the_first_page_holds_the_newest_five_versions():
@@ -105,7 +123,7 @@ def test_a_page_with_huge_versions_gets_fewer_of_them(sample, monkeypatch):
 
 def test_one_version_in_full():
     text = changelog.full_version("3.27.0")
-    assert text.startswith("**3.27.0** · 19 Nov 2026")
+    assert text.startswith("**3.27.0** · 19 Nov 2026, ")
     # The whole change, not just its first sentence
     assert "Discord edits and deletes carry over, and DMs are not saved." in text
     assert len(text) <= changelog.PAGE_CHARS
