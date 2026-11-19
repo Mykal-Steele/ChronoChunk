@@ -128,6 +128,13 @@ class LessonStore:
             "OR (scope = 'server' AND target_id = ?) ORDER BY id", (*user_ids, str(guild_id)))
         return [r["lesson"] for r in rows]
 
+    def delete(self, lesson_id: int) -> None:
+        with self.db.transaction() as connection:
+            connection.execute("DELETE FROM lessons WHERE id = ?", (int(lesson_id),))
+            connection.execute(
+                "INSERT INTO meta (key, value) VALUES (?, '1') "
+                "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1", (_REVISION,))
+
     def forget_user(self, user_id: str) -> int:
         user_id = str(user_id)
         with self.db.transaction() as connection:

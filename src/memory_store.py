@@ -376,6 +376,12 @@ class MemoryStore:
             self._bump(connection)
         return True
 
+    def delete(self, memory_id: int) -> None:
+        """Delete one memory for good, from /memory."""
+        with self.db.transaction() as connection:
+            connection.execute("DELETE FROM memories WHERE id = ?", (int(memory_id),))
+            self._bump(connection)
+
     def has_memories(self) -> bool:
         """Whether there is any live memory, so a reply with nothing to recall skips the embedding."""
         return bool(self.db.query("SELECT 1 FROM memories WHERE replaced_by IS NULL LIMIT 1"))

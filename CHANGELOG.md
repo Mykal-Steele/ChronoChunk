@@ -10,6 +10,13 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.29.0 (2026-11-19)
+
+### Added
+
+- `/memory`, layer 5 of `docs/memory-plan.md`. It shows you, privately, what you taught the bot, what others told it about you, the lessons about you, and how many of your messages and day summaries it keeps. Each item has a code (`m12`, `l3`, `d5`), and `/memory delete:m12` deletes that one thing. You can delete what you taught, what is about you and the days you spoke on.
+- `/memory view:server` shows a server manager what the bot learned in their server: memories taught there, the server's lessons and the days it wrote down. A manager can delete any of those, but nothing from another server.
+
 ## 3.28.0 (2026-11-19)
 
 ### Added

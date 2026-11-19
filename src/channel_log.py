@@ -151,6 +151,10 @@ class ChannelLog:
         return [Episode(row["id"], row["guild_name"], row["channel_name"], date.fromisoformat(row["day"]), row["summary"])
                 for _, row in kept[:limit]]
 
+    def delete_episode(self, episode_id: int) -> None:
+        with self.db.transaction() as connection:
+            connection.execute("DELETE FROM episodes WHERE id = ?", (int(episode_id),))
+
     def prune(self, today: date, keep_days: int) -> int:
         """Delete the raw messages older than keep_days. Their days' summaries stay."""
         cutoff = (today - timedelta(days=keep_days)).isoformat()

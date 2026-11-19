@@ -51,6 +51,7 @@ The bot cannot answer without sending some of what you write to other services:
 ## See or delete your data
 
 - `/info` or `/mydata` shows what the bot has stored about you. Only you see the answer.
+- `/memory` shows what the bot remembers about you, with a code for each item, and `/memory delete:<code>` deletes one. A server manager can see and delete what it learned in their server with `/memory view:server`.
 - `/forget` deletes everything stored about you, including what you taught the bot, your saved channel messages, the day summaries you are in, the lessons about you or from you, and the encrypted reply-log rows tied to your user hash.
 - `/forget <text>` deletes the one fact that matches.
 

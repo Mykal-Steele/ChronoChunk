@@ -2,6 +2,7 @@ import asyncio
 import io
 import logging
 import discord
+from src.memory_control import about_me, about_server, delete_item
 from src.memory_store import place_of
 from discord import app_commands
 from typing import Optional
@@ -82,6 +83,7 @@ class SlashCommandManager:
             await self._register_guess_command()
             await self._register_end_command()
             await self._register_forget_command()
+            await self._register_memory_command()
             await self._register_code_command()
             await self._register_chat_command()
             await self._register_tldr_command()
@@ -424,6 +426,33 @@ class SlashCommandManager:
                 answer = ("aight, in this channel i wont look at pics and files unless someone replies to them, "
                           "attaches them or runs `/tldr`")
             await interaction.response.send_message(answer)
+
+    async def _register_memory_command(self):
+        """What the bot knows about you, or what it learned in this server, and deleting one thing (memory plan, layer 5)"""
+        @self.bot.tree.command(name="memory", description="See what I remember about you, or delete one thing")
+        @app_commands.describe(view="me: what i know about u. server: what i learned here (needs Manage Server)",
+                               delete="The code of one thing to delete, like m12, l3 or d5, from /memory")
+        @app_commands.choices(view=[app_commands.Choice(name="me", value="me"),
+                                    app_commands.Choice(name="server", value="server")])
+        async def memory(interaction: discord.Interaction, view: Optional[str] = None, delete: Optional[str] = None):
+            user = interaction.user
+            permissions = getattr(user, "guild_permissions", None)
+            is_admin = bool(interaction.guild) and bool(getattr(permissions, "manage_guild", False))
+            guild_id = str(interaction.guild_id or "")
+            try:
+                if delete:
+                    answer = await asyncio.to_thread(delete_item, delete, str(user.id), guild_id, is_admin, user.display_name)
+                elif view == "server":
+                    if not is_admin:
+                        answer = "only someone with manage server can see what i learned in this server"
+                    else:
+                        answer = await asyncio.to_thread(about_server, guild_id)
+                else:
+                    answer = await asyncio.to_thread(about_me, str(user.id), user.display_name)
+            except Exception as e:
+                logger.error(f"Error handling memory command: {e}")
+                answer = "couldnt read my memory right now, try again in a bit"
+            await interaction.response.send_message(answer, ephemeral=True)
 
     async def _register_join_in_command(self):
         """Register the switch for answering messages nobody addressed to the bot in a channel"""
