@@ -35,6 +35,7 @@ The bot cannot answer without sending some of what you write to other services:
 | Service | What it gets | When |
 |---|---|---|
 | The AI provider (Google Vertex AI, Gemini, since November 2026) | Your message, the recent channel messages, the facts stored about you, memories that match your message, your last 3 exchanges with the bot, and any image or file you point the bot at | Every answer |
+| The AI provider | Each memory you teach, and your message, to turn them into embeddings so the bot can find memories by meaning | When something is remembered, on every answer once there are memories, and when the bot starts, for memories that were saved without one or before a model change |
 | The AI provider | The picture and name of each custom server emoji | Once per new emoji |
 | The AI provider | Your message, to turn it into a search of the course material, and the passages that search found | When your message is in course mode |
 | Tavily | Your search words, and links the bot cannot open on its own | When the bot searches the web or opens a link |

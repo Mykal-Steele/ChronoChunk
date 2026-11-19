@@ -26,8 +26,8 @@ Accepted with these decisions: something said in a small server can come up in a
 |---|---|---|---|
 | 0 | Memory that survives | Nightly encrypted copy of the database in R2, 30 days kept | Done 2026-11-18, restore tested |
 | 1 | Remember what people teach | `remember` and `recall` tools, each memory with who said it, when and where, corrections replace the old fact. Memories that share words with the message go in front of the model before it answers | Done 2026-11-19 (3.25.0) |
-| 2 | Find the memory that fits | Next. Embeddings (Vertex `gemini-embedding-2`) in `sqlite-vec`, about 10 memories per reply ranked by relevance, recency and importance. Also brings course search back on Vertex | |
-| 3 | Episodes and sleep | Everything said in a channel is stored. A nightly job writes a summary of each channel's day, merges duplicate facts, settles contradictions and lets unimportant memories fade | |
+| 2 | Find the memory that fits | Embeddings (Vertex `gemini-embedding-2`, 768 numbers) kept with each memory and compared with `sqlite-vec`, up to 10 memories per reply ranked by meaning, then how new and how confirmed they are. Course search on Vertex still waits on the sync rebuilding `courses.db` with the same model | Done 2026-11-19 (3.26.0) |
+| 3 | Episodes and sleep | Next. Everything said in a channel is stored. A nightly job writes a summary of each channel's day, merges duplicate facts, settles contradictions and lets unimportant memories fade | |
 | 4 | Learning how to behave | Notices feedback ("stop roasting me", "that's wrong", a thumbs down) and writes a short lesson for that person or the whole server, which goes into its prompt. It never edits its code or its base personality | |
 | 5 | Control | `/memory` shows what it knows about you, `/forget` erases it, and admins can review and delete what it learned about the group or the world | |
 
@@ -40,7 +40,7 @@ Accepted with these decisions: something said in a small server can come up in a
 
 ## Cost
 
-- Embeddings: about $0.15 per million tokens. A few thousand messages a day is around $0.30 a month.
+- Embeddings: $0.20 per million tokens for `gemini-embedding-2`. A message is about 10 tokens, so 3,000 a day is about $0.20 a month.
 - Nightly summaries on `gemini-3.1-flash-lite`: a few cents a day.
 - R2: free up to 10 GB. The database is well under 1 MB today.
 

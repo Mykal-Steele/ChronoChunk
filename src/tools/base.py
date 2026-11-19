@@ -39,6 +39,10 @@ class Turn:
     ask_model: Optional[Callable[[list, int, Optional[str]], Awaitable]] = None
     # Embeds one text for a search, counted against this reply: embed(text)
     embed: Optional[Callable[[str], Awaitable[List[float]]]] = None
+    # Embeds one text for the memory, counted against this reply: embed_memory(text, "query" or "document")
+    embed_memory: Optional[Callable[..., Awaitable[List[float]]]] = None
+    # The model embed_memory uses, kept with each memory's embedding
+    memory_model: str = ""
     # Search results and pages read for this reply, for tools that run later (the document writer)
     findings: List[str] = field(default_factory=list)
     lookups: int = 0

@@ -153,6 +153,9 @@ class Config:
         "gemini-3.8-flash": (1.50, 0.15, 7.50),
         "gemini-3.5-flash-lite": (0.30, 0.03, 2.50),
         "gemini-3.1-flash-lite": (0.25, 0.025, 1.50),
+        # Embeddings, for recall by meaning. Vertex list prices, November 2026.
+        "gemini-embedding-2": (0.20, 0.20, 0.0),
+        "gemini-embedding-001": (0.15, 0.15, 0.0),
     }
 
     # How PDFs that someone attaches, replies to or links are read. "auto" describes every page

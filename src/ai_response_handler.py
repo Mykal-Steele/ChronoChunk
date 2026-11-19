@@ -6,7 +6,8 @@ import re
 import urllib.parse
 import logging
 from src.memory_store import MemoryStore
-from src.tools.memory import AUTO_RECALL_LIMIT, RecallMemory
+from src.tools.memory import AUTO_RECALL_LIMIT, RecallMemory, embed_missing
+from src.embedder import make_embedder
 from src.clock import BANGKOK
 from types import SimpleNamespace
 import time
@@ -622,6 +623,8 @@ class AIResponseHandler:
         if settings is None:
             settings = AiSettings("openai", endpoint, api_key, deployment or "gpt-5-mini", "", "")
         self.ai_client = make_client(settings, timeout=Config.AI_MODEL_TIMEOUT_SECONDS, max_retries=1)
+        # Embeds memories and messages, so recall can find a memory by meaning (memory plan, layer 2)
+        self.memory_embedder = make_embedder(settings, self.ai_client)
         self.deployment = settings.chat_model
         self._settings_heavy_model = settings.heavy_model
 
@@ -776,6 +779,27 @@ class AIResponseHandler:
         request.calls += 1
         request.cost += UsageGuard.cost_of(getattr(resp, "usage", None), Config.EMBEDDING_DEPLOYMENT)
         return resp.data[0].embedding
+
+    async def _embed_memory(self, text: str, task: str, request: Turn) -> List[float]:
+        """The embedding of one text for the memory. The call and its cost are added to request."""
+        self._check_reply_limit(request)
+        called_at = time.monotonic()
+        try:
+            vector, cost = await self.memory_embedder.embed(text, task)
+        finally:
+            request.model_seconds += time.monotonic() - called_at
+        request.calls += 1
+        request.cost += cost
+        return vector
+
+    async def embed_missing_memories(self) -> int:
+        """Embed the memories that have no embedding from the current model. Run once at startup."""
+        if self.memory_embedder is None:
+            return 0
+        done = await embed_missing(MemoryStore(), self.memory_embedder)
+        if done:
+            logger.info(f"Embedded {done} memories with {self.memory_embedder.model}")
+        return done
 
     async def describe_images(self, prompt: str, images: List[str]) -> Tuple[str, float]:
         """
@@ -1048,6 +1072,9 @@ class AIResponseHandler:
                 model_messages, limit, reasoning_effort=effort, request=request,
                 model=self._heavy_model())
             request.embed = lambda text: self._embed(text, request)
+            if self.memory_embedder is not None:
+                request.embed_memory = lambda text, task="query": self._embed_memory(text, task, request)
+                request.memory_model = self.memory_embedder.model
 
             # One call before the answer decides whether the course material is needed at all.
             # It reads the message, the one it replies to and the recent chat, and says what
@@ -1079,11 +1106,11 @@ class AIResponseHandler:
             # The tools on offer for this reply, and the state they share
             offered = [tool for tool in self.tools if tool.available() and (in_course or not tool.course_only)] if allow_files else []
             by_name = {tool.name: tool for tool in offered}
-            # What people told the bot before, matched on the message's words. It costs no model
-            # call, and the chat model does not reliably call recall on its own
+            # What people told the bot before that fits the message, found by meaning (one small
+            # embedding call) or by its words. The chat model does not reliably call recall on its own
             recall = by_name.get("recall")
             if isinstance(recall, RecallMemory) and user_id:
-                remembered = recall.matching(clean_query, AUTO_RECALL_LIMIT)
+                remembered = await recall.find(clean_query, AUTO_RECALL_LIMIT, request)
                 if remembered:
                     user_parts.insert(-1, remembered)
 
@@ -1194,6 +1221,12 @@ class AIResponseHandler:
                 raw = message.content if isinstance(message.content, str) else ""
                 calls = message.tool_calls if isinstance(message.tool_calls, list) else []
                 if not calls:
+                    if not raw.strip() and not request.files:
+                        # Gemini sometimes sends no text at all, often right after a tool call. Asked
+                        # once more with no tools, it answers. A second empty one gets the stand-in.
+                        logger.warning("The model sent an empty answer, asking once more")
+                        message = await self._chat(messages, max_tokens, None, effort, None, request, model)
+                        raw = message.content if isinstance(message.content, str) else ""
                     break
 
                 messages.append({
