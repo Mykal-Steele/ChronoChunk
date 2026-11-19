@@ -10,6 +10,14 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.30.0 (2026-11-19)
+
+### Changed
+
+- `/help` is a short start page now: how to talk to the bot, the commands people use most, and one line for each topic. The rest moved to topic pages: `/help memory` (teaching it, public and private notes, the saved line, lessons, `/memory` and `/forget`), `/help files`, `/help courses`, `/help music` and `/help limits`. The slash command lets you pick the topic, and typing `/help memory` works too. Every slash command is on one of the pages, and a test keeps it that way.
+- `/usage`, `/setup` and `/stats` answer in plain text with bold labels and lists instead of a code block, which was hard to read and showed no formatting.
+- Help footers no longer show backticks, since Discord does not format footer text.
+
 ## 3.29.0 (2026-11-19)
 
 ### Added

@@ -35,11 +35,11 @@ def test_the_summary_names_the_version_the_models_and_the_budget(monkeypatch):
     monkeypatch.setattr(Config, "AI_BACKGROUND_DEPLOYMENT", "gpt-5-nano")
     monkeypatch.setattr(Config, "AI_CHAT_REASONING_EFFORT", "none")
     text = setup_info.setup_summary("gpt-6-luna")
-    assert f"version     {__version__}" in text
-    assert "chat model  gpt-6-luna, reasoning none" in text
-    assert "background  gpt-5-nano" in text
-    assert "bot budget  $20 a month, $2.50 a day, new month on day 14" in text
-    assert "per person  $0.50 a day, $1.50 over 7 days" in text
+    assert f"**version**: {__version__}" in text
+    assert "**chat model**: gpt-6-luna, reasoning none" in text
+    assert "**background**: gpt-5-nano" in text
+    assert "**bot budget**: $20 a month, $2.50 a day, new month on day 14" in text
+    assert "**per person**: $0.50 a day, $1.50 over 7 days" in text
     assert "chat 50 per 30 min" in text and "file 30 a day" in text
     assert text.endswith("#where-it-runs>")
     assert "`/stats` has the full count" in text
@@ -58,18 +58,18 @@ def test_the_summary_leaves_out_every_secret(monkeypatch):
     text = setup_info.setup_summary("gpt-6-luna")
     for secret in ("discord-secret-token", "tavily-secret-key", "424242424242", "azure-secret-key", "secret-resource"):
         assert secret not in text
-    assert "web search  on" in text
+    assert "**web search**: on" in text
 
 
 def test_web_search_reads_as_off_without_a_key(monkeypatch):
     monkeypatch.setattr(Config, "TAVILY_API_KEY", "")
-    assert "web search  off, no search key" in setup_info.setup_summary("gpt-6-luna")
+    assert "**web search**: off, no search key" in setup_info.setup_summary("gpt-6-luna")
 
 
 def test_off_any_cloud_the_host_line_says_it_is_unknown():
     # Changed 2026-11-17: it used to say "not an Azure VM (a dev machine?)", which the model
     # repeated as fact after the move to Google Cloud.
-    assert "host        unknown, no cloud metadata answered" in setup_info.setup_summary("gpt-6-luna")
+    assert "**host**: unknown, no cloud metadata answered" in setup_info.setup_summary("gpt-6-luna")
 
 
 async def test_on_azure_the_host_line_names_the_vm(monkeypatch):
@@ -82,7 +82,7 @@ async def test_on_azure_the_host_line_names_the_vm(monkeypatch):
         await setup_info.find_host()
     finally:
         await runner.cleanup()
-    assert "host        Azure VM chronochunk-vm, Standard_B2ats_v2, southeastasia" in setup_info.setup_summary("gpt-6-luna")
+    assert "**host**: Azure VM chronochunk-vm, Standard_B2ats_v2, southeastasia" in setup_info.setup_summary("gpt-6-luna")
 
 
 async def test_an_address_that_answers_something_else_is_not_taken_for_azure(monkeypatch):
@@ -105,7 +105,7 @@ async def test_no_answer_from_the_metadata_address_is_not_an_error(monkeypatch):
 
 
 def test_a_new_bot_says_it_has_used_nothing():
-    assert "used so far nothing yet" in setup_info.setup_summary("gpt-6-luna")
+    assert "**used so far**: nothing yet" in setup_info.setup_summary("gpt-6-luna")
 
 
 def test_the_summary_adds_up_everything_used_so_far(database):
@@ -120,11 +120,11 @@ def test_the_summary_adds_up_everything_used_so_far(database):
 
     text = setup_info.setup_summary("gpt-6-luna")
 
-    assert "used so far since Jan 20, 2025" in text
-    assert "ai calls    1,201" in text
-    assert "tokens      4.0M in, 60.5K out" in text
-    assert "ai cost     $1.50 in all, $0.00 of $20 this month" in text
-    assert "people met  2" in text
+    assert "**used so far**: since Jan 20, 2025" in text
+    assert "**ai calls**: 1,201" in text
+    assert "**tokens**: 4.0M in, 60.5K out" in text
+    assert "**ai cost**: $1.50 in all, $0.00 of $20 this month" in text
+    assert "**people met**: 2" in text
 
 
 def test_no_file_path_is_shown():
@@ -133,11 +133,11 @@ def test_no_file_path_is_shown():
 
 
 def test_the_summary_says_whether_the_test_bot_is_answered(monkeypatch):
-    assert "test bot    off" in setup_info.setup_summary("gpt-6-luna")
+    assert "**test bot**: off" in setup_info.setup_summary("gpt-6-luna")
     monkeypatch.setattr(Config, "TEST_BOT_ID", "777000777000777000")
     monkeypatch.setattr(Config, "TEST_CHANNEL_ID", "999000999000999000")
     text = setup_info.setup_summary("gpt-6-luna")
-    assert "test bot    answered in one test channel" in text
+    assert "**test bot**: answered in one test channel" in text
     assert "777000777000777000" not in text and "999000999000999000" not in text
 
 
@@ -285,7 +285,7 @@ async def test_on_google_cloud_the_bot_names_the_machine_but_not_the_project(mon
         await runner.cleanup()
     text = setup_info.self_prompt("gemini-3.1-flash-lite")
     assert "google cloud vm, e2-micro, us-central1-a, ubuntu-2404-noble-amd64-v20261105" in text
-    assert "host        Google Cloud VM, e2-micro, us-central1-a" in setup_info.setup_summary("gemini-3.1-flash-lite")
+    assert "**host**: Google Cloud VM, e2-micro, us-central1-a" in setup_info.setup_summary("gemini-3.1-flash-lite")
     for secret in ("827690319645", "adorio", "chronochunk-bot", "10.128.0.2", "146.148.72.172", "1234567890123"):
         assert secret not in text
 

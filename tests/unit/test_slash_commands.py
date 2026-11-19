@@ -175,7 +175,8 @@ async def test_help_states_the_real_limits(commands):
     registered, _, _, _ = commands
     interaction = _interaction()
 
-    await registered["help"](interaction)
+    # The limits have their own page since the help was split (2026-11-19)
+    await registered["help"](interaction, "limits")
 
     embed = interaction.response.send_message.call_args[1]["embed"]
     limits = next(field.value for field in embed.fields if "limits" in field.name)

@@ -2,9 +2,10 @@ import discord
 from datetime import date
 from typing import List, Optional
 
+from src.stats import labelled
 from src.ai_response_handler import Reply
 from src.exceptions import RateLimitError
-from src.help_menu import build_help_embed, build_music_help_embed
+from src.help_menu import TOPICS, build_help_embed, build_topic_help
 from src.rate_limiter import RateLimiter
 from src.setup_info import setup_summary
 from src.stats import stats_summary
@@ -115,13 +116,13 @@ class CommandHandler:
 
     async def _handle_help(self, args: List[str], message: discord.Message, user_id: str) -> Optional[discord.Embed]:
         """
-        '/help' shows the menu and '/help music' the music page. With other words, like
+        '/help' shows the start page and '/help music', '/help memory' and so on a topic page. With other words, like
         '/help me write this', it is chat.
         """
         if not args:
             return build_help_embed()
-        if len(args) == 1 and args[0].lower() == "music":
-            return build_music_help_embed()
+        if len(args) == 1 and args[0].lower() in TOPICS:
+            return build_topic_help(args[0].lower())
         return None
 
     async def _handle_usage(self, args: List[str], message: discord.Message, user_id: str) -> str:
@@ -161,24 +162,24 @@ class CommandHandler:
 
     def usage_summary(self, user_id: str) -> str:
         """What one person has left of each allowance, and how much of their AI limit and the bot's is used."""
-        lines = ["left right now"]
+        rows = [("left right now", "")]
         for label, action in USAGE_ROWS:
             left, limit, window, wait = self.rate_limiter.remaining(user_id, action)
-            line = f"{label:<12} {left:>3} of {limit:<3}  {_window_words(window)}"
+            value = f"{left} of {limit}, {_window_words(window)}"
             if left == 0:
-                line += f", more in {_duration(wait)}"
-            lines.append(line)
+                value += f", more in {_duration(wait)}"
+            rows.append((f"  {label}", value))
 
         guard = get_usage_guard()
         mine, bot = guard.user_summary(user_id), guard.summary()
-        lines += ["", "ai overall"]
+        rows += [("", ""), ("ai overall", "")]
         if mine["unlimited"]:
-            lines.append("today    no limit for u")
+            rows.append(("  today", "no limit for u"))
         else:
-            lines.append(f"today    {_bar(mine['day_cost'], mine['daily_budget'])}   resets in {_duration(mine['seconds_to_reset'])}")
-            lines.append(f"7 days   {_bar(mine['week_cost'], mine['weekly_budget'])}")
-        lines.append(f"bot      {_bar(bot['cycle_cost'], bot['monthly_budget'])}   this month, resets {_short_date(bot['resets_on'])}")
-        return "**ur usage**\n```\n" + "\n".join(lines) + "\n```"
+            rows.append(("  today", f"{_bar(mine['day_cost'], mine['daily_budget'])}, resets in {_duration(mine['seconds_to_reset'])}"))
+            rows.append(("  7 days", _bar(mine["week_cost"], mine["weekly_budget"])))
+        rows.append(("  bot", f"{_bar(bot['cycle_cost'], bot['monthly_budget'])} this month, resets {_short_date(bot['resets_on'])}"))
+        return "**ur usage**\n" + labelled(rows)
 
 
 # The allowances /usage lists, as (label, key in Config.RATE_LIMITS)
@@ -214,7 +215,7 @@ def _bar(used: float, limit: float) -> str:
     # Any use at all shows as one step, so the bar never reads as untouched
     if used > 0 and filled == 0:
         filled = 1
-    return f"{'▓' * filled}{'░' * (10 - filled)} {int(round(share * 100)):>3}%"
+    return f"{'▓' * filled}{'░' * (10 - filled)} {int(round(share * 100))}%"
 
 
 def _short_date(iso_day: str) -> str:

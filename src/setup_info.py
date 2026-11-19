@@ -12,7 +12,7 @@ import aiohttp
 import discord
 
 from config.config import Config
-from src.stats import usage_rows
+from src.stats import labelled, usage_rows
 from src.tools.courses import course_store
 from src.version import __version__
 
@@ -353,6 +353,5 @@ def setup_summary(chat_model: str) -> str:
         ("", ""),
         *usage_rows(),
     ]
-    lines = [f"{label:<11} {value}".rstrip() for label, value in rows]
-    return ("**how im set up**\n```\n" + "\n".join(lines) + "\n```\n"
+    return ("**how im set up**\n" + labelled(rows) + "\n\n"
             f"`/stats` has the full count. code and the full setup guide: <{REPO_URL}#where-it-runs>")

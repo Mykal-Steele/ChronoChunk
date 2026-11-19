@@ -450,9 +450,9 @@ def test_a_place_checks_what_the_member_can_see():
 
 def test_the_help_states_the_configured_keep_time(monkeypatch):
     from config.config import Config
-    from src.help_menu import build_help_embed
+    from src.help_menu import build_topic_help
     monkeypatch.setattr(Config, "CHANNEL_LOG_KEEP_DAYS", 365)
-    text = "\n".join(f.value for f in build_help_embed().fields)
+    text = "\n".join(f.value for f in build_topic_help("memory").fields)
     assert "365 days" in text and "30 days" not in text
 
 

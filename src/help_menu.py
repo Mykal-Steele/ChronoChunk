@@ -87,104 +87,157 @@ def build_music_help_embed() -> discord.Embed:
         f"or after {_span(Config.MUSIC_IDLE_SECONDS)} with nothing playing. a long song never gets cut off",
     ]
     embed.add_field(name="📏 limits", value="\n".join(f"- {line}" for line in limits), inline=False)
-    embed.set_footer(text=f"ChronoChunk v{__version__} | `/help` shows everything else")
+    embed.set_footer(text=f"ChronoChunk v{__version__} | /help shows everything else")
+    return embed
+
+
+def _bullets(lines: List[str]) -> str:
+    return "\n".join(line if line.startswith("- ") else f"- {line}" for line in lines)
+
+
+def _page(title: str, description: str, fields: List[tuple]) -> discord.Embed:
+    embed = discord.Embed(title=title, description=description, color=0x9B59B6)
+    for name, lines in fields:
+        embed.add_field(name=name, value=_bullets(lines), inline=False)
+    # A footer shows no formatting, so no backticks in it
+    embed.set_footer(text=f"ChronoChunk v{__version__} | /help goes back to the start")
     return embed
 
 
 def build_help_embed() -> discord.Embed:
-    """Every command, what the bot can read and write, and its limits. Kept clean: no swearing in here."""
+    """The start page: how to talk to the bot, the commands people use most, and where the rest is."""
     embed = discord.Embed(
-        title="ChronoChunk Bot Commands",
-        description="here's everything i can do, my g:",
-        color=0x9B59B6  # Purple color
+        title="ChronoChunk",
+        description=("yo my g. u dont need commands for most stuff: reply to one of my messages, ping me, "
+                     "or start a message with `/` and say what u want, like `/explain this` or `/write an email to my prof`"),
+        color=0x9B59B6,
     )
-
-    general_cmds = [
-        "`/chat <message>` - talk with me directly",
-        "`/info` - see what i know about you. only u see the answer",
-        "`/mydata` - same as /info, shows what i remember",
-        "`/forget <info>` - make me forget specific info. with nothing after it i delete everything i stored about u",
-        "`/code` - get link to my source code"
-    ]
-    embed.add_field(name="💬 general commands", value="\n".join(general_cmds), inline=False)
-
-    reading_cmds = [
-        "reply to any message and type `/` plus what u want, like `/read this` or `/summarize` - i read that message and whatever is attached to it",
-        "works on images, pdfs (the pictures inside them too), and md/txt/code files. attach one to ur own `/` message and i read that too",
-        "no reply needed for something that was just posted: drop a pic or file, then type `/explain this`",
-        "`/recent-posts off` - stop me doing that in this channel (needs manage channel). `on` brings it back",
-        "paste a link to a discord message and i read that message and its files",
-        "`/tldr <count>` - catch up on the last messages in the channel (default 50, max 200). i look at the images and files in them too",
-        "`/tldr <count> <what u want>` - ask about those messages or have me make something from them, like `/tldr 60 what did we decide` or `/tldr 60 make a pdf of the design`",
-        "pinging me works the same as starting with `/`",
-        "right after someone talks to me i might jump in on other messages for 30s. `/join-in off` stops that here"
-    ]
-    embed.add_field(name="📎 reading stuff", value="\n".join(reading_cmds), inline=False)
-
-    writing_cmds = [
-        "ask for an email, proposal, report, cover letter or notes and i write it properly, no slang",
-        "ask for it as a pdf or docx (`/make this a pdf`, `/write a proposal for X as docx`) and i attach the file",
-        "ask for a diagram or flowchart and i send it as an image",
-        "`/usage` - what u have left today: messages, pdfs, files, web lookups, course searches and ur ai limit. only u see it",
-        "`/model` - which ai model im running on",
-        "`/setup` - where i run and with which settings, for the devs",
-        "`/stats` - everything i used so far: ai calls, tokens, cost"
-    ]
-    embed.add_field(name="📝 writing and files", value="\n".join(writing_cmds), inline=False)
-
-    web_cmds = [
-        "give me a web link with what u want (`/sum up https://...`) and i open the page and read it",
-        "ask about something recent or tell me to look it up (`/search the latest on X`) and i search the web and link where i got it",
-        "i cant log in to sites, and pages behind a login or a paywall mostly come back empty"
-    ]
-    embed.add_field(name="🌐 the web", value="\n".join(web_cmds), inline=False)
-
-    course_cmds = [
-        "end a message with `-c` and i look it up in ur class slides, lecture recordings and assignments: `/what did the ai lecture say about search -c`. a course code works too: `-csc340`",
-        "after that u just keep chatting: course mode stays on for u here for an hour, and i look things up when i need to. `-c` is what turns it on, so with no course mode on i dont look anything up",
-        "`/whats due this week -c` - assignments with due dates and time left",
-        "`/courses` - which courses i have, how much of each, and when they were last synced"
-    ]
-    embed.add_field(name="📚 course material", value="\n".join(course_cmds), inline=False)
-
-    embed.add_field(name="📏 limits", value="\n".join(f"- {line}" for line in limit_lines()), inline=False)
-
-    game_cmds = [
-        "`/game <max>` - start a number guessing game (1 to max, default 100)",
-        "`/guess <number>` - make a guess in the game",
-        "`/end` - end the current game"
-    ]
-    embed.add_field(name="🎮 game commands", value="\n".join(game_cmds), inline=False)
-
-    music_cmds = [
-        "`/help music` - how music works, who can control it, and the limits",
-        "`/music <song or link>` - play from YouTube or a Spotify link, or describe what u want",
-        "`/skip` - skip to next song",
-        "`/pause` - pause current playback",
-        "`/resume` - resume playback",
-        "`/stop` - stop music and leave voice channel",
-        "`/queue` - show current song queue",
-        "`/volume <0-100>` - adjust volume",
-        "`/relate` - play a song related to the current one based on YouTube recommendations"
-    ]
-    embed.add_field(name="🎵 music commands", value="\n".join(music_cmds), inline=False)
-
-    fun_cmds = [
-        "`/good-boy` - get a smiley face :)"
-    ]
-    embed.add_field(name="😂 other stuff", value="\n".join(fun_cmds), inline=False)
-
-    privacy = [
-        "i keep ur last 20 messages to me, my answers, and facts i pick up about u, so i remember u next time",
-        "what u teach me is kept with ur name and shared with every server im in. notes u ask me to keep can be private",
-        f"i keep what's said in server channels for {Config.CHANNEL_LOG_KEEP_DAYS} days and write each day down in a few lines, which only people who can see that channel get",
-        "if u tell me how to act with u, or react 👍/👎 to me, i learn from it",
-        "what u send me goes to the ai model to get an answer",
-        "`/info` shows what i stored, `/memory` what i remember, `/forget` deletes it",
-        f"the full list is at <{PRIVACY_URL}>"
-    ]
-    embed.add_field(name="🔒 ur data", value="\n".join(privacy), inline=False)
-
-    embed.set_footer(text=f"ChronoChunk v{__version__} | u can also just chat with me normally in any channel "
-                          "by replying to the bot message, no commands needed")
+    embed.add_field(name="the main ones", value=_bullets([
+        "`/chat <message>` talk to me from the command list",
+        "reply to any message with `/` and what u want (`/summarize`, `/read this`) and i read it and whatever is attached",
+        "`/tldr <count>` catch up on what was said here",
+        "`/music <song>` play something in ur voice channel",
+        "`/usage` what u have left today. only u see it",
+    ]), inline=False)
+    embed.add_field(name="i remember stuff", value=_bullets([
+        "tell me to remember something or note a link and i keep it, then just ask for it later in normal words",
+        "`/memory` shows what i know about u",
+    ]), inline=False)
+    embed.add_field(name="more help", value=_bullets([
+        "`/help memory` notes, private notes, how i learn, seeing and deleting what i know",
+        "`/help files` images, pdfs, links, making docs and diagrams, searching the web",
+        "`/help courses` class slides, recordings and due dates",
+        "`/help music` all the music commands and who can control them",
+        "`/help limits` how much u can do and what i cant read yet",
+    ]), inline=False)
+    embed.add_field(name="other commands", value=_bullets([
+        "`/info` or `/mydata` the facts i picked up about u. `/forget` deletes everything about u",
+        "`/game`, `/guess`, `/end` a number guessing game. `/good-boy` a smiley face",
+        "`/model` which ai im on. `/setup` how im set up. `/stats` what i used so far. `/code` my source code",
+    ]), inline=False)
+    embed.add_field(name="ur data", value=_bullets([
+        "what u send me goes to the ai model to answer. what i keep, and how to delete it, is in `/help memory`",
+        f"the full list is at <{PRIVACY_URL}>",
+    ]), inline=False)
+    embed.set_footer(text=f"ChronoChunk v{__version__}")
     return embed
+
+
+def _memory_page() -> discord.Embed:
+    days = Config.CHANNEL_LOG_KEEP_DAYS
+    return _page("how my memory works", "i remember what people tell me, across every server im in. heres how it works and how to clean it up", [
+        ("teaching me", [
+            "just say it: `remember the exam moved to tuesday` or `btw im vegetarian`. i keep who told me, when and where",
+            "if u correct something i swap the old one out. only u can change what u said about urself",
+            "ask about it later in any server, in ur own words, and ill tell u who said it",
+        ]),
+        ("notes", [
+            "`note down this link, its for my korean presentation` and i keep it",
+            "if u dont say who can see it, i ask: public (anyone can ask me for it) or private (only u)",
+            "say it up front to skip the question: `save this privately: ...` or `remember this for everyone: ...`",
+            "to get it back just ask: `whats the link for my korean presentation`",
+            "private notes only come back in a DM with me, since everyone in a channel can read my reply",
+        ]),
+        ("did it save?", [
+            "when i really save something, my reply ends with a small grey line like `saved as m12` or `saved as m12 (private)`",
+            "no line means nothing got saved, even if i said noted. just ask again",
+        ]),
+        ("how i act with u", [
+            "tell me what u want: `stop roasting me`, `keep it short`, `talk to me in thai`. i stick to it in every server",
+            "a rule for the whole server (`keep answers short here`) only counts in that server, and it cant be about a person",
+            "i also learn from 👍 and 👎 on my replies. i go through those once a night",
+        ]),
+        ("what i keep from chats", [
+            f"i keep what's said in server channels for {days} days. DMs are not kept this way",
+            "each night i write every busy channel's day down in a few lines, so i can tell u what happened on the 3rd",
+            "i only bring those up in the same server, for people who can see that channel",
+        ]),
+        ("seeing and deleting", [
+            "`/memory` shows what u taught me, what others told me about u, how u asked me to act and the days ur in. only u see it",
+            "every item has a code like m12, l3 or d5. `/memory delete:m12` deletes that one",
+            "`/memory view:server` shows what i learned in this server (needs manage server). managers can delete stuff from their own server",
+            "`/forget` deletes everything about u at once. `/forget <text>` deletes one fact. `/info` shows the facts i picked up",
+        ]),
+    ])
+
+
+def _files_page() -> discord.Embed:
+    return _page("files, links and the web", "i can read stuff, write stuff and look things up", [
+        ("reading", [
+            "reply to a message with `/` and what u want, like `/read this` or `/summarize`. i read the message and whats attached",
+            "images, pdfs (the pictures inside them too) and md, txt or code files. attach one to ur own `/` message and i read that too",
+            "something was just posted? no need to reply, just type `/explain this`. `/recent-posts off` stops that in a channel (needs manage channel)",
+            "paste a link to a discord message and i read that message and its files",
+        ]),
+        ("catching up", [
+            "`/tldr <count>` sums up the last messages here (50 by default, up to 200), pictures and files included",
+            "`/tldr <count> <question>` asks about them or makes something from them: `/tldr 60 what did we decide`",
+        ]),
+        ("writing", [
+            "ask for an email, report, proposal or notes and i write it properly, no slang",
+            "say pdf or docx (`/make this a pdf`) and i attach the file. ask for a diagram or flowchart and i send a picture",
+        ]),
+        ("the web", [
+            "give me a link and what u want (`/sum up https://...`) and i open the page",
+            "ask about something recent or say look it up and i search the web, with links to where i got it",
+            "i cant log in to sites, so pages behind a login or paywall mostly come back empty",
+        ]),
+        ("talking in a channel", [
+            "pinging me works the same as starting with `/`",
+            "right after someone talks to me i might jump in on other messages for a bit. `/join-in off` stops that in a channel",
+        ]),
+    ])
+
+
+def _courses_page() -> discord.Embed:
+    return _page("course material", "i can look things up in ur class slides, lecture recordings and assignments", [
+        ("asking", [
+            "end a message with `-c`: `/what did the ai lecture say about search -c`. a course code works too: `-csc340`",
+            "after that just keep chatting. course mode stays on for u for an hour, and i look things up when i need to",
+            "`/whats due this week -c` lists assignments with due dates and time left",
+        ]),
+        ("what i have", [
+            "`/courses` shows which courses i have, how much of each, and when they were last synced",
+            "if `/courses` says i have none, course search is off for now and `-c` wont find anything",
+        ]),
+    ])
+
+
+def _limits_page() -> discord.Embed:
+    return _page("limits", "so nobody burns through everything. `/usage` shows what u have left", [
+        ("limits", [f"- {line}" for line in limit_lines()]),
+    ])
+
+
+# Each /help page by its topic word, for the slash command and for typed '/help <topic>'
+TOPICS = {
+    "memory": _memory_page,
+    "files": _files_page,
+    "courses": _courses_page,
+    "music": build_music_help_embed,
+    "limits": _limits_page,
+}
+
+
+def build_topic_help(topic: str) -> discord.Embed:
+    return TOPICS[topic]()
