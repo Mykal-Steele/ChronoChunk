@@ -12,7 +12,7 @@ def test_version_is_three_numbers():
 
 
 def test_newest_changelog_entry_is_the_current_version():
-    entries = re.findall(r"^## (\d+\.\d+\.\d+) \(\d{4}-\d{2}-\d{2}\)$", CHANGELOG.read_text(encoding="utf-8"), re.MULTILINE)
+    entries = re.findall(r"^## (\d+\.\d+\.\d+) \(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2})?\)$", CHANGELOG.read_text(encoding="utf-8"), re.MULTILINE)
     assert entries, "no version headings found in CHANGELOG.md"
     assert entries[0] == __version__
 

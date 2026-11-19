@@ -448,3 +448,13 @@ def test_the_newest_version_is_always_in_the_recent_changes(tmp_path, monkeypatc
     text = setup_info.latest_changes()
     assert text.startswith(f"3.30.1 (2026-11-19)\n  - {fix.strip()}")
     assert len(text) <= setup_info.CHANGELOG_LIMIT
+
+
+
+def test_a_changelog_heading_with_a_time_is_still_read(tmp_path, monkeypatch):
+    from datetime import date
+    path = tmp_path / "CHANGELOG.md"
+    path.write_text("# Changelog\n\n## 3.31.0 (2026-11-19 22:40)\n\n### Added\n\n- /changelog\n")
+    monkeypatch.setattr(setup_info, "CHANGELOG_PATH", str(path))
+    monkeypatch.setattr(setup_info, "_today", lambda: date(2026, 11, 20))
+    assert setup_info.latest_changes() == "3.31.0 (2026-11-19 22:40)\n  - /changelog"

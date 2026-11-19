@@ -2,6 +2,7 @@ import asyncio
 import io
 import logging
 import discord
+from src import changelog
 from src.memory_control import about_me, about_server, delete_item
 from src.memory_store import place_of
 from discord import app_commands
@@ -84,6 +85,7 @@ class SlashCommandManager:
             await self._register_end_command()
             await self._register_forget_command()
             await self._register_memory_command()
+            await self._register_changelog_command()
             await self._register_code_command()
             await self._register_chat_command()
             await self._register_tldr_command()
@@ -426,6 +428,19 @@ class SlashCommandManager:
                 answer = ("aight, in this channel i wont look at pics and files unless someone replies to them, "
                           "attaches them or runs `/tldr`")
             await interaction.response.send_message(answer)
+
+    async def _register_changelog_command(self):
+        """What changed in each version, newest first, with buttons to flip the pages"""
+        @self.bot.tree.command(name="changelog", description="What changed in each version of me, newest first")
+        @app_commands.describe(version="A version number, like 3.27.0, to see everything that changed in it")
+        async def changelog_command(interaction: discord.Interaction, version: Optional[str] = None):
+            if version:
+                await interaction.response.send_message(embed=changelog.embed_for(changelog.full_version(version)))
+                return
+            view = changelog.ChangelogView(changelog.pages(changelog.read_versions()))
+            await interaction.response.send_message(embed=view.embed(), view=view)
+            # Kept so the buttons can be switched off when they stop working
+            view.message = await interaction.original_response()
 
     async def _register_memory_command(self):
         """What the bot knows about you, or what it learned in this server, and deleting one thing (memory plan, layer 5)"""

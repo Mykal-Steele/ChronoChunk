@@ -124,7 +124,8 @@ def build_help_embed() -> discord.Embed:
     embed.add_field(name="other commands", value=_bullets([
         "`/info` or `/mydata` the facts i picked up about u. `/forget` deletes everything about u",
         "`/game`, `/guess`, `/end` a number guessing game. `/good-boy` a smiley face",
-        "`/model` which ai im on. `/setup` how im set up. `/stats` what i used so far. `/code` my source code",
+        "`/changelog` what changed in each version of me. `/model` which ai im on. `/setup` how im set up",
+        "`/stats` what i used so far. `/code` my source code",
     ]), inline=False)
     embed.add_field(name="ur data", value=_bullets([
         "what u teach me is kept with ur name and shared with every server im in, unless u make it a private note",
