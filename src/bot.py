@@ -146,6 +146,12 @@ class ChronoChunk(commands.Bot):
         members = sum(guild.member_count or 0 for guild in self.guilds)
         return len(self.guilds), members
 
+    async def _embed_missing_memories(self) -> None:
+        try:
+            await self.ai_handler.embed_missing_memories()
+        except Exception as e:
+            logger.warning(f"Could not embed old memories: {e}")
+
     async def setup_hook(self) -> None:
         """Setup hook for bot initialization"""
         try:
@@ -163,6 +169,8 @@ class ChronoChunk(commands.Bot):
 
         # A copy of the database now and once a day. The task is kept so it is not garbage collected.
         self.backup_task = asyncio.create_task(backups.run_daily())
+        # Memories saved while embeddings were down, or before a model change, get their meaning now
+        self.memory_embed_task = asyncio.create_task(self._embed_missing_memories())
 
         # Initialize slash commands WITHOUT rate limiter
         self.slash_commands = SlashCommandManager(

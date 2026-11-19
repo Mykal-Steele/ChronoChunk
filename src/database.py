@@ -9,6 +9,8 @@ import threading
 from contextlib import contextmanager
 from typing import Iterator, List, Optional
 
+import sqlite_vec
+
 from config.config import Config
 
 logger = logging.getLogger(__name__)
@@ -121,6 +123,12 @@ MIGRATIONS = [
     CREATE INDEX memories_live ON memories(replaced_by);
     CREATE INDEX memories_source ON memories(source_id);
     """,
+    """
+    -- The meaning of each memory, so recall can find it without shared words (memory plan, layer 2).
+    -- The model is kept with it because vectors from two models cannot be compared.
+    ALTER TABLE memories ADD COLUMN embedding BLOB;
+    ALTER TABLE memories ADD COLUMN embedding_model TEXT;
+    """,
 ]
 
 
@@ -142,6 +150,10 @@ class Database:
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA synchronous=NORMAL")
         self._connection.execute("PRAGMA foreign_keys=ON")
+        # vec_distance_cosine, for recall by meaning
+        self._connection.enable_load_extension(True)
+        sqlite_vec.load(self._connection)
+        self._connection.enable_load_extension(False)
         self._migrate()
 
     def _migrate(self) -> None:

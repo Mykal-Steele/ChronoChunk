@@ -350,6 +350,8 @@ The bot stops calling the model when it reaches its spending cap, and starts aga
 | `AI_CHAT_REASONING_EFFORT` | low | Reasoning effort for chat replies. Must be `none` for gpt-6-luna and gpt-5.6-luna, which do not take tool calls with reasoning on. On Vertex, `none` and `minimal` are sent as `low`, the lightest level Gemini accepts |
 | `AI_STUDY_REASONING_EFFORT` | medium | Reasoning for study material, when the reply has no tools. If tools are offered on a model that needs `none`, the chat setting wins |
 | `AI_BACKGROUND_MODEL` | empty | A cheaper model for picking facts out of messages. Empty uses the chat model. On Azure the old name `AZURE_OPENAI_BACKGROUND_DEPLOYMENT` still works |
+| `AI_MEMORY_EMBEDDING_MODEL` | `gemini-embedding-2` on Vertex, `text-embedding-3-small` elsewhere | The model that embeds memories, so recall finds them by meaning. After a change, old memories are embedded again when the bot starts |
+| `AI_MEMORY_EMBEDDING_LOCATION` | global | The Vertex region for memory embeddings. Only the global region has `gemini-embedding-2` |
 | `AI_COURSE_CHECK_DEPLOYMENT` | empty | The model for the routing call that decides whether a message needs course material. Empty uses the chat model |
 | `AI_COURSE_CHECK_REASONING_EFFORT` | chat setting | Reasoning effort for the routing call. Production's chat setting is `none`, which its tool-calling model requires |
 

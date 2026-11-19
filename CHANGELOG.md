@@ -10,6 +10,17 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.26.0 (2026-11-19)
+
+### Added
+
+- Memory finds what fits by meaning, layer 2 of `docs/memory-plan.md`. Each memory is saved with its embedding from `gemini-embedding-2`, and each message is embedded before the answer (one small call, skipped when nothing is remembered), so "was anyone sick lately?" brings up "Slade has the flu" with no word in common. Up to 10 memories go in front of the model. A memory comes back only when it is close in meaning and nearly as close as the best one, and among those, newer and more confirmed ones go first. When the embedding service is down, memories are found by their words as before. Memories saved without an embedding, or by another model, are embedded when the bot starts.
+- `AI_MEMORY_EMBEDDING_MODEL` and `AI_MEMORY_EMBEDDING_LOCATION` pick the embedding model and the Vertex region.
+
+### Changed
+
+- The memory rules tell the model to use only the memories that answer the message, and never to say it saved something without calling `remember`. In a check it answered "aight, got it. noted." and saved nothing.
+
 ## 3.25.0 (2026-11-19)
 
 ### Added

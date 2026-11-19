@@ -1,7 +1,8 @@
 """
 What people teach the bot, kept for good and shared by every server it is in. Layer 1 of
 docs/memory-plan.md: each memory keeps who said it, when and where, and a correction
-replaces the old memory instead of sitting next to it.
+replaces the old memory instead of sitting next to it. Layer 2: each memory also keeps its
+embedding, so recall finds the memories that fit a message by meaning.
 
 Trust rules: what someone says about themselves only they can change. A claim about
 anything else can be corrected by anyone, unless someone other than the corrector said
@@ -9,13 +10,29 @@ the same thing, which makes it confirmed.
 """
 import json
 import re
+import struct
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from src.database import Database, get_database
 
 RECALL_LIMIT = 10
+# How close in meaning a memory has to be to the message to come back, as cosine similarity.
+# gemini-embedding-2 gives about 0.5 to any pair, so no single number splits fitting from not:
+# on 28 real questions the weakest fit scored 0.56 and the strongest miss 0.63. A memory comes
+# back when it clears MIN_SIMILARITY and is within NEAR_BEST of the best one. The misses that
+# got through at 0.58 (0.60 and 0.61) put unrelated memories into the reply, so the floor is
+# 0.62: no wrong memory came back, and two weak fits (0.56, 0.60) were missed (run.md, 2026-11-19).
+MIN_SIMILARITY = 0.62
+NEAR_BEST = 0.08
+# What else moves a memory up among the ones that fit, on top of the similarity: being newer
+# (halving every 30 days), being backed by more people, and sharing words with the message
+RECENCY_WEIGHT = 0.05
+RECENCY_HALF_LIFE_DAYS = 30
+CONFIRMED_WEIGHT = 0.02
+WORD_WEIGHT = 0.01
+MOST_COUNTED = 3
 # Meta keys: the revision of the whole memory, and when each person last ran /forget
 _REVISION = "memory_revision"
 _FORGOT = "memory_forgot:"
@@ -79,6 +96,20 @@ def _words(text: str) -> List[str]:
 
 def _same(text: str) -> str:
     return " ".join(text.lower().split())
+
+
+def document_text(content: str, about: str) -> str:
+    """What is embedded for a memory: what it is about, then what it says."""
+    return f"{about}: {content}" if about else content
+
+
+def _pack(vector: Sequence[float]) -> bytes:
+    return struct.pack(f"{len(vector)}f", *vector)
+
+
+def _recency(created_at: str, now: datetime) -> float:
+    days = max((now - datetime.fromisoformat(created_at)).total_seconds() / 86400, 0.0)
+    return 0.5 ** (days / RECENCY_HALF_LIFE_DAYS)
 
 
 class MemoryStore:
@@ -179,18 +210,62 @@ class MemoryStore:
             return Saved(memory_id, replaced=target["id"], note=f"replaced #{target['id']}")
         return Saved(memory_id, note=note)
 
-    def recall(self, query: str, limit: int = RECALL_LIMIT) -> List[Memory]:
-        """The live memories that share the most words with the query, newest first on a tie."""
+    def recall(self, query: str, limit: int = RECALL_LIMIT, vector: Optional[Sequence[float]] = None,
+               model: Optional[str] = None) -> List[Memory]:
+        """
+        The live memories that fit the query best. With vector, the query's embedding from
+        model, a memory with a vector from the same model is judged by meaning and comes back
+        when it is close enough and nearly as close as the best one. Any other memory is judged by the words it shares with the
+        query. Among those that fit, newer, more confirmed and more word-sharing ones go first.
+        """
         wanted = set(_words(query))
-        if not wanted:
-            return []
+        packed = _pack(vector) if vector else None
+        rows = self.db.query(
+            "SELECT *, CASE WHEN ? IS NOT NULL AND embedding_model = ? AND length(embedding) = length(?) "
+            "THEN vec_distance_cosine(embedding, ?) END AS distance FROM memories WHERE replaced_by IS NULL",
+            (packed, model, packed, packed))
+        now = datetime.now(timezone.utc)
+        best = max((1.0 - row["distance"] for row in rows if row["distance"] is not None), default=0.0)
         scored = []
-        for row in self.db.query("SELECT * FROM memories WHERE replaced_by IS NULL"):
-            score = len(wanted & set(_words(f"{row['content']} {row['about']}")))
-            if score:
-                scored.append((score, row["created_at"], row))
-        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        return [_memory(row) for _, _, row in scored[:limit]]
+        for row in rows:
+            shared = len(wanted & set(_words(f"{row['content']} {row['about']}")))
+            if row["distance"] is not None:
+                similarity = 1.0 - row["distance"]
+                if similarity < MIN_SIMILARITY or similarity < best - NEAR_BEST:
+                    continue
+            elif shared:
+                # A word match counts like a fair meaning match, so both kinds can be ranked together
+                similarity = MIN_SIMILARITY
+            else:
+                continue
+            confirmed = len(json.loads(row["confirmed_by"]))
+            score = (similarity + RECENCY_WEIGHT * _recency(row["created_at"], now)
+                     + CONFIRMED_WEIGHT * min(confirmed, MOST_COUNTED) + WORD_WEIGHT * min(shared, MOST_COUNTED))
+            scored.append((score, shared, row["created_at"], row))
+        scored.sort(key=lambda item: item[:3], reverse=True)
+        return [_memory(row) for *_, row in scored[:limit]]
+
+    def has_memories(self) -> bool:
+        """Whether there is any live memory, so a reply with nothing to recall skips the embedding."""
+        return bool(self.db.query("SELECT 1 FROM memories WHERE replaced_by IS NULL LIMIT 1"))
+
+    def set_embedding(self, memory_id: int, vector: Sequence[float], model: str) -> None:
+        """Keep the embedding of one memory and the model that made it. Not a change to what is remembered."""
+        with self.db.transaction() as connection:
+            connection.execute("UPDATE memories SET embedding = ?, embedding_model = ? WHERE id = ?",
+                               (_pack(vector), model, int(memory_id)))
+
+    def needs_embedding(self, memory_id: int, model: str) -> bool:
+        rows = self.db.query("SELECT 1 FROM memories WHERE id = ? AND embedding IS NOT NULL AND embedding_model = ?",
+                             (int(memory_id), model))
+        return not rows
+
+    def missing_embeddings(self, model: str, limit: int = 200) -> List[Memory]:
+        """Live memories with no embedding from model: never embedded, or embedded by an older model."""
+        rows = self.db.query(
+            "SELECT * FROM memories WHERE replaced_by IS NULL AND (embedding IS NULL OR embedding_model IS NOT ?) "
+            "ORDER BY id LIMIT ?", (model, limit))
+        return [_memory(row) for row in rows]
 
     def forget_user(self, user_id: str) -> int:
         """

@@ -1,16 +1,19 @@
-"""remember and recall: the bot's long-term memory, shared by every server (memory plan, layer 1)."""
-from typing import Optional
+"""remember and recall: the bot's long-term memory, shared by every server (memory plan, layers 1 and 2)."""
+import logging
+from typing import List, Optional, Sequence
 
 from src.clock import days_ago
-from src.memory_store import RECALL_LIMIT, Memory, MemoryStore, Place, Speaker
+from src.memory_store import RECALL_LIMIT, Memory, MemoryStore, Place, Speaker, document_text
 from src.tools.base import Tool, ToolResult, Turn
 
+logger = logging.getLogger(__name__)
+
 # Memories put in front of the model on their own, before it answers
-AUTO_RECALL_LIMIT = 5
+AUTO_RECALL_LIMIT = 10
 
 MEMORY_PROMPT = """- u have a long-term memory, shared by every server u are in. it holds what people taught u, with who told u, when and where.
-- remember: save something worth keeping that someone told u: a fact about themselves, about the group, a plan, a date, a correction of something u got wrong. not small talk, jokes or one-off questions. set kind to self when it is about the person saying it.
-- a MEMORIES block, when there is one, is what people told u before that matches their message. use it when it answers them, and say who told u. recall searches with other words when the block does not have it. dont say u dont know before checking.
+- remember: save something worth keeping that someone told u: a fact about themselves, about the group, a plan, a date, a correction of something u got wrong. not small talk, jokes or one-off questions. set kind to self when it is about the person saying it. when they ask u to remember something, call remember. never say u saved or noted it without calling it.
+- a MEMORIES block, when there is one, is what people told u before that may fit their message. use only the ones that answer what they said, and say who told u. leave the rest out, dont bring them up. recall searches with other words when the block does not have it. dont say u dont know before checking.
 - a memory is someone's word, not a checked fact. say who told u ("slade told me last week"). before stating something about the world as fact, check it on the web first when u can.
 - when someone corrects a memory, recall it, then remember the corrected one with replaces set to its number. if remember says both were kept, say so.
 - memories about a person can be private. in another server, dont bring up someone's personal stuff unless they ask.
@@ -29,6 +32,31 @@ def _line(memory: Memory) -> str:
     confirmed = f", confirmed by {', '.join(memory.confirmed_by)}" if memory.confirmed_by else ""
     return (f"#{memory.id} {memory.source_name} told me{about}, {days_ago(memory.created_at)}, in {where}"
             f"{confirmed}: {memory.content}")
+
+
+def _block(found: List[Memory]) -> str:
+    if not found:
+        return ""
+    return ("=== MEMORIES (what people told u before; each is their word, not a checked fact) ===\n"
+            + "\n".join(_line(m) for m in found) + "\n=== END OF MEMORIES ===")
+
+
+async def embed_missing(store: MemoryStore, embedder, limit: int = 200) -> int:
+    """
+    Embed the live memories that have no embedding from embedder's model yet: ones saved
+    while the embedding service was down, and all of them after a model change. Stops at
+    the first failure, since the next start tries again. Returns how many were embedded.
+    """
+    done = 0
+    for memory in store.missing_embeddings(embedder.model, limit):
+        try:
+            vector, _ = await embedder.embed(document_text(memory.content, memory.about), "document")
+        except Exception as e:
+            logger.warning(f"Embedding memories stopped after {done}: {e}")
+            break
+        store.set_embedding(memory.id, vector, embedder.model)
+        done += 1
+    return done
 
 
 class RememberMemory(Tool):
@@ -64,6 +92,21 @@ class RememberMemory(Tool):
     def prompt(self) -> str:
         return MEMORY_PROMPT
 
+    async def _embed(self, memory_id: int, turn: Turn) -> None:
+        """Keep the new memory's meaning. When this fails it is found by its words until the next start."""
+        model = getattr(turn, "memory_model", "")
+        if turn.embed_memory is None or not model or not self.store.needs_embedding(memory_id, model):
+            return
+        rows = self.store.db.query("SELECT content, about FROM memories WHERE id = ?", (memory_id,))
+        if not rows:
+            return
+        try:
+            vector = await turn.embed_memory(document_text(rows[0]["content"], rows[0]["about"]), "document")
+        except Exception as e:
+            logger.warning(f"Could not embed memory #{memory_id}: {e}")
+            return
+        self.store.set_embedding(memory_id, vector, model)
+
     async def run(self, args: dict, turn: Turn) -> ToolResult:
         speaker = _who(turn)
         content = str(args.get("content") or "").strip()
@@ -81,6 +124,7 @@ class RememberMemory(Tool):
                                     started_at=turn.started_at)
         if saved.memory_id is None:
             return ToolResult(saved.note)
+        await self._embed(saved.memory_id, turn)
         return ToolResult(f"saved as memory #{saved.memory_id}" + (f". {saved.note}" if saved.note else ""))
 
 
@@ -108,13 +152,24 @@ class RecallMemory(Tool):
             self._store = MemoryStore()
         return self._store
 
-    def matching(self, query: str, limit: int = RECALL_LIMIT) -> str:
+    def matching(self, query: str, limit: int = RECALL_LIMIT, vector: Optional[Sequence[float]] = None,
+                 model: Optional[str] = None) -> str:
         """The memories that match query as one block for the model, or empty when none do."""
-        found = self.store.recall(query, limit)
-        if not found:
-            return ""
-        return ("=== MEMORIES (what people told u before; each is their word, not a checked fact) ===\n"
-                + "\n".join(_line(m) for m in found) + "\n=== END OF MEMORIES ===")
+        return _block(self.store.recall(query, limit, vector=vector, model=model))
+
+    async def find(self, query: str, limit: int = RECALL_LIMIT, turn: Optional[Turn] = None) -> str:
+        """
+        Like matching, by meaning when the reply can embed. A failed embedding falls back to
+        words, and nothing is embedded when there is nothing to find.
+        """
+        vector, model = None, None
+        if turn is not None and turn.embed_memory is not None and query.strip() and self.store.has_memories():
+            try:
+                vector = await turn.embed_memory(query, "query")
+                model = turn.memory_model
+            except Exception as e:
+                logger.warning(f"Recall by meaning failed, using words: {e}")
+        return self.matching(query, limit, vector=vector, model=model)
 
     async def run(self, args: dict, turn: Turn) -> ToolResult:
-        return ToolResult(self.matching(str(args.get("query") or "")) or "nothing in memory matches that")
+        return ToolResult(await self.find(str(args.get("query") or ""), turn=turn) or "nothing in memory matches that")
