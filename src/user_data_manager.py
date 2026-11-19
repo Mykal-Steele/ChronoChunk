@@ -2,6 +2,7 @@
 import json
 import logging
 from src.memory_store import MemoryStore
+from src.channel_log import ChannelLog
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -95,6 +96,7 @@ class UserDataManager:
         """Delete everything stored about a user: facts, topics and saved conversations."""
         self.store.forget(user_id)
         MemoryStore().forget_user(user_id)
+        ChannelLog().forget_user(user_id)
         if self.reply_log:
             self.reply_log.delete_user(user_id)
         logger.info(f"Deleted all stored data for {clean_user_id(user_id)}")

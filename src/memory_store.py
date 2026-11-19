@@ -13,7 +13,7 @@ import re
 import struct
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence
 
 from src.database import Database, get_database
 
@@ -33,6 +33,9 @@ RECENCY_HALF_LIFE_DAYS = 30
 CONFIRMED_WEIGHT = 0.02
 WORD_WEIGHT = 0.01
 MOST_COUNTED = 3
+# Memories at least this close are judged at night, to merge repeats and settle corrections
+TIDY_SIMILARITY = 0.8
+TIDY_PAIRS_PER_NIGHT = 20
 # Meta keys: the revision of the whole memory, and when each person last ran /forget
 _REVISION = "memory_revision"
 _FORGOT = "memory_forgot:"
@@ -57,14 +60,28 @@ class Place:
     guild_name: str = ""
     channel_id: str = ""
     channel_name: str = ""
+    # Whether the person the reply is for can see a channel of this server, by its id. None
+    # when that is not known, and then only this channel counts as one they can see.
+    can_view: Optional[Callable[[str], bool]] = field(default=None, compare=False, repr=False)
 
 
-def place_of(channel) -> Place:
-    """The server and channel of a Discord channel. A DM has no server."""
+def _viewer(guild, member) -> Callable[[str], bool]:
+    def can_view(channel_id: str) -> bool:
+        try:
+            channel = guild.get_channel(int(channel_id))
+            return bool(channel is not None and channel.permissions_for(member).view_channel)
+        except Exception:
+            return False
+    return can_view
+
+
+def place_of(channel, member=None) -> Place:
+    """The server and channel of a Discord channel, and what member can see there. A DM has no server."""
     guild = getattr(channel, "guild", None)
     return Place(
         guild_id=str(guild.id) if guild else "", guild_name=getattr(guild, "name", "") if guild else "",
         channel_id=str(getattr(channel, "id", "") or ""), channel_name=getattr(channel, "name", "") or "",
+        can_view=_viewer(guild, member) if guild is not None and member is not None else None,
     )
 
 
@@ -107,8 +124,10 @@ def _pack(vector: Sequence[float]) -> bytes:
     return struct.pack(f"{len(vector)}f", *vector)
 
 
-def _recency(created_at: str, now: datetime) -> float:
-    days = max((now - datetime.fromisoformat(created_at)).total_seconds() / 86400, 0.0)
+def _recency(created_at: str, now: datetime, last_used_at: Optional[str] = None) -> float:
+    """1 for a memory made or used just now, halving every RECENCY_HALF_LIFE_DAYS since the later of the two."""
+    latest = max(created_at, last_used_at or "")
+    days = max((now - datetime.fromisoformat(latest)).total_seconds() / 86400, 0.0)
     return 0.5 ** (days / RECENCY_HALF_LIFE_DAYS)
 
 
@@ -147,10 +166,30 @@ class MemoryStore:
                 "SELECT * FROM memories WHERE replaced_by IS NULL AND about = ? COLLATE NOCASE", (about,)):
             if _same(row["content"]) != _same(content):
                 continue
-            if kind == "self" and row["kind"] == "self" and row["source_id"] != speaker.user_id:
+            if kind == "self" and row["source_id"] != speaker.user_id:
+                # Their own word about themselves stays theirs, see remember
                 continue
             return row
         return None
+
+    @staticmethod
+    def _absorb_claims(connection, memory_id: int, content: str, about: str) -> None:
+        """
+        Someone just said about themselves what others had already claimed about them. Their
+        report takes over, so only they can change it, and the others count as confirming it.
+        """
+        claims = [r for r in connection.execute(
+            "SELECT * FROM memories WHERE replaced_by IS NULL AND kind = 'claim' AND about = ? COLLATE NOCASE AND id != ?",
+            (about, memory_id)) if _same(r["content"]) == _same(content)]
+        if not claims:
+            return
+        confirmed: list = []
+        for claim in claims:
+            for person in [[claim["source_id"], claim["source_name"]], *json.loads(claim["confirmed_by"])]:
+                if person[0] not in [c[0] for c in confirmed]:
+                    confirmed.append(person)
+            connection.execute("UPDATE memories SET replaced_by = ? WHERE id = ?", (memory_id, claim["id"]))
+        connection.execute("UPDATE memories SET confirmed_by = ? WHERE id = ?", (json.dumps(confirmed), memory_id))
 
     def remember(self, content: str, about: str, kind: str, speaker: Speaker, place: Place,
                  replaces: Optional[int] = None, started_at: Optional[datetime] = None) -> Saved:
@@ -204,6 +243,8 @@ class MemoryStore:
                  place.channel_id, place.channel_name, datetime.now(timezone.utc).isoformat())).lastrowid
             if target is not None:
                 connection.execute("UPDATE memories SET replaced_by = ? WHERE id = ?", (memory_id, target["id"]))
+            if kind == "self" and memory_id is not None:
+                self._absorb_claims(connection, memory_id, content, about)
             self._bump(connection)
         assert memory_id is not None
         if target is not None:
@@ -239,11 +280,101 @@ class MemoryStore:
             else:
                 continue
             confirmed = len(json.loads(row["confirmed_by"]))
-            score = (similarity + RECENCY_WEIGHT * _recency(row["created_at"], now)
+            score = (similarity + RECENCY_WEIGHT * _recency(row["created_at"], now, row["last_used_at"])
                      + CONFIRMED_WEIGHT * min(confirmed, MOST_COUNTED) + WORD_WEIGHT * min(shared, MOST_COUNTED))
             scored.append((score, shared, row["created_at"], row))
         scored.sort(key=lambda item: item[:3], reverse=True)
         return [_memory(row) for *_, row in scored[:limit]]
+
+    def mark_used(self, memory_ids: Sequence[int]) -> None:
+        """Note that recall showed these memories. A memory that keeps being used does not fade."""
+        if not memory_ids:
+            return
+        marks = ",".join("?" * len(memory_ids))
+        with self.db.transaction() as connection:
+            connection.execute(f"UPDATE memories SET last_used_at = ? WHERE id IN ({marks})",
+                               (datetime.now(timezone.utc).isoformat(), *[int(i) for i in memory_ids]))
+
+    def pairs_to_tidy(self, model: str, limit: int = TIDY_PAIRS_PER_NIGHT) -> List[tuple]:
+        """
+        (older memory, newer memory) pairs close enough to be the same thing or a correction,
+        not judged before, closest first. Two people's reports about themselves are never paired.
+        """
+        rows = self.db.query(
+            "SELECT a_id, b_id FROM (SELECT a.id AS a_id, b.id AS b_id, "
+            "1 - vec_distance_cosine(a.embedding, b.embedding) AS similarity "
+            "FROM memories a JOIN memories b ON a.id < b.id "
+            "WHERE a.replaced_by IS NULL AND b.replaced_by IS NULL AND a.embedding_model = ? AND b.embedding_model = ? "
+            "AND length(a.embedding) = length(b.embedding) "
+            "AND NOT (a.kind = 'self' AND b.kind = 'self' AND a.source_id != b.source_id) "
+            "AND NOT EXISTS (SELECT 1 FROM memory_pairs_checked c WHERE c.first = a.id AND c.second = b.id)) "
+            "WHERE similarity >= ? ORDER BY similarity DESC LIMIT ?",
+            (model, model, TIDY_SIMILARITY, limit))
+        pairs = []
+        for row in rows:
+            first, second = self.get(row["a_id"]), self.get(row["b_id"])
+            if first is not None and second is not None:
+                pairs.append((first, second) if first.created_at <= second.created_at else (second, first))
+        return pairs
+
+    def get(self, memory_id: int) -> Optional[Memory]:
+        rows = self.db.query("SELECT * FROM memories WHERE id = ?", (int(memory_id),))
+        return _memory(rows[0]) if rows else None
+
+    def pair_checked(self, first: int, second: int) -> None:
+        low, high = sorted((int(first), int(second)))
+        self.db.execute("INSERT OR IGNORE INTO memory_pairs_checked (first, second) VALUES (?, ?)", (low, high))
+
+    @staticmethod
+    def _unchanged(connection, *memories: "Memory") -> dict:
+        """The live rows of these memories by id, or empty when any was deleted, replaced or its number reused."""
+        rows = {}
+        for memory in memories:
+            row = connection.execute("SELECT * FROM memories WHERE id = ? AND replaced_by IS NULL", (memory.id,)).fetchone()
+            if row is None or row["created_at"] != memory.created_at.isoformat() or row["content"] != memory.content:
+                return {}
+            rows[memory.id] = row
+        return rows
+
+    def merge(self, keep: "Memory", drop: "Memory") -> bool:
+        """
+        drop says what keep says: drop points to keep, and whoever said drop is added to those
+        who confirmed keep. False when either changed since it was read, or when one of them is
+        someone's report about themselves from a different person, which only they may change.
+        """
+        with self.db.transaction() as connection:
+            rows = self._unchanged(connection, keep, drop)
+            if not rows:
+                return False
+            kept, dropped = rows[keep.id], rows[drop.id]
+            if "self" in (kept["kind"], dropped["kind"]) and kept["source_id"] != dropped["source_id"]:
+                return False
+            confirmed = json.loads(kept["confirmed_by"])
+            seen = {kept["source_id"], *[c[0] for c in confirmed]}
+            for person in [[dropped["source_id"], dropped["source_name"]], *json.loads(dropped["confirmed_by"])]:
+                if person[0] not in seen:
+                    confirmed.append(person)
+                    seen.add(person[0])
+            connection.execute("UPDATE memories SET confirmed_by = ? WHERE id = ?", (json.dumps(confirmed), kept["id"]))
+            connection.execute("UPDATE memories SET replaced_by = ? WHERE id = ?", (kept["id"], dropped["id"]))
+            self._bump(connection)
+        return True
+
+    def settle(self, older: "Memory", newer: "Memory") -> bool:
+        """
+        newer corrects older. Done only when whoever said newer could have replaced older by
+        hand, under the same trust rules as remember, and neither changed since it was read.
+        """
+        with self.db.transaction() as connection:
+            rows = self._unchanged(connection, older, newer)
+            if not rows:
+                return False
+            old, new = rows[older.id], rows[newer.id]
+            if self._may_replace(old, Speaker(new["source_id"], new["source_name"])):
+                return False
+            connection.execute("UPDATE memories SET replaced_by = ? WHERE id = ?", (new["id"], old["id"]))
+            self._bump(connection)
+        return True
 
     def has_memories(self) -> bool:
         """Whether there is any live memory, so a reply with nothing to recall skips the embedding."""
@@ -284,6 +415,10 @@ class MemoryStore:
         """
         user_id = str(user_id)
         with self.db.transaction() as connection:
+            # What other people said and was folded into this person's memories stands on its own again
+            connection.execute(
+                "UPDATE memories SET replaced_by = NULL WHERE source_id != ? AND replaced_by IN "
+                "(SELECT id FROM memories WHERE source_id = ?)", (user_id, user_id))
             removed = connection.execute("DELETE FROM memories WHERE source_id = ?", (user_id,)).rowcount
             for row in connection.execute("SELECT id, confirmed_by FROM memories WHERE confirmed_by LIKE ?",
                                           (f'%"{user_id}"%',)).fetchall():

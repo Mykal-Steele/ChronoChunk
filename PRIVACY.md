@@ -16,7 +16,9 @@ It uses these to remember you between conversations: the facts and your last 3 e
 
 ## What the bot reads, and how long it keeps it
 
-- Other messages in a channel. The bot holds the last 50 per channel in memory so it can follow the conversation. They are not saved to your profile, but the recent messages sent to the model are kept, encrypted, in the reply log described below for up to `REPLY_LOG_KEEP_DAYS` (30 days by default).
+- Every message in the server channels it can read, including from people who never talk to it. The bot saves each one with the author's name and ID, the server, the channel and the time, for `CHANNEL_LOG_KEEP_DAYS` (30 days by default), and then deletes it. An edit in Discord changes the saved text and a deleted message is deleted here too. DMs are not saved this way.
+- A summary of each channel's day. Each night, for every channel with at least 5 messages that day, the AI model gets that day's messages and writes a few lines on what was said, with names. The summaries are kept after the messages are deleted. The bot only uses one when answering in the same server, for someone who can see the channel it came from. `/forget` deletes every summary of a day you spoke on, so it also takes out what others said that day.
+- The bot also holds the last 50 messages per channel in memory so it can follow the conversation. The recent messages sent to the model are kept, encrypted, in the reply log described below for up to `REPLY_LOG_KEEP_DAYS` (30 days by default).
 - A message you did not address to the bot, when someone called it in that channel in the last 30 seconds. The bot may answer it. If it does, the message, your display name, the conversation context and the answer are kept in the encrypted reply log described below for up to `REPLY_LOG_KEEP_DAYS`. That reply is not recorded with your Discord user ID.
 - Images, PDFs and files you point it at, and web pages it opens. The files themselves are not saved. The text the bot read from them, and the answer it wrote, are kept in the reply log described below, encrypted, for up to `REPLY_LOG_KEEP_DAYS`.
 - For a PDF, the bot writes a description of each page so it can answer about charts and tables. It keeps those descriptions in its database for 7 days after they were last used, so follow-up questions are fast and the same file does not have to be read again. A description is stored under a fingerprint of the file, with no filename and no link to who sent it. The PDF itself is not kept.
@@ -36,18 +38,19 @@ The bot cannot answer without sending some of what you write to other services:
 |---|---|---|
 | The AI provider (Google Vertex AI, Gemini, since November 2026) | Your message, the recent channel messages, the facts stored about you, memories that match your message, your last 3 exchanges with the bot, and any image or file you point the bot at | Every answer |
 | The AI provider | Each memory you teach, and your message, to turn them into embeddings so the bot can find memories by meaning | When something is remembered, on every answer once there are memories, and when the bot starts, for memories that were saved without one or before a model change |
+| The AI provider | One channel's messages from one day, to write that day's summary, and pairs of memories that say nearly the same thing, to merge repeats and corrections | Once a night |
 | The AI provider | The picture and name of each custom server emoji | Once per new emoji |
 | The AI provider | Your message, to turn it into a search of the course material, and the passages that search found | When your message is in course mode |
 | Tavily | Your search words, and links the bot cannot open on its own | When the bot searches the web or opens a link |
 | The website behind a link | A normal page request from the bot's server | When you give the bot a link |
 | mermaid.ink, and kroki.io as a backup | The text of a diagram | When the bot draws a diagram |
 | YouTube and Spotify | Your song search or link | When you play music |
-| Cloudflare R2 | Encrypted copies of the database (profiles, facts, memories, conversations) and of the encrypted reply log. They are encrypted on the bot's server before they leave, and R2 deletes them after 30 days | Every night |
+| Cloudflare R2 | Encrypted copies of the database (profiles, facts, memories, conversations, saved channel messages and day summaries) and of the encrypted reply log. They are encrypted on the bot's server before they leave, and R2 deletes them after 30 days | Every night |
 
 ## See or delete your data
 
 - `/info` or `/mydata` shows what the bot has stored about you. Only you see the answer.
-- `/forget` deletes everything stored about you, including what you taught the bot and the encrypted reply-log rows tied to your user hash.
+- `/forget` deletes everything stored about you, including what you taught the bot, your saved channel messages, the day summaries you are in, and the encrypted reply-log rows tied to your user hash.
 - `/forget <text>` deletes the one fact that matches.
 
 Your profile, facts and conversations stay until you run `/forget`, or until the person running the bot removes them. The encrypted reply log is kept for `REPLY_LOG_KEEP_DAYS` (30 days by default) and then deleted. Each row holds the message that asked for a reply, the recent channel messages that went to the model, any file, PDF or web-page text the bot read, and the reply. `/forget` deletes the rows tied to your user hash, so a message of yours that appears inside someone else's row stays until that row expires. By default the encryption key is stored next to the database, so the encryption protects the database file on its own, not someone who can read the whole server.

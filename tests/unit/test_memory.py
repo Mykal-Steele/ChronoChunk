@@ -303,3 +303,14 @@ async def test_a_cached_reply_is_not_reused_after_a_memory_changes(database, moc
     assert (await handler.generate_reply("/when is the csc340 proposal due", "", "Mint", "222", **ask)).text == "friday"
     MemoryStore(database).remember("the csc340 proposal is due monday", "csc340", "claim", KRUSKAL, KMUTT)
     assert (await handler.generate_reply("/when is the csc340 proposal due", "", "Mint", "222", **ask)).text == "monday"
+
+
+# ── review on #56 ────────────────────────────────────────────────────────────
+
+def test_a_report_about_yourself_is_kept_as_yours_when_someone_said_it_first(store):
+    store.remember("Slade is vegetarian", "Slade", "claim", MINT, KMUTT)
+    store.remember("Slade is vegetarian", "Slade", "self", SLADE, KMUTT)
+    (memory,) = store.recall("slade vegetarian")
+    assert memory.kind == "self" and memory.source_name == "Slade" and memory.confirmed_by == ["Mint"]
+    fix = store.remember("Slade eats fish now", "Slade", "self", SLADE, KMUTT, replaces=memory.id)
+    assert fix.replaced == memory.id

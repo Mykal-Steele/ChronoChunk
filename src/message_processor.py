@@ -4,6 +4,7 @@ import logging
 import re
 import time
 import discord
+from src.channel_log import ChannelLog
 from src.memory_store import place_of
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -142,6 +143,12 @@ class MessageProcessor:
             if message.author.bot and not self._is_test_message(message):
                 return
                 
+            # Everything said in a server is kept for the nightly summaries (memory plan, layer 3)
+            try:
+                ChannelLog().add(message, text=history_text(message))
+            except Exception as e:
+                logger.warning(f"Could not log a channel message: {e}")
+
             # Get basic info
             content = message.content
             user_id = str(message.author.id)
@@ -413,7 +420,7 @@ is_correction: bool) -> None:
                         attached_context=attached.text, images=attached.images,
                         allow_files=True, file_gate=file_gate, web_gate=web_gate, course_gate=course_gate,
                         emoji_prompt=emoji.prompt(reactions=may_react), session_key=f"{channel_id}:{user_id}",
-                        history_age=history_age, place=place_of(message.channel)
+                        history_age=history_age, place=place_of(message.channel, message.author)
                     )
 
             with watch.step("send"):

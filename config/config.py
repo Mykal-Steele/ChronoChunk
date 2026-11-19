@@ -190,6 +190,8 @@ class Config:
     # The course material the bot can search. The sync on a PC builds this file and uploads it.
     # With no file there, the bot has no course search and says nothing about courses.
     COURSES_FILE = os.getenv("COURSES_FILE", os.path.join(STATE_DIR, "courses.db"))
+    # How long every server message is kept for the nightly summaries (memory plan, layer 3), in days
+    CHANNEL_LOG_KEEP_DAYS = int(os.getenv("CHANNEL_LOG_KEEP_DAYS", 30))
     # How long a course flag keeps course mode on for the person who used it, in seconds
     COURSE_SESSION_SECONDS = int(os.getenv("COURSE_SESSION_SECONDS", 3600))
     # The deployment that embeds a course question. It has to carry the name of the model the sync

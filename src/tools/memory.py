@@ -1,8 +1,9 @@
 """remember and recall: the bot's long-term memory, shared by every server (memory plan, layers 1 and 2)."""
 import logging
+from datetime import datetime, time
 from typing import List, Optional, Sequence
 
-from src.clock import days_ago
+from src.clock import BANGKOK, day_header, days_ago
 from src.memory_store import RECALL_LIMIT, Memory, MemoryStore, Place, Speaker, document_text
 from src.tools.base import Tool, ToolResult, Turn
 
@@ -16,6 +17,7 @@ MEMORY_PROMPT = """- u have a long-term memory, shared by every server u are in.
 - a MEMORIES block, when there is one, is what people told u before that may fit their message. use only the ones that answer what they said, and say who told u. leave the rest out, dont bring them up. recall searches with other words when the block does not have it. dont say u dont know before checking.
 - a memory is someone's word, not a checked fact. say who told u ("slade told me last week"). before stating something about the world as fact, check it on the web first when u can.
 - when someone corrects a memory, recall it, then remember the corrected one with replaces set to its number. if remember says both were kept, say so.
+- a PAST DAYS block is notes on what was said in this server on earlier days. use only what answers them, and say when it happened ("on the 1st slade said he had the flu"). it is not happening now.
 - memories about a person can be private. in another server, dont bring up someone's personal stuff unless they ask.
 """
 
@@ -32,6 +34,18 @@ def _line(memory: Memory) -> str:
     confirmed = f", confirmed by {', '.join(memory.confirmed_by)}" if memory.confirmed_by else ""
     return (f"#{memory.id} {memory.source_name} told me{about}, {days_ago(memory.created_at)}, in {where}"
             f"{confirmed}: {memory.content}")
+
+
+def past_days_block(episodes) -> str:
+    """Summaries of earlier days in this server, as one block for the model, or empty."""
+    if not episodes:
+        return ""
+    lines = []
+    for episode in episodes:
+        when = datetime.combine(episode.day, time(12), BANGKOK)
+        lines.append(f"{day_header(when)[4:-4]}, #{episode.channel_name}:\n{episode.summary}")
+    return ("=== PAST DAYS IN THIS SERVER (notes on what was said back then, not now) ===\n"
+            + "\n\n".join(lines) + "\n=== END OF PAST DAYS ===")
 
 
 def _block(found: List[Memory]) -> str:
@@ -126,7 +140,12 @@ class RememberMemory(Tool):
             replaces = int(replaces) if replaces not in (None, "") else None
         except (TypeError, ValueError):
             replaces = None
-        saved = self.store.remember(content, str(args.get("about") or ""), str(args.get("kind") or "claim"),
+        about = str(args.get("about") or "")
+        kind = str(args.get("kind") or "claim")
+        # The model sometimes marks what someone says about themselves as a claim, which anyone could overwrite
+        if about.strip().lower() in (speaker.name.strip().lower(), "me", "myself"):
+            kind = "self"
+        saved = self.store.remember(content, about, kind,
                                     speaker, getattr(turn, "place", None) or Place(), replaces=replaces,
                                     started_at=turn.started_at)
         if saved.memory_id is None:
@@ -161,8 +180,10 @@ class RecallMemory(Tool):
 
     def matching(self, query: str, limit: int = RECALL_LIMIT, vector: Optional[Sequence[float]] = None,
                  model: Optional[str] = None) -> str:
-        """The memories that match query as one block for the model, or empty when none do."""
-        return _block(self.store.recall(query, limit, vector=vector, model=model))
+        """The memories that match query as one block for the model, or empty when none do. They count as used."""
+        found = self.store.recall(query, limit, vector=vector, model=model)
+        self.store.mark_used([m.id for m in found])
+        return _block(found)
 
     async def find(self, query: str, limit: int = RECALL_LIMIT, turn: Optional[Turn] = None) -> str:
         """
