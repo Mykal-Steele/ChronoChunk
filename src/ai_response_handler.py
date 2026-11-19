@@ -1128,7 +1128,10 @@ class AIResponseHandler:
                                              model=request.memory_model if vector else None)
                 if remembered:
                     user_parts.insert(-1, remembered)
-                past = past_days_block(log.find_episodes(vector, request.memory_model, guild_id))
+                # Only days from channels they can see. Without a way to check, only this channel
+                here = getattr(request.place, "channel_id", "")
+                visible = getattr(request.place, "can_view", None) or (lambda channel_id: channel_id == here)
+                past = past_days_block(log.find_episodes(vector, request.memory_model, guild_id, visible=visible))
                 if past:
                     user_parts.insert(-1, past)
 

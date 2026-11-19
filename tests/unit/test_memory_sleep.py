@@ -407,3 +407,118 @@ async def test_a_reply_kept_in_one_server_is_not_served_in_another(database, moc
     other = await handler.generate_reply("/was anyone sick", "", "Mint", "222", allow_files=True,
                                          place=Place("1300", "XLRX", "66", "chat"))
     assert other.text == "no clue"
+
+
+# ── review on #56 ────────────────────────────────────────────────────────────
+
+def _episode(log, channel=("56", "staff"), text="- the mods planned a ban", people=("760",)):
+    place = Place("1280", "cs-kmutt", channel[0], channel[1])
+    episode_id = log.save_episode(place, TODAY - timedelta(days=1), text, list(people))
+    log.set_episode_embedding(episode_id, _vector("exam room"), "fake-1")
+    return episode_id
+
+
+def test_a_summary_of_a_channel_they_cannot_see_is_left_out(log):
+    _episode(log)
+    assert log.find_episodes(_vector("exam room"), "fake-1", "1280", visible=lambda channel_id: channel_id == "55") == []
+    assert log.find_episodes(_vector("exam room"), "fake-1", "1280", visible=lambda channel_id: True)
+
+
+async def test_a_reply_only_shows_days_from_channels_the_asker_can_see(database, mock_openai_client):
+    log = ChannelLog(database)
+    _episode(log, text="- the mods talked about the exam room in private")
+    mock_openai_client.chat.completions.create.side_effect = [_reply("dunno"), _reply("dunno")]
+    handler = _handler(mock_openai_client, FakeEmbedder())
+    hidden = Place("1280", "cs-kmutt", "55", "general", can_view=lambda channel_id: channel_id == "55")
+    await handler.generate_reply("/which exam room", "", "Mint", "222", allow_files=True, place=hidden)
+    assert "mods talked" not in "\n".join(str(m["content"]) for m in mock_openai_client.chat.completions.create.call_args[1]["messages"])
+    # Without a way to check, only the channel the reply is in counts
+    await handler.generate_reply("/which exam room?", "", "Mint", "222", allow_files=True, place=KMUTT)
+    assert "mods talked" not in "\n".join(str(m["content"]) for m in mock_openai_client.chat.completions.create.call_args[1]["messages"])
+
+
+def test_a_place_checks_what_the_member_can_see():
+    from src.memory_store import place_of
+    allowed = SimpleNamespace(view_channel=True)
+    denied = SimpleNamespace(view_channel=False)
+    channels = {55: SimpleNamespace(permissions_for=lambda member: allowed),
+                56: SimpleNamespace(permissions_for=lambda member: denied)}
+    guild = SimpleNamespace(id=1280, name="cs-kmutt", get_channel=channels.get)
+    place = place_of(SimpleNamespace(id=55, name="general", guild=guild), member=object())
+    assert place.can_view("55") and not place.can_view("56") and not place.can_view("99")
+
+
+def test_the_help_states_the_configured_keep_time(monkeypatch):
+    from config.config import Config
+    from src.help_menu import build_help_embed
+    monkeypatch.setattr(Config, "CHANNEL_LOG_KEEP_DAYS", 365)
+    text = "\n".join(f.value for f in build_help_embed().fields)
+    assert "365 days" in text and "30 days" not in text
+
+
+def test_only_the_closest_pairs_come_out_of_the_database(store):
+    for n in range(6):
+        _teach(store, f"exam {n} is in room {n}", "exam", KRUSKAL)
+    assert len(store.pairs_to_tidy("fake-1", limit=4)) == 4
+
+
+async def test_a_verdict_does_not_land_on_a_memory_that_took_a_deleted_ones_number(store):
+    from src.sleep import tidy_memories
+    first = _teach(store, "the exam is in room 410", "exam", KRUSKAL, days_ago=2)
+    second = _teach(store, "exam: room 410", "exam", MINT)
+
+    async def judge(**kwargs):
+        # Mint runs /forget while the judge is thinking, and her next memory gets the same number
+        store.forget_user(MINT.user_id)
+        reused = store.remember("the final is in room 302", "final", "claim", SLADE, KMUTT).memory_id
+        assert reused == second
+        return _verdicts((1, "same"))
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(side_effect=judge)
+    result = await tidy_memories(store, client, "m", "fake-1")
+    assert result["merged"] == 0
+    assert store.get(second).content == "the final is in room 302" and store.get(first).confirmed_by == []
+    assert store.recall("final room 302")
+
+
+async def test_forgetting_the_kept_memory_brings_back_the_merged_one(store):
+    from src.sleep import tidy_memories
+    _teach(store, "the exam is in room 410", "exam", KRUSKAL, days_ago=2)
+    mint = _teach(store, "exam: room 410", "exam", MINT)
+    await tidy_memories(store, _client(_verdicts((1, "same"))), "m", "fake-1")
+    store.forget_user(KRUSKAL.user_id)
+    assert [m.id for m in store.recall("exam room")] == [mint]
+
+
+async def test_someones_report_about_themselves_is_never_merged_into_anothers_claim(store):
+    from src.sleep import tidy_memories
+    _teach(store, "Slade is vegetarian", "Slade", MINT, days_ago=2)
+    _teach(store, "Slade is vegetarian", "Slade", SLADE, kind="self")
+    result = await tidy_memories(store, _client(_verdicts((1, "same"))), "m", "fake-1")
+    assert result["merged"] == 0
+
+
+async def test_a_day_summary_lists_everyone_who_spoke_even_past_the_prompt_limit(log, monkeypatch):
+    from src import sleep
+    monkeypatch.setattr(sleep, "MAX_DAY_MESSAGES", 3)
+    yesterday = TODAY - timedelta(days=1)
+    log.add(_message("early bird", MINT, _at(yesterday, 6)))
+    for n in range(5):
+        log.add(_message(f"later {n}", SLADE, _at(yesterday, 12, n)))
+    await sleep.summarize_day(log, _client(_reply("- talk")), "m", FakeEmbedder(), "55", yesterday)
+    log.forget_user(MINT.user_id)
+    assert log.episode_count() == 0
+
+
+async def test_a_summary_written_while_someone_ran_forget_is_thrown_away(log):
+    from src.sleep import summarize_day
+    yesterday = TODAY - timedelta(days=1)
+    _chat_day(log)
+
+    async def write(**kwargs):
+        log.forget_user(SLADE.user_id)
+        return _reply("- Slade said something private")
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(side_effect=write)
+    assert await summarize_day(log, client, "m", FakeEmbedder(), "55", yesterday) is None
+    assert log.episode_count() == 0

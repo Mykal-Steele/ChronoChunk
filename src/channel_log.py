@@ -8,7 +8,7 @@ DMs are not logged. A summary is only shown inside the server it came from.
 import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence
 
 from src.clock import BANGKOK
 from src.database import Database, get_database
@@ -79,8 +79,20 @@ class ChannelLog:
             (today.isoformat(), MIN_MESSAGES))
         return [(row["channel_id"], date.fromisoformat(row["day"])) for row in rows]
 
-    def save_episode(self, place: Place, day: date, summary: str, people: Sequence[str]) -> int:
+    def save_episode(self, place: Place, day: date, summary: str, people: Sequence[str],
+                     written_from: Optional[Sequence[str]] = None) -> Optional[int]:
+        """
+        Keep one day's summary. written_from is the ids of the messages it was written from:
+        when any of them is gone, deleted or forgotten while the model wrote, nothing is saved.
+        """
         with self.db.transaction() as connection:
+            if written_from:
+                ids = [str(i) for i in written_from]
+                marks = ",".join("?" * len(ids))
+                present = connection.execute(f"SELECT count(*) FROM channel_messages WHERE message_id IN ({marks})",
+                                             ids).fetchone()[0]
+                if present != len(set(ids)):
+                    return None
             episode_id = connection.execute(
                 "INSERT OR REPLACE INTO episodes (guild_id, guild_name, channel_id, channel_name, day, summary, people, "
                 "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -105,10 +117,11 @@ class ChannelLog:
         return bool(guild_id) and bool(self.db.query("SELECT 1 FROM episodes WHERE guild_id = ? LIMIT 1", (str(guild_id),)))
 
     def find_episodes(self, vector: Optional[Sequence[float]], model: Optional[str], guild_id: str,
-                      limit: int = EPISODE_LIMIT) -> List[Episode]:
+                      limit: int = EPISODE_LIMIT, visible: Optional[Callable[[str], bool]] = None) -> List[Episode]:
         """
         The days in this server whose summary fits the query's embedding, by the same rule as
-        memories: close enough, and nearly as close as the best one. Closest first.
+        memories: close enough, and nearly as close as the best one. Closest first. visible,
+        when given, says which channels the asker can see: a summary of any other is left out.
         """
         if not vector or not model or not guild_id:
             return []
@@ -116,7 +129,7 @@ class ChannelLog:
         rows = self.db.query(
             "SELECT *, vec_distance_cosine(embedding, ?) AS distance FROM episodes WHERE guild_id = ? "
             "AND embedding_model = ? AND length(embedding) = length(?)", (packed, str(guild_id), model, packed))
-        scored = [(1.0 - row["distance"], row) for row in rows]
+        scored = [(1.0 - row["distance"], row) for row in rows if visible is None or visible(row["channel_id"])]
         best = max((s for s, _ in scored), default=0.0)
         kept = sorted(((s, row) for s, row in scored if s >= MIN_SIMILARITY and s >= best - NEAR_BEST),
                       key=lambda item: item[0], reverse=True)

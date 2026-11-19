@@ -89,7 +89,8 @@ def _day_name(day: date) -> str:
 
 async def summarize_day(log: ChannelLog, client, model: str, embedder, channel_id: str, day: date) -> Optional[int]:
     """Write one channel's day down and keep it. Returns the summary's id, or None when nothing came back."""
-    rows = log.messages_on(channel_id, day)[-MAX_DAY_MESSAGES:]
+    every = log.messages_on(channel_id, day)
+    rows = every[-MAX_DAY_MESSAGES:]
     if not rows:
         return None
     lines = [f"{_local_time(r['created_at'])} {r['author_name']}{' (the bot)' if r['is_bot'] else ''}: {r['content']}"
@@ -107,8 +108,13 @@ async def summarize_day(log: ChannelLog, client, model: str, embedder, channel_i
         logger.warning(f"Empty summary for channel {channel_id} on {day}")
         return None
     place = Place(first["guild_id"], first["guild_name"], first["channel_id"], first["channel_name"])
-    people = [r["author_id"] for r in rows if not r["is_bot"]]
-    episode_id = log.save_episode(place, day, summary, people)
+    # Everyone who spoke that day, so /forget finds the summary even when their messages were cut from the prompt
+    people = [r["author_id"] for r in every if not r["is_bot"]]
+    # Saved only if no message it was written from was deleted during the call, by /forget or in Discord
+    episode_id = log.save_episode(place, day, summary, people, written_from=[r["message_id"] for r in rows])
+    if episode_id is None:
+        logger.info(f"The day of {channel_id} on {day} changed while it was written down, trying again next night")
+        return None
     if embedder is not None:
         try:
             vector, _ = await embedder.embed(summary, "document")
@@ -159,9 +165,9 @@ async def tidy_memories(store: MemoryStore, client, model: str, embedding_model:
             continue
         result["checked"] += 1
         store.pair_checked(older.id, newer.id)
-        if verdict == "same" and store.merge(older.id, newer.id):
+        if verdict == "same" and store.merge(older, newer):
             result["merged"] += 1
-        elif verdict == "newer_corrects" and store.settle(older.id, newer.id):
+        elif verdict == "newer_corrects" and store.settle(older, newer):
             result["settled"] += 1
     return result
 
