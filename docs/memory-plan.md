@@ -28,8 +28,8 @@ Accepted with these decisions: something said in a small server can come up in a
 | 1 | Remember what people teach | `remember` and `recall` tools, each memory with who said it, when and where, corrections replace the old fact. Memories that share words with the message go in front of the model before it answers | Done 2026-11-19 (3.25.0) |
 | 2 | Find the memory that fits | Embeddings (Vertex `gemini-embedding-2`, 768 numbers) kept with each memory and compared with `sqlite-vec`, up to 10 memories per reply ranked by meaning, then how new and how confirmed they are. Course search on Vertex still waits on the sync rebuilding `courses.db` with the same model | Done 2026-11-19 (3.26.0) |
 | 3 | Episodes and sleep | Everything said in a channel is stored. A nightly job writes a summary of each channel's day, merges duplicate facts, settles contradictions and lets unimportant memories fade. Summaries are only used in their own server, for people who can see their channel, raw messages are deleted after 30 days | Done 2026-11-19 (3.27.0) |
-| 4 | Learning how to behave | Next. Notices feedback ("stop roasting me", "that's wrong", a thumbs down) and writes a short lesson for that person or the whole server, which goes into its prompt. It never edits its code or its base personality | |
-| 5 | Control | `/memory` shows what it knows about you, `/forget` erases it, and admins can review and delete what it learned about the group or the world | |
+| 4 | Learning how to behave | Notices feedback ("stop roasting me", "that's wrong", a thumbs down) and writes a short lesson for that person or the whole server, which goes into its prompt. It never edits its code or its base personality. A lesson for a server cannot name anyone, and a personal one can only name the person asking | Done 2026-11-19 (3.28.0) |
+| 5 | Control | Next. `/memory` shows what it knows about you, `/forget` erases it, and admins can review and delete what it learned about the group or the world | |
 
 ## Rules that hold in every layer
 

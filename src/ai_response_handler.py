@@ -9,6 +9,7 @@ from src.memory_store import MemoryStore
 from src.tools.memory import AUTO_RECALL_LIMIT, RecallMemory, embed_missing
 from src.embedder import make_embedder
 from src.channel_log import ChannelLog
+from src.lessons import LessonStore, lessons_block
 from src.tools.memory import past_days_block
 from src.clock import BANGKOK
 from types import SimpleNamespace
@@ -999,7 +1000,7 @@ class AIResponseHandler:
         # Per-user cache, keyed by user identity + query + tail of history + what was attached
         cache_key = f"{user_id or username}|{query}|{conversation_history[-120:] if conversation_history else ''}"
         # A saved, corrected or forgotten memory can change the answer, so it starts a new key
-        cache_key += f"|m{MemoryStore().revision()}"
+        cache_key += f"|m{MemoryStore().revision()}|l{LessonStore().revision()}"
         # Each server has its own past days, so an answer is only served again where it was made
         cache_key += f"|{getattr(request.place, 'guild_id', '')}:{getattr(request.place, 'channel_id', '')}"
         if attached_context or images:
@@ -1134,6 +1135,11 @@ class AIResponseHandler:
                 past = past_days_block(log.find_episodes(vector, request.memory_model, guild_id, visible=visible))
                 if past:
                     user_parts.insert(-1, past)
+            if user_id:
+                # How the people here asked the bot to act (memory plan, layer 4). No model call.
+                taught = lessons_block(LessonStore().for_reply(user_id, getattr(request.place, "guild_id", "")), username)
+                if taught:
+                    user_parts.insert(-1, taught)
 
             def keep(block: str) -> None:
                 if session is not None:

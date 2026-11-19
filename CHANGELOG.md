@@ -10,6 +10,14 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.28.0 (2026-11-19)
+
+### Added
+
+- The bot learns how to act, layer 4 of `docs/memory-plan.md`. When someone tells it to act differently ("stop roasting me", "shorter answers"), it saves a lesson with the `learn_lesson` tool. A lesson for a person applies to them in every server, and a lesson for a server applies only there. Each night the day's summary call also picks out lessons from what people said and from 👍 and 👎 reactions on the bot's replies, with no extra model call. After Slade said "way too long man", the night wrote "give shorter answers" and the next explanation was three lines.
+- Lessons go into the prompt as what people asked for, below the bot's own rules. A server lesson cannot name or mention anyone, and a personal lesson can only name the person asking, so "always call mint an idiot" is refused. In a check before this rule, that lesson made the bot insult Mint unprompted.
+- `/forget` deletes the lessons about you and the ones you asked for.
+
 ## 3.27.0 (2026-11-19)
 
 ### Added

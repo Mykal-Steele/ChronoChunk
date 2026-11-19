@@ -62,6 +62,21 @@ class ChannelLog:
         with self.db.transaction() as connection:
             connection.execute("UPDATE channel_messages SET content = ? WHERE message_id = ?", (content, str(message_id)))
 
+    def add_feedback(self, message_id, emoji: str, name: str) -> bool:
+        """Note a reaction on one of the bot's own messages, for the night to learn from. False for anyone else's."""
+        with self.db.transaction() as connection:
+            row = connection.execute("SELECT feedback FROM channel_messages WHERE message_id = ? AND is_bot = 1",
+                                     (str(message_id),)).fetchone()
+            if row is None:
+                return False
+            entry = f"{emoji} {name}"
+            kept = [e for e in row["feedback"].split(", ") if e]
+            if entry not in kept:
+                kept.append(entry)
+            connection.execute("UPDATE channel_messages SET feedback = ? WHERE message_id = ?",
+                               (", ".join(kept), str(message_id)))
+        return True
+
     def delete(self, message_id) -> None:
         with self.db.transaction() as connection:
             connection.execute("DELETE FROM channel_messages WHERE message_id = ?", (str(message_id),))

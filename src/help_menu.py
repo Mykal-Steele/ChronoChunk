@@ -178,6 +178,7 @@ def build_help_embed() -> discord.Embed:
         "i keep ur last 20 messages to me, my answers, and facts i pick up about u, so i remember u next time",
         "what u teach me is kept with ur name and shared with every server im in",
         f"i keep what's said in server channels for {Config.CHANNEL_LOG_KEEP_DAYS} days and write each day down in a few lines, which only people who can see that channel get",
+        "if u tell me how to act with u, or react 👍/👎 to me, i learn from it",
         "what u send me goes to the ai model to get an answer",
         "`/info` shows what i stored, `/forget` deletes it",
         f"the full list is at <{PRIVACY_URL}>"

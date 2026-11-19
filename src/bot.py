@@ -196,6 +196,14 @@ class ChronoChunk(commands.Bot):
         if content is not None:
             ChannelLog().edit(payload.message_id, content)
 
+    async def on_raw_reaction_add(self, payload):
+        """A thumbs up or down on one of the bot's replies, kept for the night to learn from (layer 4)."""
+        emoji = str(payload.emoji)
+        if emoji not in ("👍", "👎") or (self.user and payload.user_id == self.user.id):
+            return
+        member = getattr(payload, "member", None)
+        ChannelLog().add_feedback(payload.message_id, emoji, getattr(member, "display_name", None) or str(payload.user_id))
+
     async def on_raw_message_delete(self, payload):
         """A message deleted in Discord is deleted from the channel log."""
         ChannelLog().delete(payload.message_id)

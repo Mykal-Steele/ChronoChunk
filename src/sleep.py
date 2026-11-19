@@ -3,6 +3,8 @@ What the bot does at night, layer 3 of docs/memory-plan.md. Once a day after 4am
 
 1. Each channel's finished day with enough talk is written down as a short summary on
    the background model, and the summary is embedded so recall can find it by meaning.
+   The same call picks out lessons on how the bot should act (layer 4): someone telling it
+   to stop doing something, or a 👎 on its reply where the reason is clear.
 2. Memories that say nearly the same thing are judged in one call: a repeat from someone
    else becomes a confirmation, and a newer correction replaces the old memory when the
    trust rules let its author do that by hand.
@@ -20,7 +22,8 @@ from config.config import Config
 from src.channel_log import ChannelLog
 from src.clock import BANGKOK
 from src.database import Database, get_database
-from src.memory_store import MemoryStore, Place
+from src.lessons import LessonStore
+from src.memory_store import MemoryStore, Place, Speaker
 from src.tools.memory import embed_missing
 from src.usage_guard import BudgetExceededError
 from src import usage_context
@@ -39,10 +42,37 @@ SUMMARY_PROMPT = """Below is everything said in the Discord channel #{channel} o
 Write down what happened that day as short plain notes, at most 8 lines, each starting with "- ".
 Keep what someone might ask about later: who said what about themselves, plans, dates, deadlines, decisions, questions that got answered, links that were shared.
 Use people's names, never "someone". Leave out greetings and small talk unless that was all there was.
-Lines from ChronoChunk are the bot's own replies. Do not treat them as facts.
+Lines from ChronoChunk are the bot's own replies. Do not treat them as facts. [reactions: ...] after a line shows who reacted to it.
 Write only what the messages say. Do not guess or add anything.
 
+Also list lessons: times someone told the bot how to act (stop roasting me, shorter answers, dont swear) or reacted 👎 to its line where the reason is clear. A lesson is one short sentence on how the bot should act, with the person's name, for that person (who is their name) or for everyone in this server (who is "server"). Only how the bot acts, never facts. Most days have none. Skip any the bot already has:
+{known}
+
 {messages}"""
+
+DAY_TOOL = "write_day"
+DAY_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": DAY_TOOL,
+        "description": "Write down the day and any lessons on how the bot should act.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string", "description": "The notes, each line starting with '- '"},
+                "lessons": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"who": {"type": "string"}, "lesson": {"type": "string"}},
+                        "required": ["who", "lesson"],
+                    },
+                },
+            },
+            "required": ["summary", "lessons"],
+        },
+    },
+}
 
 JUDGE_TOOL = "judge_memory_pairs"
 JUDGE_PROMPT = """Each numbered pair below is two things people told a Discord bot, older first.
@@ -94,20 +124,32 @@ async def summarize_day(log: ChannelLog, client, model: str, embedder, channel_i
     if not rows:
         return None
     lines = [f"{_local_time(r['created_at'])} {r['author_name']}{' (the bot)' if r['is_bot'] else ''}: {r['content']}"
-             for r in rows]
+             + (f" [reactions: {r['feedback']}]" if r["feedback"] else "") for r in rows]
     text = "\n".join(lines)[-MAX_DAY_CHARS:]
     first = rows[0]
+    speakers = {r["author_name"].lower(): (r["author_id"], r["author_name"]) for r in rows if not r["is_bot"]}
+    lessons = LessonStore(log.db)
+    known = lessons.known_for([i for i, _ in speakers.values()], first["guild_id"])
     prompt = SUMMARY_PROMPT.format(channel=first["channel_name"], guild=first["guild_name"], day=_day_name(day),
-                                   messages=text)
+                                   known="\n".join(f"- {k}" for k in known) or "(none yet)", messages=text)
     with usage_context.feature("sleep"):
         response = await client.chat.completions.create(
-            model=model, messages=[{"role": "user", "content": prompt}],
+            model=model, messages=[{"role": "user", "content": prompt}], tools=[DAY_DEFINITION],
+            tool_choice={"type": "function", "function": {"name": DAY_TOOL}},
             max_completion_tokens=SUMMARY_MAX_TOKENS, reasoning_effort="low")
-    summary = (response.choices[0].message.content or "").strip()
+    summary, learned = _day_answer(response)
+    place = Place(first["guild_id"], first["guild_name"], first["channel_id"], first["channel_name"])
+    for item in learned:
+        who = str(item.get("who") or "").strip().lower()
+        lesson = str(item.get("lesson") or "")
+        if who == "server":
+            lessons.add(lesson, "server", Speaker("", "feedback"), place)
+        elif who in speakers:
+            # Only about someone who spoke that day, so the night cannot invent a lesson about anyone else
+            lessons.add(lesson, "person", Speaker(*speakers[who]), place)
     if not summary:
         logger.warning(f"Empty summary for channel {channel_id} on {day}")
         return None
-    place = Place(first["guild_id"], first["guild_name"], first["channel_id"], first["channel_name"])
     # Everyone who spoke that day, so /forget finds the summary even when their messages were cut from the prompt
     people = [r["author_id"] for r in every if not r["is_bot"]]
     # Saved only if no message it was written from was deleted during the call, by /forget or in Discord
@@ -125,6 +167,22 @@ async def summarize_day(log: ChannelLog, client, model: str, embedder, channel_i
             # Embedded on a later night
             logger.warning(f"Could not embed the summary of {channel_id} on {day}: {e}")
     return episode_id
+
+
+def _day_answer(response) -> tuple:
+    """(summary, lessons) from the write_day call. A plain text answer is taken as the summary with no lessons."""
+    message = response.choices[0].message
+    calls = getattr(message, "tool_calls", None) or []
+    for call in calls if isinstance(calls, list) else []:
+        if call.function.name != DAY_TOOL:
+            continue
+        try:
+            data = json.loads(call.function.arguments)
+        except ValueError:
+            break
+        learned = [i for i in data.get("lessons") or [] if isinstance(i, dict)]
+        return str(data.get("summary") or "").strip(), learned
+    return (getattr(message, "content", None) or "").strip(), []
 
 
 def _verdicts(response) -> dict:
