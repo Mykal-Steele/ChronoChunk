@@ -8,6 +8,8 @@ import logging
 from src.memory_store import MemoryStore
 from src.tools.memory import AUTO_RECALL_LIMIT, RecallMemory, embed_missing
 from src.embedder import make_embedder
+from src.channel_log import ChannelLog
+from src.tools.memory import past_days_block
 from src.clock import BANGKOK
 from types import SimpleNamespace
 import time
@@ -998,6 +1000,8 @@ class AIResponseHandler:
         cache_key = f"{user_id or username}|{query}|{conversation_history[-120:] if conversation_history else ''}"
         # A saved, corrected or forgotten memory can change the answer, so it starts a new key
         cache_key += f"|m{MemoryStore().revision()}"
+        # Each server has its own past days, so an answer is only served again where it was made
+        cache_key += f"|{getattr(request.place, 'guild_id', '')}:{getattr(request.place, 'channel_id', '')}"
         if attached_context or images:
             attached_digest = hashlib.sha1((attached_context + "".join(images)).encode("utf-8")).hexdigest()
             cache_key += f"|{attached_digest}"
@@ -1110,9 +1114,23 @@ class AIResponseHandler:
             # embedding call) or by its words. The chat model does not reliably call recall on its own
             recall = by_name.get("recall")
             if isinstance(recall, RecallMemory) and user_id:
-                remembered = await recall.find(clean_query, AUTO_RECALL_LIMIT, request)
+                guild_id = getattr(request.place, "guild_id", "") or ""
+                log = ChannelLog()
+                vector = None
+                if (request.embed_memory is not None and clean_query.strip()
+                        and (recall.store.has_memories() or log.has_episodes(guild_id))):
+                    try:
+                        # One embedding serves both the memories and the past days
+                        vector = await request.embed_memory(clean_query, "query")
+                    except Exception as e:
+                        logger.warning(f"Recall by meaning failed, using words: {e}")
+                remembered = recall.matching(clean_query, AUTO_RECALL_LIMIT, vector=vector,
+                                             model=request.memory_model if vector else None)
                 if remembered:
                     user_parts.insert(-1, remembered)
+                past = past_days_block(log.find_episodes(vector, request.memory_model, guild_id))
+                if past:
+                    user_parts.insert(-1, past)
 
             def keep(block: str) -> None:
                 if session is not None:

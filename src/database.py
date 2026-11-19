@@ -129,6 +129,48 @@ MIGRATIONS = [
     ALTER TABLE memories ADD COLUMN embedding BLOB;
     ALTER TABLE memories ADD COLUMN embedding_model TEXT;
     """,
+    """
+    -- Memory plan, layer 3. Every message said in a server channel, kept CHANNEL_LOG_KEEP_DAYS
+    CREATE TABLE channel_messages (
+        message_id   TEXT PRIMARY KEY,
+        guild_id     TEXT NOT NULL,
+        guild_name   TEXT NOT NULL DEFAULT '',
+        channel_id   TEXT NOT NULL,
+        channel_name TEXT NOT NULL DEFAULT '',
+        author_id    TEXT NOT NULL,
+        author_name  TEXT NOT NULL,
+        content      TEXT NOT NULL,
+        created_at   TEXT NOT NULL,          -- UTC
+        day          TEXT NOT NULL,          -- the Bangkok day it was sent, YYYY-MM-DD
+        is_bot       INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX channel_messages_day ON channel_messages(channel_id, day);
+    CREATE INDEX channel_messages_author ON channel_messages(author_id);
+    -- A summary of one channel's day, written at night
+    CREATE TABLE episodes (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id        TEXT NOT NULL,
+        guild_name      TEXT NOT NULL DEFAULT '',
+        channel_id      TEXT NOT NULL,
+        channel_name    TEXT NOT NULL DEFAULT '',
+        day             TEXT NOT NULL,
+        summary         TEXT NOT NULL,
+        people          TEXT NOT NULL DEFAULT '[]',  -- JSON list of the user ids who spoke that day
+        created_at      TEXT NOT NULL,
+        embedding       BLOB,
+        embedding_model TEXT,
+        UNIQUE (channel_id, day)
+    );
+    CREATE INDEX episodes_guild ON episodes(guild_id);
+    -- Pairs of memories the night already judged, so it does not ask about them again
+    CREATE TABLE memory_pairs_checked (
+        first  INTEGER NOT NULL,
+        second INTEGER NOT NULL,
+        PRIMARY KEY (first, second)
+    );
+    -- When recall last showed a memory. A memory nobody uses fades in the ranking
+    ALTER TABLE memories ADD COLUMN last_used_at TEXT;
+    """,
 ]
 
 

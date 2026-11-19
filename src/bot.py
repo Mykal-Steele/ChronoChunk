@@ -17,6 +17,9 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
     
 # Import local modules
+from src import sleep
+from src.channel_log import ChannelLog
+from src.message_context import history_text
 from src.command_handler import CommandHandler
 from src.game_manager import GameManager
 from src.rate_limiter import RateLimiter
@@ -171,6 +174,8 @@ class ChronoChunk(commands.Bot):
         self.backup_task = asyncio.create_task(backups.run_daily())
         # Memories saved while embeddings were down, or before a model change, get their meaning now
         self.memory_embed_task = asyncio.create_task(self._embed_missing_memories())
+        # Each night: summaries of every channel's day, memory tidying, old messages deleted
+        self.sleep_task = asyncio.create_task(sleep.run_nightly(self.ai_handler))
 
         # Initialize slash commands WITHOUT rate limiter
         self.slash_commands = SlashCommandManager(
@@ -185,10 +190,28 @@ class ChronoChunk(commands.Bot):
         # Register slash commands
         await self.slash_commands.register_commands()
     
+    async def on_raw_message_edit(self, payload):
+        """An edit in Discord changes the kept text too."""
+        content = (getattr(payload, "data", None) or {}).get("content")
+        if content is not None:
+            ChannelLog().edit(payload.message_id, content)
+
+    async def on_raw_message_delete(self, payload):
+        """A message deleted in Discord is deleted from the channel log."""
+        ChannelLog().delete(payload.message_id)
+
+    async def on_raw_bulk_message_delete(self, payload):
+        for message_id in payload.message_ids:
+            ChannelLog().delete(message_id)
+
     async def on_message(self, message):
         """Handle incoming Discord messages"""
-        # Skip our own messages
+        # Skip our own messages, after keeping them in the channel log for the nightly summaries
         if message.author == self.user:
+            try:
+                ChannelLog().add(message, text=history_text(message), is_bot=True)
+            except Exception as e:
+                logger.warning(f"Could not log the bot's message: {e}")
             return
         
         try:

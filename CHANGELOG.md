@@ -10,6 +10,21 @@ How the numbers work:
 
 Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards from the commit history, and each one is tagged at the last commit it covers. The only number written down at the time was the `1.0.0` that `/status` reported from April 2025 on, which is why that release keeps the name.
 
+## 3.27.0 (2026-11-19)
+
+### Added
+
+- The bot keeps what is said in the server channels it is in, layer 3 of `docs/memory-plan.md`. Every message is saved with who, where and when for `CHANNEL_LOG_KEEP_DAYS` (30 days), Discord edits and deletes carry over, and DMs are not saved.
+- Each night after 4am Bangkok, every channel's day with at least 5 messages is written down in a few lines on the background model. The summaries stay after the messages are deleted and are found by meaning like memories, but only inside the server they came from. Asked "was anyone sick this month?" on the 19th, the bot answers "slade had the flu back on the 1st".
+- The same night tidies memory. Two memories that say the same thing become one, confirmed by both people, and a newer correction replaces the old memory when its author could have replaced it by hand.
+- A memory that gets used keeps its place, and one nobody uses ranks lower as it gets older.
+- `/forget` also deletes your saved channel messages and every day summary you are in. PRIVACY.md and `/help` say what is saved.
+
+### Fixed
+
+- A reply kept for reuse was served again in any server and channel. It is now only served where it was made, since each server has its own past days.
+- What someone says about themselves is saved as their own word even when the model marks it as a claim, so others cannot overwrite it.
+
 ## 3.26.0 (2026-11-19)
 
 ### Added
