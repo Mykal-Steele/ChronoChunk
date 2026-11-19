@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, List, Optional
 
 from src.document_builder import BuiltFile
+from src.uniloom.state import UniloomState
 
 
 def user_content(text: str, images: List[str]):
@@ -76,6 +77,12 @@ class Turn:
     tool_calls: List[dict] = field(default_factory=list)
     # What this reply saved, such as "saved as m12", shown under the answer so a "noted" without a save shows
     receipts: List[str] = field(default_factory=list)
+    # Tools a tool handed over for the rounds after it, such as the Uniloom tools once loaded
+    added_tools: List[Any] = field(default_factory=list)
+    # What this reply did with Uniloom, for the buttons under it
+    uniloom: UniloomState = field(default_factory=UniloomState)
+    # True when the reply can show buttons under it, which Uniloom needs for connecting and do it
+    can_confirm: bool = False
     calls: int = 0
     cost: float = 0.0
     started: float = field(default_factory=time.monotonic)

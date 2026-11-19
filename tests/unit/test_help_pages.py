@@ -8,7 +8,7 @@ from src.command_handler import CommandHandler
 from src.help_menu import TOPICS, build_help_embed, build_topic_help
 from src.rate_limiter import RateLimiter
 
-PAGES = ("memory", "files", "courses", "music", "limits")
+PAGES = ("memory", "files", "courses", "music", "limits", "uniloom")
 
 
 def _text(embed) -> str:
@@ -146,3 +146,11 @@ def test_labelled_rows_read_as_plain_discord_text():
 def test_labelled_values_cannot_turn_into_italics_or_strikes():
     from src.stats import labelled
     assert labelled([("host", "Standard_D2_v3 ~~x~~ *y*")]) == "**host**: Standard\\_D2\\_v3 \\~\\~x\\~\\~ \\*y\\*"
+
+
+def test_the_uniloom_page_says_how_to_connect_and_that_changes_wait():
+    text = _text(build_topic_help("uniloom"))
+    assert "`/uniloom connect`" in text and "`/uniloom disconnect`" in text
+    assert "do it" in text
+    # Whose account it uses, and that nobody else can use it
+    assert "only u" in text

@@ -194,6 +194,25 @@ MIGRATIONS = [
     -- The user id of who a memory is about, when that is known for sure, so /memory can let them delete it
     ALTER TABLE memories ADD COLUMN about_id TEXT NOT NULL DEFAULT '';
     """,
+    """
+    -- Each person's Uniloom sign-in (docs/uniloom-plan.md). secrets holds the access and refresh
+    -- tokens, encrypted with state/uniloom.key. The rest is what refreshing and revoking need
+    CREATE TABLE uniloom_accounts (
+        user_id             TEXT PRIMARY KEY,
+        subject             TEXT NOT NULL,
+        name                TEXT NOT NULL DEFAULT '',
+        issuer              TEXT NOT NULL,
+        client_id           TEXT NOT NULL,
+        token_endpoint      TEXT NOT NULL,
+        revocation_endpoint TEXT NOT NULL DEFAULT '',
+        resource            TEXT NOT NULL,
+        secrets             TEXT NOT NULL,
+        scope               TEXT NOT NULL DEFAULT '',
+        expires_at          TEXT NOT NULL,
+        connected_at        TEXT NOT NULL,
+        used_at             TEXT NOT NULL
+    );
+    """,
 ]
 
 

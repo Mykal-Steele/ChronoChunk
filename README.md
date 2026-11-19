@@ -240,6 +240,7 @@ Slash commands:
 - `/stats` - Everything the bot has used so far: AI calls, tokens and cost, by day, by job and by model
 - `/recent-posts on|off` - Turn reading of just-posted images and files on or off in a channel (needs Manage Channels)
 - `/join-in on|off` - Turn the bot's joining in on messages nobody sent to it on or off in a channel (needs Manage Channels)
+- `/uniloom connect|status|disconnect` - Sign the bot in to your Uniloom account so it can read and plan your work there for you. Changes wait for you to press do it. `/help uniloom` explains it
 - `/changelog` - What changed in each version, five versions a page with buttons to flip. `/changelog version:3.27.0` shows one version in full.
 - `/code` - Link to this repository
 - The music commands are listed under [Music commands](#music-commands).

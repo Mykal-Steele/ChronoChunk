@@ -120,6 +120,7 @@ def build_help_embed() -> discord.Embed:
         "`/help courses` class slides, recordings and due dates",
         "`/help music` all the music commands and who can control them",
         "`/help limits` how much u can do and what i cant read yet",
+        "`/help uniloom` using ur Uniloom board through me",
     ]), inline=False)
     embed.add_field(name="other commands", value=_bullets([
         "`/info` or `/mydata` the facts i picked up about u. `/forget` deletes everything about u",
@@ -217,6 +218,28 @@ def _courses_page() -> discord.Embed:
     ])
 
 
+def _uniloom_page() -> discord.Embed:
+    return _page("uniloom", "Uniloom is a project tracker. connect ur account and i can read and plan ur work there for u", [
+        ("connecting", [
+            "just ask me something about it, like `whats left on my uniloom board`. the first time i give u a Connect Uniloom button",
+            "the button gives u a sign-in link only u can see. sign in, allow ChronoChunk, and i answer what u asked",
+            "`/uniloom connect` does the same without asking anything. `/uniloom status` says who im connected as",
+            "u need to have signed in on the Uniloom website once first",
+        ]),
+        ("using it", [
+            "ask in normal words: `whats on TG-12`, `make a slice for the login page under TG-4`, `what am i assigned`",
+            "i look things up straight away. a change waits until u press do it under my message, and cancel stops it",
+            "i can do what ur account can do in Uniloom, except moving things to Ready or Done. thats for people on the website",
+        ]),
+        ("whose it is", [
+            "i only use ur account when u ask me. if someone else asks, i use theirs, never urs",
+            "only u can press ur buttons. my answers show in the channel like any other message, so others can see what changed",
+            "`/uniloom disconnect` signs me out. `/forget` does too, along with everything else",
+            "i keep ur sign-in encrypted. it runs out after 30 days without use, then i just ask u to connect again",
+        ]),
+    ])
+
+
 def _limits_page() -> discord.Embed:
     return _page("limits", "so nobody burns through everything. `/usage` shows what u have left", [
         ("limits", limit_lines()),
@@ -230,6 +253,7 @@ TOPICS = {
     "courses": _courses_page,
     "music": build_music_help_embed,
     "limits": _limits_page,
+    "uniloom": _uniloom_page,
 }
 
 

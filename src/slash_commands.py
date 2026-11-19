@@ -22,6 +22,8 @@ from src.stats import stats_summary
 from src.tools.courses import courses_summary
 from src.timing import Stopwatch
 from src.user_data_manager import UserDataManager
+from src.uniloom.service import get_uniloom
+from src.uniloom.views import send_sign_in_link
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -86,6 +88,7 @@ class SlashCommandManager:
             await self._register_forget_command()
             await self._register_memory_command()
             await self._register_changelog_command()
+            await self._register_uniloom_command()
             await self._register_code_command()
             await self._register_chat_command()
             await self._register_tldr_command()
@@ -203,10 +206,15 @@ class SlashCommandManager:
             
             try:
                 if not fact:
+                    # Signed out of Uniloom here first, so nothing can use the sign-in after this
+                    uniloom = get_uniloom()
+                    signed_in = uniloom.take_account(user_id)
                     # Clear all user data. forget_user opens and writes sqlite, so keep it
                     # off the event loop; the reply log may be locked by a background write.
                     await asyncio.to_thread(self.user_data_manager.forget_user, user_id)
                     await interaction.response.send_message("bet, wiped all your data. fresh start 💀", ephemeral=True)
+                    # Then cancelled at uniAuth, which takes a moment, after they have their answer
+                    await uniloom.revoke(signed_in)
                 else:
                     # Try to remove specific fact
                     result = self.user_data_manager.remove_fact(user_id, fact, username)
@@ -441,6 +449,36 @@ class SlashCommandManager:
             await interaction.response.send_message(embed=view.embed(), view=view)
             # Kept so the buttons can be switched off when they stop working
             view.message = await interaction.original_response()
+
+    async def _register_uniloom_command(self):
+        """Connect, check or disconnect the person's Uniloom account (docs/uniloom-plan.md)"""
+        @self.bot.tree.command(name="uniloom", description="Connect your Uniloom account so I can use it for you")
+        @app_commands.describe(action="connect: sign in. status: who im connected as. disconnect: sign me out")
+        @app_commands.choices(action=[app_commands.Choice(name="connect", value="connect"),
+                                      app_commands.Choice(name="status", value="status"),
+                                      app_commands.Choice(name="disconnect", value="disconnect")])
+        async def uniloom_command(interaction: discord.Interaction, action: str = "status"):
+            uniloom = get_uniloom()
+            user_id = str(interaction.user.id)
+            if not uniloom.enabled:
+                await interaction.response.send_message("Uniloom isnt set up on this bot yet", ephemeral=True)
+                return
+            if action == "connect":
+                await send_sign_in_link(interaction, uniloom)
+                return
+            if action == "disconnect":
+                await interaction.response.defer(ephemeral=True, thinking=True)
+                was = await uniloom.disconnect(user_id)
+                await interaction.followup.send("signed out of Uniloom" if was else "u werent connected to Uniloom",
+                                                ephemeral=True)
+                return
+            account = uniloom.account(user_id)
+            if account is None:
+                text = "not connected. `/uniloom connect` signs u in, or just ask me something about Uniloom"
+            else:
+                text = (f"connected to Uniloom as {account.name or 'ur account'}. i only use it when u ask me, "
+                        "and changes wait for u to press do it. `/uniloom disconnect` signs me out")
+            await interaction.response.send_message(text, ephemeral=True)
 
     async def _register_memory_command(self):
         """What the bot knows about you, or what it learned in this server, and deleting one thing (memory plan, layer 5)"""

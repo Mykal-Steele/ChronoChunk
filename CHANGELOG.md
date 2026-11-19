@@ -12,6 +12,20 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 The time in each heading is when that version went out, in Bangkok time. For the versions before 3.31.0 it was taken from the commit each version's tag points to, and a version tagged on an earlier commit than the one before it shows that one's time.
 
+## 3.32.0 (2026-11-20 00:33)
+
+### Added
+
+- The bot can use Uniloom for you. Ask it about your board or a ticket like `TG-12`, or to plan work there, and it reads and changes Uniloom as you, with exactly the access your account has. The first time, it gives you a Connect Uniloom button: you sign in to uniAuth on a link only you see, allow ChronoChunk, and it answers what you asked. Lookups happen straight away. A change waits until you press do it under its message, and only you can press it. Someone else asking uses their own account, never yours. `/uniloom connect`, `/uniloom status` and `/uniloom disconnect` manage the sign-in, `/forget` signs it out too, and `/help uniloom` explains it.
+- The Uniloom tools are only given to the model for someone who connected, and only when a message needs them: one small tool loads the rest, the same way Claude Code does. A reply working in Uniloom gets 8 tool rounds and the stronger model.
+
+### For whoever runs the bot
+
+- Uniloom needs the bot to have its own HTTPS address for the sign-in: `PUBLIC_URL`, `https://chrono.oakar.dev` in production. A Cloudflare Tunnel (the new `tunnel` service in `deployment/docker-compose.yml`) puts only `/oauth/callback` and `/oauth/client.json` there, without opening a port. `deployment/tunnel-setup.sh` makes the tunnel once. Without `PUBLIC_URL`, Uniloom stays off.
+- Each person's tokens are encrypted with `state/uniloom.key`, made on first use. Keep it with the database. If it is lost, people only have to connect again.
+- The database moves to schema version 10 (`uniloom_accounts`).
+- New dependency: the MCP Python SDK (`mcp` 2.3.0). It is only imported when someone uses Uniloom.
+
 ## 3.31.0 (2026-11-19 23:40)
 
 ### Added

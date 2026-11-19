@@ -4,6 +4,7 @@ same small interface (see base.Tool). To add one, write the class and list it he
 """
 from src.tools.lessons import LearnLesson
 from src.tools.memory import RecallMemory, RememberMemory
+from src.tools.uniloom import OpenUniloom
 from typing import List
 
 from src.tools.base import Tool, ToolResult, Turn
@@ -16,4 +17,5 @@ __all__ = ["Tool", "ToolResult", "Turn", "default_tools"]
 
 def default_tools() -> List[Tool]:
     """Every tool the bot has, in the order their prompt sections are added to the system prompt."""
-    return [CreateDocument(), CreateDiagram(), OpenUrl(), WebSearch(), SearchCourse(), RememberMemory(), RecallMemory(), LearnLesson()]
+    return [CreateDocument(), CreateDiagram(), OpenUrl(), WebSearch(), SearchCourse(), RememberMemory(), RecallMemory(), LearnLesson(),
+            OpenUniloom()]
