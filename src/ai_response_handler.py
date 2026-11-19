@@ -782,6 +782,7 @@ class AIResponseHandler:
 
     async def _embed_memory(self, text: str, task: str, request: Turn) -> List[float]:
         """The embedding of one text for the memory. The call and its cost are added to request."""
+        self._check_reply_limit(request)
         called_at = time.monotonic()
         try:
             vector, cost = await self.memory_embedder.embed(text, task)

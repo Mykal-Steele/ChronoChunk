@@ -41,22 +41,29 @@ def _block(found: List[Memory]) -> str:
             + "\n".join(_line(m) for m in found) + "\n=== END OF MEMORIES ===")
 
 
-async def embed_missing(store: MemoryStore, embedder, limit: int = 200) -> int:
+async def embed_missing(store: MemoryStore, embedder, batch: int = 200) -> int:
     """
     Embed the live memories that have no embedding from embedder's model yet: ones saved
-    while the embedding service was down, and all of them after a model change. Stops at
-    the first failure, since the next start tries again. Returns how many were embedded.
+    while the embedding service was down, and all of them after a model change. Reads them
+    batch at a time until none are left. Stops at the first failure, since the next start
+    tries again. Returns how many were embedded.
     """
     done = 0
-    for memory in store.missing_embeddings(embedder.model, limit):
-        try:
-            vector, _ = await embedder.embed(document_text(memory.content, memory.about), "document")
-        except Exception as e:
-            logger.warning(f"Embedding memories stopped after {done}: {e}")
-            break
-        store.set_embedding(memory.id, vector, embedder.model)
-        done += 1
-    return done
+    tried = set()
+    while True:
+        # A memory deleted or replaced during its call stays unembedded, so it is tried only once
+        memories = [m for m in store.missing_embeddings(embedder.model, batch + len(tried)) if m.id not in tried]
+        if not memories:
+            return done
+        for memory in memories:
+            tried.add(memory.id)
+            try:
+                vector, _ = await embedder.embed(document_text(memory.content, memory.about), "document")
+            except Exception as e:
+                logger.warning(f"Embedding memories stopped after {done}: {e}")
+                return done
+            store.set_embedding(memory.id, vector, embedder.model, created_at=memory.created_at.isoformat())
+            done += 1
 
 
 class RememberMemory(Tool):
@@ -97,7 +104,7 @@ class RememberMemory(Tool):
         model = getattr(turn, "memory_model", "")
         if turn.embed_memory is None or not model or not self.store.needs_embedding(memory_id, model):
             return
-        rows = self.store.db.query("SELECT content, about FROM memories WHERE id = ?", (memory_id,))
+        rows = self.store.db.query("SELECT content, about, created_at FROM memories WHERE id = ?", (memory_id,))
         if not rows:
             return
         try:
@@ -105,7 +112,7 @@ class RememberMemory(Tool):
         except Exception as e:
             logger.warning(f"Could not embed memory #{memory_id}: {e}")
             return
-        self.store.set_embedding(memory_id, vector, model)
+        self.store.set_embedding(memory_id, vector, model, created_at=rows[0]["created_at"])
 
     async def run(self, args: dict, turn: Turn) -> ToolResult:
         speaker = _who(turn)

@@ -406,3 +406,35 @@ async def test_an_empty_answer_is_asked_for_only_once(database, mock_openai_clie
     reply = await handler.generate_reply("/yo", "", "Slade", "760", allow_files=True, place=KMUTT)
     assert reply.text == "brain fried, hit me up again"
     assert mock_openai_client.chat.completions.create.call_count == 2
+
+
+# ── review on #55 ────────────────────────────────────────────────────────────
+
+def test_a_vector_for_a_deleted_memory_does_not_land_on_a_new_one(store):
+    # /forget can run while the embedding is being made, and SQLite can give the next memory the same id
+    old = store.remember("Slade had the flu", "Slade", "self", SLADE, KMUTT).memory_id
+    (when,) = store.db.query("SELECT created_at FROM memories WHERE id = ?", (old,))[0]
+    store.forget_user(SLADE.user_id)
+    new = store.remember("the exam is in room 410", "exam", "claim", KRUSKAL, KMUTT).memory_id
+    assert new == old
+    store.set_embedding(old, _vector("Slade had the flu"), "fake-1", created_at=when)
+    assert store.needs_embedding(new, "fake-1")
+
+
+async def test_embed_missing_goes_past_one_batch(store):
+    for n in range(7):
+        store.remember(f"club fact number {n}", "club", "claim", KRUSKAL, KMUTT)
+    assert await embed_missing(store, FakeEmbedder(), batch=3) == 7
+    assert store.missing_embeddings("fake-1") == []
+
+
+async def test_a_memory_embedding_counts_against_the_reply_limit(database, mock_openai_client):
+    from config.config import Config
+    from src.exceptions import ReplyLimitError
+    embedder = FakeEmbedder()
+    handler = _handler(mock_openai_client, embedder)
+    turn = _turn()
+    turn.calls = Config.AI_MAX_MODEL_CALLS_PER_REPLY
+    with pytest.raises(ReplyLimitError):
+        await handler._embed_memory("x", "document", turn)
+    assert embedder.calls == []

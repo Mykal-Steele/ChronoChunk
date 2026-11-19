@@ -249,11 +249,21 @@ class MemoryStore:
         """Whether there is any live memory, so a reply with nothing to recall skips the embedding."""
         return bool(self.db.query("SELECT 1 FROM memories WHERE replaced_by IS NULL LIMIT 1"))
 
-    def set_embedding(self, memory_id: int, vector: Sequence[float], model: str) -> None:
-        """Keep the embedding of one memory and the model that made it. Not a change to what is remembered."""
+    def set_embedding(self, memory_id: int, vector: Sequence[float], model: str,
+                      created_at: Optional[str] = None) -> None:
+        """
+        Keep the embedding of one memory and the model that made it. Not a change to what is
+        remembered. created_at is the memory's own, read before the embedding call: /forget can
+        delete the memory during the call and SQLite can give the next one the same id, so a
+        vector is only kept on the memory it was made from.
+        """
+        sql = "UPDATE memories SET embedding = ?, embedding_model = ? WHERE id = ?"
+        parameters: tuple = (_pack(vector), model, int(memory_id))
+        if created_at is not None:
+            sql += " AND created_at = ?"
+            parameters += (created_at,)
         with self.db.transaction() as connection:
-            connection.execute("UPDATE memories SET embedding = ?, embedding_model = ? WHERE id = ?",
-                               (_pack(vector), model, int(memory_id)))
+            connection.execute(sql, parameters)
 
     def needs_embedding(self, memory_id: int, model: str) -> bool:
         rows = self.db.query("SELECT 1 FROM memories WHERE id = ? AND embedding IS NOT NULL AND embedding_model = ?",

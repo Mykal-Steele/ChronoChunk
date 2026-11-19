@@ -46,7 +46,7 @@ docker build -t chronochunk .
 docker run -d --name chronochunk --env-file .env chronochunk
 ```
 
-On a laptop with `AI_PROVIDER=vertex`, the container also needs your Google credentials, because it cannot see the ones `gcloud` keeps on your machine. Create them once with `gcloud auth application-default login`, then pass the file in read-only. The container runs as user 1000, so that user has to be able to read it:
+On a laptop with `AI_PROVIDER=vertex`, run this instead of the `docker run` above, because the container cannot see the Google credentials `gcloud` keeps on your machine. Create them once with `gcloud auth application-default login`. The file is passed in read-only, and the container runs as user 1000, so that user has to be able to read it. If you already started the first command, remove that container with `docker rm -f chronochunk` first:
 
 ```bash
 docker run -d --name chronochunk --env-file .env \
