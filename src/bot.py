@@ -202,7 +202,8 @@ class ChronoChunk(commands.Bot):
         if emoji not in ("👍", "👎") or (self.user and payload.user_id == self.user.id):
             return
         member = getattr(payload, "member", None)
-        ChannelLog().add_feedback(payload.message_id, emoji, getattr(member, "display_name", None) or str(payload.user_id))
+        ChannelLog().add_feedback(payload.message_id, emoji, getattr(member, "display_name", None) or str(payload.user_id),
+                                  str(payload.user_id))
 
     async def on_raw_message_delete(self, payload):
         """A message deleted in Discord is deleted from the channel log."""

@@ -124,10 +124,15 @@ async def summarize_day(log: ChannelLog, client, model: str, embedder, channel_i
     if not rows:
         return None
     lines = [f"{_local_time(r['created_at'])} {r['author_name']}{' (the bot)' if r['is_bot'] else ''}: {r['content']}"
-             + (f" [reactions: {r['feedback']}]" if r["feedback"] else "") for r in rows]
+             + (f" [reactions: {ChannelLog.feedback_text(r)}]" if r["feedback"] else "") for r in rows]
     text = "\n".join(lines)[-MAX_DAY_CHARS:]
     first = rows[0]
-    speakers = {r["author_name"].lower(): (r["author_id"], r["author_name"]) for r in rows if not r["is_bot"]}
+    # A name two people share that day cannot say whose lesson it is, so it gets none
+    ids_by_name: dict = {}
+    for r in every:
+        if not r["is_bot"]:
+            ids_by_name.setdefault(r["author_name"].lower(), set()).add((r["author_id"], r["author_name"]))
+    speakers = {name: next(iter(ids)) for name, ids in ids_by_name.items() if len(ids) == 1}
     lessons = LessonStore(log.db)
     known = lessons.known_for([i for i, _ in speakers.values()], first["guild_id"])
     prompt = SUMMARY_PROMPT.format(channel=first["channel_name"], guild=first["guild_name"], day=_day_name(day),

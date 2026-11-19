@@ -191,6 +191,8 @@ MIGRATIONS = [
     """
     -- A note only the person who saved it gets back. The bot asks public or private when it saves one
     ALTER TABLE memories ADD COLUMN private INTEGER NOT NULL DEFAULT 0;
+    -- The user id of who a memory is about, when that is known for sure, so /memory can let them delete it
+    ALTER TABLE memories ADD COLUMN about_id TEXT NOT NULL DEFAULT '';
     """,
 ]
 

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from src.database import Database, get_database
+from src.memory_store import _FORGOT as FORGOT_PREFIX
 from src.memory_store import Place, Speaker
 
 SCOPES = ("person", "server")
@@ -56,9 +57,13 @@ class LessonStore:
         return int(value) if value else 0
 
     def _people_in(self, guild_id: str) -> List[str]:
-        """The names of everyone who spoke in this server or taught the bot something."""
-        rows = self.db.query("SELECT DISTINCT author_name FROM channel_messages WHERE guild_id = ? AND is_bot = 0 "
-                             "UNION SELECT DISTINCT source_name FROM memories", (str(guild_id),))
+        """
+        The names of everyone the bot knows, in any server: who spoke, who taught it something
+        and who asked for a lesson. A person known only somewhere else is still a person.
+        """
+        rows = self.db.query("SELECT DISTINCT author_name FROM channel_messages WHERE is_bot = 0 "
+                             "UNION SELECT DISTINCT source_name FROM memories "
+                             "UNION SELECT DISTINCT source_name FROM lessons WHERE source_id != ''")
         return [r[0] for r in rows if r[0] and len(r[0].strip()) >= 2]
 
     def refusal(self, lesson: str, scope: str, place: Place, own_name: str = "") -> str:
@@ -81,7 +86,15 @@ class LessonStore:
                 return "a lesson can only be about how u act with the person asking, not about someone else"
         return ""
 
-    def add(self, lesson: str, scope: str, speaker: Speaker, place: Place, target_id: Optional[str] = None) -> Optional[int]:
+    def forgot_since(self, user_id: str, started_at: Optional[datetime]) -> bool:
+        """True when they ran /forget after started_at, so a reply that began before must not save for them."""
+        if started_at is None:
+            return False
+        forgot = self.db.get_meta(FORGOT_PREFIX + str(user_id))
+        return bool(forgot) and datetime.fromisoformat(forgot) >= started_at
+
+    def add(self, lesson: str, scope: str, speaker: Speaker, place: Place, target_id: Optional[str] = None,
+            started_at: Optional[datetime] = None) -> Optional[int]:
         """
         Keep one lesson. A person lesson is about target_id, the speaker by default. A server
         lesson is for the place's server, so it needs one. Returns its number, or None when nothing was added.
@@ -94,6 +107,11 @@ class LessonStore:
         if not target or (scope == "person" and target != speaker.user_id) or self.refusal(lesson, scope, place, own_name):
             return None
         with self.db.transaction() as connection:
+            if started_at is not None:
+                forgot = connection.execute("SELECT value FROM meta WHERE key = ?",
+                                            (FORGOT_PREFIX + speaker.user_id,)).fetchone()
+                if forgot and datetime.fromisoformat(forgot[0]) >= started_at:
+                    return None
             for row in connection.execute("SELECT lesson FROM lessons WHERE scope = ? AND target_id = ?", (scope, target)):
                 if _same(row["lesson"]) == _same(lesson):
                     return None

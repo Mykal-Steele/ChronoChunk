@@ -277,7 +277,7 @@ async def page_notes(data: bytes, filename: str, wait_seconds: Optional[float] =
         # Someone else may have started a pass meanwhile, or even finished one
         running = _in_progress.get(key)
         cached = _cache.get(key)
-        if running is None and cached:
+        if running is None and cached and time.monotonic() - cached[0] < CACHE_SECONDS:
             return cached[1]
     if running is None:
         if gate:

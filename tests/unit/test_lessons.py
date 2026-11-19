@@ -148,8 +148,8 @@ async def test_a_new_lesson_is_not_answered_from_an_old_cached_reply(database, m
 def test_a_thumbs_down_on_the_bots_message_is_kept(database):
     log = ChannelLog(database)
     log.add(_message("ur fit is mid lol", BOT, bot=True, message_id=900), is_bot=True)
-    assert log.add_feedback(900, "👎", "Mint")
-    assert log.messages_on("55", TODAY)[0]["feedback"] == "👎 Mint"
+    assert log.add_feedback(900, "👎", "Mint", "222")
+    assert log.feedback_text(log.messages_on("55", TODAY)[0]) == "👎 Mint"
 
 
 def test_a_reaction_on_someone_elses_message_is_ignored(database):

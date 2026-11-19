@@ -86,7 +86,8 @@ def test_you_can_delete_a_memory_you_taught(stores):
 
 
 def test_you_can_delete_a_memory_about_yourself_from_someone_else(stores):
-    memories, _, _ = stores
+    memories, _, log = stores
+    log.add(_message("hi", MINT))  # so the bot knows which user Mint is
     memory_id = memories.remember("Mint is allergic to peanuts", "Mint", "claim", SLADE, KMUTT).memory_id
     assert "deleted" in delete_item(f"m{memory_id}", "222", "", is_admin=False, username="Mint")
 

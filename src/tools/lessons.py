@@ -51,10 +51,12 @@ class LearnLesson(Tool):
         if scope == "server" and not place.guild_id:
             return ToolResult("error: this is a DM, so there is no server to learn this for. use scope me")
         speaker = Speaker(str(turn.user_id), turn.username or str(turn.user_id))
+        if self.store.forgot_since(speaker.user_id, turn.started_at):
+            return ToolResult("not saved: they ran /forget while this reply was being written")
         refused = self.store.refusal(lesson, scope, place, speaker.name if scope == "person" else "")
         if refused:
             return ToolResult(f"not saved: {refused}")
-        added = self.store.add(lesson, scope, speaker, place)
+        added = self.store.add(lesson, scope, speaker, place, started_at=turn.started_at)
         if not added:
             return ToolResult("already knew that one")
         turn.receipts.append(f"learned as l{added}")

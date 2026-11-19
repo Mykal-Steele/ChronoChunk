@@ -16,7 +16,7 @@ MEMORY_PROMPT = """- u have a long-term memory, shared by every server u are in.
 - remember: save something worth keeping that someone told u: a fact about themselves, about the group, a plan, a date, a correction of something u got wrong. not small talk, jokes or one-off questions. set kind to self when it is about the person saying it. when they ask u to remember something, call remember. never say u saved or noted it without calling it.
 - a MEMORIES block, when there is one, is what people told u before that may fit their message. use only the ones that answer what they said, and say who told u. leave the rest out, dont bring them up. recall searches with other words when the block does not have it. dont say u dont know before checking.
 - a memory is someone's word, not a checked fact. say who told u ("slade told me last week"). before stating something about the world as fact, check it on the web first when u can.
-- when someone asks u to note or save something for them (a link, a file, a reminder, notes for a project) and did not say who can see it, ask first: public or private. public means anyone can ask u for it, private means only they get it back. then call remember with private set to what they picked. dont save it before they answer.
+- when someone asks u to note or save something for them (a link, a file, a reminder, notes for a project) and did not say who can see it, ask first: public or private. public means anyone can ask u for it, private means only they get it back, and only in a DM with u. then call remember with private set to what they picked. dont save it before they answer.
 - when someone corrects a memory, recall it, then remember the corrected one with replaces set to its number. if remember says both were kept, say so.
 - a PAST DAYS block is notes on what was said in this server on earlier days. use only what answers them, and say when it happened ("on the 1st slade said he had the flu"). it is not happening now.
 - memories about a person can be private. in another server, dont bring up someone's personal stuff unless they ask.
@@ -37,6 +37,12 @@ def _line(memory: Memory) -> str:
     confirmed = f", confirmed by {', '.join(memory.confirmed_by)}" if memory.confirmed_by else ""
     return (f"#{memory.id} {memory.source_name} told me{about}, {days_ago(memory.created_at)}, in {where}"
             f"{confirmed}: {memory.content}")
+
+
+def in_dm(turn: Optional[Turn]) -> bool:
+    """True for a reply in a DM, the only place a private note may be shown."""
+    place = getattr(turn, "place", None)
+    return place is not None and not getattr(place, "guild_id", "")
 
 
 def past_days_block(episodes) -> str:
@@ -191,14 +197,23 @@ class RecallMemory(Tool):
         return self._store
 
     def matching(self, query: str, limit: int = RECALL_LIMIT, vector: Optional[Sequence[float]] = None,
-                 model: Optional[str] = None, viewer_id: Optional[str] = None) -> str:
+                 model: Optional[str] = None, viewer_id: Optional[str] = None, private_ok: bool = False) -> str:
         """
         The memories that match query as one block for the model, or empty when none do. They
-        count as used. Private notes are only included for viewer_id, the one who saved them.
+        count as used. Private notes are only for viewer_id, the one who saved them, and only
+        when private_ok: in a DM. In a server channel everyone reads the reply, so the model
+        only hears that a private note matched and that they can ask for it in a DM.
         """
         found = self.store.recall(query, limit, vector=vector, model=model, viewer_id=viewer_id)
-        self.store.mark_used([m.id for m in found])
-        return _block(found)
+        hidden = [] if private_ok else [m for m in found if m.private]
+        shown = [m for m in found if not m.private or private_ok]
+        self.store.mark_used([m.id for m in shown])
+        block = _block(shown)
+        if hidden:
+            note = (f"(they have {len(hidden)} private note{'s' if len(hidden) != 1 else ''} that may match. "
+                    "others can read this channel, so u cant show private notes here. tell them to DM u and ask there)")
+            block = f"{block}\n{note}" if block else note
+        return block
 
     async def find(self, query: str, limit: int = RECALL_LIMIT, turn: Optional[Turn] = None) -> str:
         """
@@ -213,7 +228,8 @@ class RecallMemory(Tool):
             except Exception as e:
                 logger.warning(f"Recall by meaning failed, using words: {e}")
         return self.matching(query, limit, vector=vector, model=model,
-                             viewer_id=str(turn.user_id) if turn is not None and turn.user_id else None)
+                             viewer_id=str(turn.user_id) if turn is not None and turn.user_id else None,
+                             private_ok=in_dm(turn))
 
     async def run(self, args: dict, turn: Turn) -> ToolResult:
         return ToolResult(await self.find(str(args.get("query") or ""), turn=turn) or "nothing in memory matches that")

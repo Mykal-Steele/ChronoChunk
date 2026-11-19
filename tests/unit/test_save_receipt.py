@@ -115,12 +115,13 @@ async def test_someone_else_never_gets_a_private_note_in_a_reply(database, mock_
     assert "docs.google.com/x" not in sent
 
 
-async def test_the_owner_gets_their_private_note_in_any_server(database, mock_openai_client):
+async def test_the_owner_gets_their_private_note_in_a_dm(database, mock_openai_client):
+    # Was "in any server". Review on #57: a reply in a server channel is read by everyone there
     MemoryStore(database).remember(LINK, "Mint", "self", MINT, KMUTT, private=True)
     mock_openai_client.chat.completions.create.side_effect = [_reply("here")]
     handler = _handler(mock_openai_client, FakeEmbedder())
     await handler.generate_reply("/whats my korean presentation link", "", "Mint", "222", allow_files=True,
-                                 place=Place("1300", "XLRX", "66", "chat"))
+                                 place=Place("", "", "900", ""))
     sent = "\n".join(str(m["content"]) for m in mock_openai_client.chat.completions.create.call_args[1]["messages"])
     assert "docs.google.com/x" in sent and "private" in sent
 

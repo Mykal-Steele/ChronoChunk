@@ -197,6 +197,18 @@ class MemoryStore:
             connection.execute("UPDATE memories SET replaced_by = ? WHERE id = ?", (memory_id, claim["id"]))
         connection.execute("UPDATE memories SET confirmed_by = ? WHERE id = ?", (json.dumps(confirmed), memory_id))
 
+    @staticmethod
+    def _about_id(connection, about: str, kind: str, speaker: Speaker) -> str:
+        """Who a memory is about, by user id: the speaker for a self-report, else the one person with that name, or empty."""
+        if kind == "self":
+            return speaker.user_id
+        if not about.strip():
+            return ""
+        ids = {r[0] for r in connection.execute(
+            "SELECT author_id FROM channel_messages WHERE author_name = ? COLLATE NOCASE AND is_bot = 0 "
+            "UNION SELECT source_id FROM memories WHERE source_name = ? COLLATE NOCASE", (about.strip(), about.strip()))}
+        return ids.pop() if len(ids) == 1 else ""
+
     def remember(self, content: str, about: str, kind: str, speaker: Speaker, place: Place,
                  replaces: Optional[int] = None, started_at: Optional[datetime] = None, private: bool = False) -> Saved:
         """
@@ -244,9 +256,10 @@ class MemoryStore:
 
             memory_id = connection.execute(
                 "INSERT INTO memories (content, about, kind, source_id, source_name, guild_id, guild_name, "
-                "channel_id, channel_name, created_at, private) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "channel_id, channel_name, created_at, private, about_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (content, about, kind, speaker.user_id, speaker.name, place.guild_id, place.guild_name,
-                 place.channel_id, place.channel_name, datetime.now(timezone.utc).isoformat(), int(private))).lastrowid
+                 place.channel_id, place.channel_name, datetime.now(timezone.utc).isoformat(), int(private),
+                 self._about_id(connection, about, kind, speaker))).lastrowid
             if target is not None:
                 connection.execute("UPDATE memories SET replaced_by = ? WHERE id = ?", (memory_id, target["id"]))
             if kind == "self" and not private and memory_id is not None:
