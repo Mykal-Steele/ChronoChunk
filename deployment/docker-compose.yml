@@ -1,7 +1,8 @@
 # Runs the bot on its VM (a Google e2-micro since 2026-11, an Azure VM before).
 # On the host this file sits at /opt/chronochunk/docker-compose.yml, next to
 # .env and the git checkout in ./app. User data, logs and the AI spending
-# ledger stay in ./data so a rebuild never touches them.
+# ledger stay in ./data so a rebuild never touches them. update.sh does not copy this
+# file, so after changing it: cp app/deployment/docker-compose.yml . before update.sh.
 services:
   bot:
     build: ./app
@@ -28,6 +29,9 @@ services:
       # Embeds a question about the course material. The sync embeds the material with the same
       # model. Without a courses.db in ./data/state the bot never calls it.
       EMBEDDING_DEPLOYMENT: text-embedding-3-small
+      # The bot's own HTTPS address, through the tunnel below. It turns Uniloom on, since
+      # signing in sends people back here (docs/uniloom-plan.md)
+      PUBLIC_URL: https://chrono.oakar.dev
     # Runs as the unprivileged user from the Dockerfile, with nothing it could use to become root
     cap_drop:
       - ALL
@@ -53,3 +57,29 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # Puts the Uniloom sign-in pages, and only those, on https://chrono.oakar.dev. It connects
+  # out to Cloudflare, so the VM opens no port. deployment/tunnel-setup.sh makes the tunnel
+  # and writes ./data/cloudflared (its config and credentials) once.
+  tunnel:
+    image: cloudflare/cloudflared:2026.10.7
+    container_name: chronochunk-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+    # The VM's chrono user, who owns ./data/cloudflared and its 0600 credentials
+    user: "1000:1000"
+    depends_on:
+      - bot
+    volumes:
+      - ./data/cloudflared:/etc/cloudflared:ro
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 96m
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"

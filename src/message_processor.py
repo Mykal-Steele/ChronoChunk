@@ -18,6 +18,9 @@ from src.exceptions import RateLimitError
 from src.message_handler import MessageHandler
 from src.rate_limiter import RateLimiter
 from src.timing import Stopwatch
+from src.uniloom.service import NotConnected, get_uniloom
+from src.uniloom.state import PendingWrite
+from src.uniloom.views import ConfirmView, ConnectView
 from src.user_data_manager import UserDataManager
 from src.channel_settings import get_channel_settings
 from src.message_context import build_attached_context, history_text, resolve_message_link
@@ -279,10 +282,14 @@ class MessageProcessor:
 
     async def _respond(self, message: discord.Message, user_id: str, username: str,
                        channel_id: str, query: str, user_data: dict,
-                       referenced: Optional[discord.Message] = None) -> None:
-        """Answer a message with the AI, using fresh channel history and whatever the message points at."""
+                       referenced: Optional[discord.Message] = None, note: str = "") -> None:
+        """
+        Answer a message with the AI, using fresh channel history and whatever the message
+        points at. note is for answering the same message again after something happened,
+        such as signing in to Uniloom or pressing do it. That message was already counted.
+        """
         watch = Stopwatch(getattr(message, "created_at", None))
-        if self.rate_limiter:
+        if self.rate_limiter and not note:
             try:
                 self.rate_limiter.check_rate_limit(user_id, "chat")
             except RateLimitError as e:
@@ -313,7 +320,7 @@ class MessageProcessor:
                 history_age = self.message_handler.latest_message_age(channel_id, message.id)
             await self._handle_ai_response(message, user_id, username, channel_id, query,
                                            conversation_history, referenced, recent, watch,
-                                           answer_is_out=answer_is_out, history_age=history_age)
+                                           answer_is_out=answer_is_out, history_age=history_age, note=note)
         finally:
             answer_is_out()
 
@@ -383,7 +390,7 @@ is_correction: bool) -> None:
                               recent: Optional[list] = None,
                               watch: Optional[Stopwatch] = None,
                               answer_is_out: Optional[Callable[[], None]] = None,
-                              history_age: Optional[timedelta] = None) -> None:
+                              history_age: Optional[timedelta] = None, note: str = "") -> None:
         """
         Build the answer to one message and send it. answer_is_out is called once the
         answer is sent and in the history, before the slower work that nobody waits for.
@@ -417,17 +424,20 @@ is_correction: bool) -> None:
                 with watch.step("model and tools"):
                     reply = await self.ai_handler.generate_reply(
                         enriched_query, conversation_history, username, user_id,
-                        attached_context=attached.text, images=attached.images,
+                        attached_context="\n\n".join(filter(None, [attached.text, note])), images=attached.images,
                         allow_files=True, file_gate=file_gate, web_gate=web_gate, course_gate=course_gate,
                         emoji_prompt=emoji.prompt(reactions=may_react), session_key=f"{channel_id}:{user_id}",
-                        history_age=history_age, place=place_of(message.channel, message.author)
+                        history_age=history_age, place=place_of(message.channel, message.author),
+                        uniloom=True
                     )
 
             with watch.step("send"):
                 # With several people talking to the bot at once, the answer pings the one it is for
+                connect = self._connect_view(message, reply, user_id, username, channel_id, query, referenced)
                 shown = await self._send_reply(message, reply.text, reply.files, custom_emoji=custom_emoji,
                                                listing=asked_about_emoji(query),
-                                               ping=self.conversation.is_crowd(channel_id))
+                                               ping=self.conversation.is_crowd(channel_id), view=connect)
+                await self._ask_to_confirm(message, reply, user_id, username, channel_id, query, referenced)
                 # What was sent, with any emoji written :name:, is what the history keeps
                 ai_response = shown.plain
             if may_react:
@@ -449,8 +459,8 @@ is_correction: bool) -> None:
                 answer_is_out()
             await self._maybe_assign_chrono_role(message)
 
-            # add_conversation also extracts facts from the message
-            if self.user_data_manager:
+            # add_conversation also extracts facts from the message. A follow-up answers the same message again
+            if self.user_data_manager and not note:
                 await self.user_data_manager.add_conversation(user_id, original_query, ai_response, username)
 
         except CannotPost as e:
@@ -582,8 +592,83 @@ is_correction: bool) -> None:
             else:
                 self._last_reaction[channel_id] = before
 
+    # ── Uniloom (docs/uniloom-plan.md) ───────────────────────────────────────
+
+    def _user_data(self, user_id: str, username: str) -> dict:
+        """What the normal path knows about the asker, for answering their message again."""
+        if not self.user_data_manager:
+            return {}
+        try:
+            return self.user_data_manager.load_user_data(user_id, username)
+        except Exception as e:
+            logger.warning(f"Could not load user data for a follow-up: {e!r}")
+            return {}
+
+    def _connect_view(self, message: discord.Message, reply: Reply, user_id: str, username: str,
+                      channel_id: str, query: str, referenced: Optional[discord.Message]) -> Optional[ConnectView]:
+        """The Connect Uniloom button, when the answer needs it. Signing in answers the message again."""
+        state = reply.uniloom
+        if state is None or not state.connect or state.owner_id != str(user_id):
+            return None
+
+        async def answer_again() -> None:
+            note = (f"UNILOOM: {username} just connected their Uniloom account. do what they asked in this "
+                    "message now")
+            await self._respond(message, user_id, username, channel_id, query, self._user_data(user_id, username),
+                                referenced, note=note)
+
+        return ConnectView(user_id, get_uniloom(), on_connected=answer_again)
+
+    async def _ask_to_confirm(self, message: discord.Message, reply: Reply, user_id: str, username: str,
+                              channel_id: str, query: str, referenced: Optional[discord.Message]) -> None:
+        """
+        The changes the answer queued, with do it and cancel. Pressing do it makes them as the
+        person who asked, then answers the message again with what happened, so the model can
+        say so and queue the next step if there is one.
+        """
+        state = reply.uniloom
+        if state is None or not state.writes or state.owner_id != str(user_id):
+            return
+
+        async def run(interaction: discord.Interaction, writes: List[PendingWrite]) -> None:
+            uniloom = get_uniloom()
+            lines = []
+            for n, write in enumerate(writes):
+                try:
+                    text = await uniloom.call(user_id, write.tool, write.arguments)
+                except NotConnected:
+                    text = ("error: their Uniloom sign-in ran out before this could be done. tell them to run "
+                            "/uniloom connect, then ask again")
+                lines.append(f"- {write.summary}\n  Uniloom said: {text}")
+                if text.startswith("error:"):
+                    skipped = writes[n + 1:]
+                    if skipped:
+                        lines.append("- not tried, because the one before failed: "
+                                     + "; ".join(w.summary for w in skipped))
+                    break
+            done = "\n".join(lines)
+            logger.info(f"Made {len(lines)} Uniloom changes for {username}")
+            note = (f"UNILOOM: {username} pressed do it. what happened:\n{done}\n"
+                    "tell them what was done in a line or two, with the keys and links Uniloom gave. if what "
+                    "they asked needs more changes after these, queue the next ones now. never queue one of "
+                    "these again")
+            try:
+                await self._respond(message, user_id, username, channel_id, query,
+                                    self._user_data(user_id, username), referenced, note=note)
+            except Exception as e:
+                logger.warning(f"Could not answer after Uniloom changes: {e!r}")
+                await self._safe_send(message.channel, f"done in Uniloom:\n{done}"[:1900])
+
+        view = ConfirmView(user_id, state.writes, run)
+        try:
+            view.message = await message.reply(view.question(), view=view, mention_author=False,
+                                               allowed_mentions=NO_PINGS)
+        except discord.HTTPException as e:
+            logger.warning(f"Could not ask to confirm Uniloom changes: {e}")
+
     async def _send_reply(self, message: discord.Message, text: str, files=None,
-                          custom_emoji: bool = True, listing: bool = False, ping: bool = False) -> Rendered:
+                          custom_emoji: bool = True, listing: bool = False, ping: bool = False,
+                          view: Optional[ConnectView] = None) -> Rendered:
         """
         Send the answer as a Discord reply to the message that asked, splitting long
         text. files are BuiltFile objects, uploaded with the first chunk. Emoji names
@@ -600,23 +685,34 @@ is_correction: bool) -> None:
             return shown
         first = chunks[0] if chunks else None
 
-        def extras() -> dict:
+        def extras(last: bool) -> dict:
             # Upload objects can only be sent once, so they are rebuilt for the fallback
-            if not files:
-                return {}
-            return {"files": [discord.File(io.BytesIO(f.data), filename=f.filename) for f in files]}
+            found: dict = {}
+            if files:
+                found["files"] = [discord.File(io.BytesIO(f.data), filename=f.filename) for f in files]
+            # Buttons go under the last part of the answer
+            if view is not None and last:
+                found["view"] = view
+            return found
 
+        single = len(chunks) <= 1
         try:
-            await message.reply(first, mention_author=ping, allowed_mentions=PING_AUTHOR if ping else NO_PINGS,
-                                **extras())
+            sent = await message.reply(first, mention_author=ping, allowed_mentions=PING_AUTHOR if ping else NO_PINGS,
+                                       **extras(single))
         except discord.HTTPException:
             # Replying failed (message deleted, or no permission to read the history), so send it as a plain message
             try:
-                await message.channel.send(first, allowed_mentions=NO_PINGS, **extras())
+                sent = await message.channel.send(first, allowed_mentions=NO_PINGS, **extras(single))
             except discord.Forbidden as e:
                 raise CannotPost(e) from e
-        for chunk in chunks[1:]:
-            await message.channel.send(chunk, allowed_mentions=NO_PINGS)
+        for n, chunk in enumerate(chunks[1:], start=2):
+            if view is not None and n == len(chunks):
+                sent = await message.channel.send(chunk, allowed_mentions=NO_PINGS, view=view)
+            else:
+                sent = await message.channel.send(chunk, allowed_mentions=NO_PINGS)
+        if view is not None:
+            # Kept so the buttons can be switched off when they stop working
+            view.message = sent
         return shown
 
     async def _discord_error_response(self, channel, error: discord.HTTPException) -> None:

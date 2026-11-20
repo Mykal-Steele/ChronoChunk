@@ -82,6 +82,16 @@ class Config:
     # The key file generated when REPLY_LOG_KEY is not set. Keep it with the database.
     REPLY_LOG_KEY_PATH = os.getenv("REPLY_LOG_KEY_PATH", os.path.join(STATE_DIR, "reply_log.key"))
 
+    # Uniloom, a project tracker people can use through the bot as themselves (docs/uniloom-plan.md).
+    # Signing in sends people back to PUBLIC_URL, the bot's own HTTPS address, so Uniloom is off
+    # until it is set. In production it is https://chrono.oakar.dev, a Cloudflare Tunnel to port 8080.
+    UNILOOM_MCP_URL = os.getenv("UNILOOM_MCP_URL", "https://loom.psstee.me/mcp").strip()
+    PUBLIC_URL = os.getenv("PUBLIC_URL", "").strip().rstrip("/")
+    # Encrypts each person's Uniloom tokens in the database. Keep it with the database.
+    UNILOOM_TOKEN_KEY_PATH = os.getenv("UNILOOM_TOKEN_KEY_PATH", os.path.join(STATE_DIR, "uniloom.key"))
+    # Planning work in Uniloom takes several steps (find the project, read an item, then save)
+    UNILOOM_MAX_TOOL_ROUNDS = int(os.getenv("UNILOOM_MAX_TOOL_ROUNDS", 8))
+
     # AI spending caps. Once a cap is hit the bot stops calling the model until it resets.
     # $20 is the whole Azure budget for a month. The daily cap stops one bad day from
     # eating it, and the per-person caps below stop one student from spending it all.

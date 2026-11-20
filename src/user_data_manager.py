@@ -4,6 +4,7 @@ import logging
 from src.memory_store import MemoryStore
 from src.channel_log import ChannelLog
 from src.lessons import LessonStore
+from src.uniloom.accounts import forget_account
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -94,11 +95,12 @@ class UserDataManager:
         return self.store.get_profile(user_id, username)
 
     def forget_user(self, user_id: str) -> None:
-        """Delete everything stored about a user: facts, topics and saved conversations."""
+        """Delete everything stored about a user: facts, topics, saved conversations and their Uniloom sign-in."""
         self.store.forget(user_id)
         MemoryStore().forget_user(user_id)
         ChannelLog().forget_user(user_id)
         LessonStore().forget_user(user_id)
+        forget_account(user_id)
         if self.reply_log:
             self.reply_log.delete_user(user_id)
         logger.info(f"Deleted all stored data for {clean_user_id(user_id)}")

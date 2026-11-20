@@ -37,16 +37,23 @@ class AsyncIterator:
 @pytest.fixture(autouse=True)
 def database(tmp_path):
     """Every test gets its own empty database, and the stores that sit on top of it start fresh."""
+    from config.config import Config
     from src import channel_settings, database as database_module, emoji_notes, usage_guard
+    from src.uniloom.service import set_uniloom
     db = database_module.Database(":memory:")
     database_module.set_database(db)
     emoji_notes.clear_cache()
     usage_guard._shared_guard = None
     channel_settings._shared_settings = None
+    # Uniloom's token key goes in the test's own folder, never the checkout's state/
+    key_path, Config.UNILOOM_TOKEN_KEY_PATH = Config.UNILOOM_TOKEN_KEY_PATH, str(tmp_path / "uniloom.key")
+    set_uniloom(None)
     yield db
     database_module.set_database(None)
     usage_guard._shared_guard = None
     channel_settings._shared_settings = None
+    Config.UNILOOM_TOKEN_KEY_PATH = key_path
+    set_uniloom(None)
     db.close()
 
 

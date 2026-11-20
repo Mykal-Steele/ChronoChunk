@@ -213,3 +213,20 @@ def test_deleting_a_memory_others_were_merged_into_brings_theirs_back(stores):
     assert memories.merge(memories.get(kept), memories.get(merged))
     delete_item(f"m{kept}", "111", "", is_admin=False)
     assert [m.id for m in memories.recall("exam room")] == [merged]
+
+
+def test_with_only_messages_kept_it_says_nothing_is_saved_and_how_to_save(stores):
+    # Live, someone with 7 kept messages and nothing taught saw "/memory delete:m12" with nothing to delete
+    _, _, log = stores
+    log.add(_message("hi", MINT))
+    text = about_me("222", "Mint")
+    assert "delete:m12" not in text
+    assert "nothing saved" in text and "remember" in text
+    # The messages can't be deleted one by one, so it says how they go
+    assert "1 message" in text and "30 days" in text and "/forget" in text
+
+
+def test_the_delete_line_shows_once_there_is_something_to_delete(stores):
+    memories, _, _ = stores
+    memories.remember("the exam is in room 410", "exam", "claim", MINT, KMUTT)
+    assert "/memory delete:m12" in about_me("222", "Mint")

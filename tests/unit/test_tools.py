@@ -50,9 +50,11 @@ def handler(mock_openai_client):
     return h
 
 
-def test_the_bot_ships_with_its_eight_tools():
+def test_the_bot_ships_with_its_nine_tools():
+    # The ninth, uniloom, loads the Uniloom tools for someone who connected their account
     assert [tool.name for tool in default_tools()] == ["create_document", "create_diagram", "open_url", "web_search",
-                                                       "search_course", "remember", "recall", "learn_lesson"]
+                                                       "search_course", "remember", "recall", "learn_lesson",
+                                                       "uniloom"]
     assert all(tool.definition["function"]["name"] == tool.name for tool in default_tools())
 
 

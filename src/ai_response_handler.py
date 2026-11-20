@@ -29,6 +29,8 @@ from src.ai_provider import AiSettings, make_client
 from src.usage_guard import BudgetExceededError, UsageGuard, get_usage_guard
 from src.tools import Tool, ToolResult, Turn, default_tools
 from src.tools.base import user_content
+from src.tools.uniloom import OpenUniloom
+from src.uniloom.state import UniloomState
 from src.tools.documents import MAX_FILES_PER_REPLY
 from src.course_session import CourseSessions
 from src.course_retrieval import render_sources
@@ -597,6 +599,19 @@ def _join_continuation(written: str, more: str) -> str:
     return written.rstrip() + "\n\n" + more
 
 
+def _take_added_tools(request: Turn, offered: List[Tool], by_name: dict, definitions: List[dict]) -> bool:
+    """Offer the tools a tool handed over (the Uniloom ones) from the next round on. True when there were any."""
+    if not request.added_tools:
+        return False
+    for tool in request.added_tools:
+        if tool.name not in by_name:
+            offered.append(tool)
+            by_name[tool.name] = tool
+            definitions.append(tool.definition)
+    request.added_tools.clear()
+    return True
+
+
 @dataclass
 class Reply:
     """What the bot sends back: the chat text and any files it made along the way."""
@@ -604,6 +619,8 @@ class Reply:
     files: List[BuiltFile] = field(default_factory=list)
     # False when the text is a stand-in for an answer the model could not give (no budget, an error, a filter)
     ok: bool = True
+    # The Connect Uniloom button or the do it / cancel buttons this reply needs, with whose they are
+    uniloom: Optional[UniloomState] = None
 
 
 class AIResponseHandler:
@@ -734,6 +751,13 @@ class AIResponseHandler:
         if request.cost >= Config.AI_MAX_REPLY_COST_USD:
             raise ReplyLimitError(
                 f"reply cost ${request.cost:.3f} (limit ${Config.AI_MAX_REPLY_COST_USD:.2f})")
+
+    def _uniloom_rounds(self, rounds: int, model: Optional[str]) -> Tuple[int, Optional[str]]:
+        """
+        A reply working in Uniloom gets more rounds (find the project, read an item, then save)
+        and the stronger model, since planning tickets is where the chat model goes wrong.
+        """
+        return max(rounds, Config.UNILOOM_MAX_TOOL_ROUNDS), self._heavy_model() or model
 
     def _heavy_model(self) -> Optional[str]:
         """The model for study, detail, rewrites and documents. None means the chat model."""
@@ -951,11 +975,12 @@ class AIResponseHandler:
                              course_gate: Optional[Callable[[], None]] = None,
                              session_key: Optional[str] = None,
                              history_age: Optional[timedelta] = None,
-                             place=None) -> Reply:
+                             place=None, uniloom: bool = False) -> Reply:
         """Generate a reply behind one deadline and one share of the bot's model capacity.
 
         The request object is made before waiting, so a busy or timed-out reply can
-        still be logged with the user and channel that asked for it.
+        still be logged with the user and channel that asked for it. uniloom is for a caller
+        that shows the reply's Connect and do it buttons (Reply.uniloom).
         """
         images = images or []
         request = Turn(
@@ -966,6 +991,8 @@ class AIResponseHandler:
             model=self.deployment,
             place=place,
         )
+        # Only a caller that shows the reply's buttons may let it use Uniloom
+        request.can_confirm = uniloom
         timeout = (Config.AI_FILE_REQUEST_TIMEOUT_SECONDS if allow_files
                    else Config.AI_REQUEST_TIMEOUT_SECONDS)
         try:
@@ -1111,7 +1138,8 @@ class AIResponseHandler:
                 max_tokens = Config.AI_CHAT_MAX_TOKENS
 
             # The tools on offer for this reply, and the state they share
-            offered = [tool for tool in self.tools if tool.available() and (in_course or not tool.course_only)] if allow_files else []
+            offered = [tool for tool in self.tools if tool.available() and (in_course or not tool.course_only)
+                       and (request.can_confirm or not isinstance(tool, OpenUniloom))] if allow_files else []
             by_name = {tool.name: tool for tool in offered}
             # What people told the bot before that fits the message, found by meaning (one small
             # embedding call) or by its words. The chat model does not reliably call recall on its own
@@ -1194,12 +1222,20 @@ class AIResponseHandler:
                            else REWRITE_PROMPT if rewrite
                            else "")
             accuracy = _ACCURACY_PROMPT if (in_course or images or detail or study or rewrite or request.needs_web) else ""
+            # A message clearly about Uniloom gets its tools and instructions from the start, so no
+            # round is spent loading them (docs/uniloom-plan.md, section 5)
+            uniloom_note = ""
+            loader = by_name.get("uniloom")
+            if isinstance(loader, OpenUniloom) and loader.should_preload(clean_query, user_id):
+                uniloom_note = "\n\n" + (await loader.run({}, request)).text
+                _take_added_tools(request, offered, by_name, [])
             messages: List[dict] = [
                 {"role": "system",
                  "content": _SYSTEM_PROMPT + self_setup_prompt(self.deployment)
                             + ("".join(tool.prompt() for tool in offered) if offered else _NO_LOOKUP_PROMPT)
                             + accuracy
-                            + (NO_FLAG_PROMPT if scope and not in_course else "") + extra_rules + emoji_prompt},
+                            + (NO_FLAG_PROMPT if scope and not in_course else "") + extra_rules + emoji_prompt
+                            + uniloom_note},
             ]
             if material:
                 # In a message of its own ahead of the conversation, so it is the same text from one turn to the next
@@ -1219,14 +1255,19 @@ class AIResponseHandler:
                       else Config.AI_CHAT_MAX_TOOL_ROUNDS)
             if allow_files and _wants_many_files(clean_query):
                 rounds = max(rounds, MAX_FILES_PER_REPLY)
+            if request.uniloom.loaded:
+                rounds, model = self._uniloom_rounds(rounds, model)
             raw = ""
             # Name of a tool the model has to call again, set when a diagram did not parse
             redo: Optional[str] = None
             gave_up = ""
 
-            for round_number in range(rounds + 1):
+            # A while loop, because loading the Uniloom tools gives the reply more rounds
+            round_number = 0
+            while round_number <= rounds:
                 # On the last round no tools are offered, so the model has to answer in text
-                tools = definitions if offered and round_number < rounds else None
+                # A copy, since the Uniloom tools can be added to the list for later rounds
+                tools = list(definitions) if offered and round_number < rounds else None
                 if redo and not tools:
                     # Out of tries. Asked to answer now, the model claims the diagram was sent.
                     gave_up = by_name[redo].gave_up
@@ -1269,6 +1310,9 @@ class AIResponseHandler:
                     if result.call_again in by_name:
                         redo = result.call_again
                     messages.append({"role": "tool", "tool_call_id": call.id, "content": result.text})
+                if _take_added_tools(request, offered, by_name, definitions):
+                    rounds, model = self._uniloom_rounds(rounds, model)
+                round_number += 1
             else:
                 # Every round used a tool, and the last one still asked for another try
                 gave_up = by_name[redo].gave_up if redo else ""
@@ -1302,7 +1346,7 @@ class AIResponseHandler:
                     reply = Reply(shown, files)
                 # An answer from the web or the course material goes stale, so it is looked up again next time
                 if (not files and not study and not request.lookups and not request.course_searches and not in_course
-                        and not request.receipts):
+                        and not request.receipts and not request.uniloom.touched):
                     self.response_cache[cache_key] = reply.text
                     self._cached_at[cache_key] = time.monotonic()
                     if len(self.response_cache) > self.cache_size:
@@ -1310,6 +1354,8 @@ class AIResponseHandler:
                             self.response_cache.pop(k, None)
                             self._cached_at.pop(k, None)
 
+            if request.uniloom.needs_buttons and reply.ok:
+                reply.uniloom = request.uniloom
             if request.receipts and reply.ok:
                 # Discord shows a line that starts with "-# " as small grey text
                 reply.text += "\n-# " + ", ".join(request.receipts)

@@ -27,6 +27,12 @@ It uses these to remember you between conversations: the facts and your last 3 e
 - Course mode. When you end a message with `-c` or a course code, the bot keeps what it looked up for you in memory for an hour, so you can keep asking. It is never written to disk, and it is gone after the hour or when the bot restarts.
 - Server emoji. The bot looks at the picture of each custom emoji once and keeps a few words on what it shows, with the emoji's id and name. No message and no person is stored with it.
 
+## Uniloom
+
+If you connect your Uniloom account, the bot keeps your uniAuth sign-in: your uniAuth user ID, the name uniAuth gives, and an access token and a refresh token, encrypted with a key on the bot's server. It uses them only to answer you, never for anyone else, and it never sees your password. The refresh token stops working after 30 days without use. `/uniloom disconnect` and `/forget` delete the sign-in and ask uniAuth to cancel it.
+
+What Uniloom sends back for your question goes to the AI model to write the answer, and the answer is posted where you asked, so in a server channel everyone there can read it. What the bot looked up is kept in the encrypted reply log like any other answer.
+
 ## Logs
 
 The bot writes a log on its server. It records your display name, the time, what each answer cost, the web searches and links it looked up for you, and the songs you asked for. This rotating text log does not record what you wrote in chat. A separate encrypted reply log does, as described under "See or delete your data". Log files are deleted after 30 days.
@@ -46,6 +52,8 @@ The bot cannot answer without sending some of what you write to other services:
 | The website behind a link | A normal page request from the bot's server | When you give the bot a link |
 | mermaid.ink, and kroki.io as a backup | The text of a diagram | When the bot draws a diagram |
 | YouTube and Spotify | Your song search or link | When you play music |
+| Uniloom and uniAuth | Your sign-in, and the Uniloom tool calls the model makes for you | When you connect, and when you ask about Uniloom |
+| Cloudflare | The pages you see when you sign in to Uniloom, through the tunnel to the bot | When you connect Uniloom |
 | Cloudflare R2 | Encrypted copies of the database (profiles, facts, memories, conversations, saved channel messages and day summaries) and of the encrypted reply log. They are encrypted on the bot's server before they leave, and R2 deletes them after 30 days | Every night |
 
 ## See or delete your data
@@ -53,7 +61,7 @@ The bot cannot answer without sending some of what you write to other services:
 - `/info` or `/mydata` shows what the bot has stored about you. Only you see the answer.
 - Notes you ask the bot to keep. It asks whether a note is public, so anyone can ask for it, or private, so only you get it back, and only in a DM with the bot, since a reply in a server channel can be read by everyone there. A private note is still stored on the bot's server like everything else, and the person running the bot can read the database.
 - `/memory` shows what the bot remembers about you, with a code for each item, and `/memory delete:<code>` deletes one. A server manager can see and delete what it learned in their server with `/memory view:server`.
-- `/forget` deletes everything stored about you, including what you taught the bot, your saved channel messages, the day summaries you are in, the lessons about you or from you, and the encrypted reply-log rows tied to your user hash.
+- `/forget` deletes everything stored about you, including what you taught the bot, your saved channel messages, the day summaries you are in, the lessons about you or from you, your Uniloom sign-in, and the encrypted reply-log rows tied to your user hash.
 - `/forget <text>` deletes the one fact that matches.
 
 Your profile, facts and conversations stay until you run `/forget`, or until the person running the bot removes them. The encrypted reply log is kept for `REPLY_LOG_KEEP_DAYS` (30 days by default) and then deleted. Each row holds the message that asked for a reply, the recent channel messages that went to the model, any file, PDF or web-page text the bot read, and the reply. `/forget` deletes the rows tied to your user hash, so a message of yours that appears inside someone else's row stays until that row expires. By default the encryption key is stored next to the database, so the encryption protects the database file on its own, not someone who can read the whole server.

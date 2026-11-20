@@ -25,6 +25,8 @@ requests==2.34.2
 # Vector search inside SQLite, for the course material
 sqlite-vec==0.1.9
 weasyprint==70.0
+# Talks to MCP servers such as Uniloom's (src/uniloom). Only imported once someone uses Uniloom
+mcp==2.3.0
 # The first pydantic whose pydantic-core has Python 3.15 wheels. openai brings it in
 pydantic>=2.14.2
 yt-dlp==2026.10.26
