@@ -12,7 +12,7 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 The time in each heading is when that version went out, in Bangkok time. For the versions before 3.31.0 it was taken from the commit each version's tag points to, and a version tagged on an earlier commit than the one before it shows that one's time.
 
-## 3.33.0 (2026-11-26 17:22)
+## 3.33.0 (2026-11-26 17:30)
 
 ### Added
 
