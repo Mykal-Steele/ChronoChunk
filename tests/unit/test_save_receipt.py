@@ -121,7 +121,7 @@ async def test_the_owner_gets_their_private_note_in_a_dm(database, mock_openai_c
     mock_openai_client.chat.completions.create.side_effect = [_reply("here")]
     handler = _handler(mock_openai_client, FakeEmbedder())
     await handler.generate_reply("/whats my korean presentation link", "", "Mint", "222", allow_files=True,
-                                 place=Place("", "", "900", ""))
+                                 place=Place("", "", "900", "", is_private_dm=True))
     sent = "\n".join(str(m["content"]) for m in mock_openai_client.chat.completions.create.call_args[1]["messages"])
     assert "docs.google.com/x" in sent and "private" in sent
 

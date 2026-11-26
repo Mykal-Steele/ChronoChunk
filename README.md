@@ -231,6 +231,7 @@ Slash commands:
 - `/info` or `/mydata` - See what the bot has stored about you. Only you see the answer.
 - `/help` - How to use the bot. `/help memory`, `/help files`, `/help courses`, `/help music` and `/help limits` explain one topic each.
 - `/memory` - See what the bot remembers about you, and `/memory delete:m12` deletes one thing. `/memory view:server` shows a server manager what it learned in their server.
+- `/note <text> <visibility>` - Save a link or note from a command, then ask for it later in normal words. `visibility` is `private` (only you, and only in a DM) or `public` (anyone can ask). Works in servers, DMs and group DMs.
 - `/forget` - Delete everything the bot has stored about you. `/forget <text>` deletes one fact.
 - `/game <max>`, `/guess <number>`, `/end` - The number guessing game
 - `/usage` - What you have left today: messages, PDFs, files, web lookups, course searches and your AI limit. Only you see the answer.

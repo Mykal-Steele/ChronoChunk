@@ -40,9 +40,12 @@ def _line(memory: Memory) -> str:
 
 
 def in_dm(turn: Optional[Turn]) -> bool:
-    """True for a reply in a DM, the only place a private note may be shown."""
+    """True for a reply in a one-to-one DM, the only place a private note may be shown.
+
+    A group DM has no server either, so it cannot be told apart by a missing guild id.
+    """
     place = getattr(turn, "place", None)
-    return place is not None and not getattr(place, "guild_id", "")
+    return place is not None and getattr(place, "is_private_dm", False)
 
 
 def past_days_block(episodes) -> str:

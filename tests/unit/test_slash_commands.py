@@ -1,4 +1,7 @@
 """Unit tests for the Discord app commands that use the AI: /chat, /tldr and /usage."""
+from types import SimpleNamespace
+
+import discord
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -44,6 +47,7 @@ async def commands(mock_bot_user):
     await manager._register_usage_command()
     await manager._register_help_command()
     await manager._register_recent_posts_command()
+    await manager._register_note_command()
     return registered, bot, ai_handler, user_data_manager
 
 
@@ -297,3 +301,65 @@ async def test_chat_answer_survives_a_failed_save(commands):
     await registered["chat"](interaction, "yo")
     assert interaction.followup.send.await_count == 1
 
+
+
+# ── /note and where commands may run ─────────────────────────────────────────
+
+def _group_dm_interaction():
+    interaction = _interaction()
+    interaction.channel = SimpleNamespace(id=9, guild=None, type=discord.ChannelType.group, name=None)
+    interaction.channel_id = 9
+    interaction.response.send_message = AsyncMock()
+    return interaction
+
+
+async def test_note_saves_what_they_typed(commands):
+    registered, bot, ai_handler, user_data_manager = commands
+    interaction = _group_dm_interaction()
+
+    await registered["note"](interaction, "the korean presentation link is x", "private")
+
+    from src.memory_store import MemoryStore
+    (memory,) = MemoryStore().recall("korean presentation", viewer_id="1")
+    assert memory.content == "the korean presentation link is x"
+    assert memory.private
+    assert interaction.response.send_message.call_args[1]["ephemeral"] is True
+
+
+async def test_note_keeps_a_public_note_public(commands):
+    registered, bot, ai_handler, user_data_manager = commands
+    interaction = _group_dm_interaction()
+
+    await registered["note"](interaction, "the exam moved to tuesday", "public")
+
+    from src.memory_store import MemoryStore
+    (memory,) = MemoryStore().recall("exam moved")
+    assert not memory.private
+
+
+async def test_note_says_a_private_note_is_only_read_in_a_dm(commands):
+    registered, bot, ai_handler, user_data_manager = commands
+    interaction = _group_dm_interaction()
+
+    await registered["note"](interaction, "my korean presentation link", "private")
+
+    answer = interaction.response.send_message.call_args[0][0]
+    assert "saved as m1" in answer and "DM" in answer
+
+
+def test_every_command_is_installable_by_a_user_and_usable_in_group_dms():
+    """Discord keeps whatever a command was created with, so the tree has to ask for all of it."""
+    from discord import app_commands
+    from src.slash_commands import allow_every_context
+
+    client = SimpleNamespace(http=MagicMock(), _connection=SimpleNamespace(_command_tree=None))
+    tree = app_commands.CommandTree(client)
+    allow_every_context(tree)
+
+    @tree.command(name="probe", description="probe")
+    async def probe(interaction):
+        pass
+
+    payload = tree.get_commands()[0].to_dict(tree)
+    assert payload["contexts"] == [0, 1, 2]
+    assert payload["integration_types"] == [0, 1]

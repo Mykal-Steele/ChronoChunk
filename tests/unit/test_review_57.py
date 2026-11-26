@@ -17,7 +17,7 @@ KRUSKAL = Speaker("111", "Kruskal")
 BOT = Speaker("1342", "ChronoChunk")
 KMUTT = Place("1280", "cs-kmutt", "55", "general")
 XLRX = Place("1300", "XLRX", "66", "chat")
-DM = Place("", "", "900", "")
+DM = Place("", "", "900", "", is_private_dm=True)
 LINK = "Mint's korean presentation is at https://docs.google.com/x"
 
 
