@@ -148,6 +148,7 @@ def _memory_page() -> discord.Embed:
         ]),
         ("notes", [
             "`note down this link, its for my korean presentation` and i keep it",
+            "or use `/note` with the link, then pick only me or anyone",
             "if u dont say who can see it, i ask: public (anyone can ask me for it) or private (only u)",
             "say it up front to skip the question: `save this privately: ...` or `remember this for everyone: ...`",
             "to get it back just ask: `whats the link for my korean presentation`",

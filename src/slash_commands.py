@@ -4,7 +4,7 @@ import logging
 import discord
 from src import changelog
 from src.memory_control import about_me, about_server, delete_item
-from src.memory_store import place_of
+from src.memory_store import MemoryStore, Speaker, place_of
 from discord import app_commands
 from typing import Optional
 from src import usage_context
@@ -27,6 +27,18 @@ from src.uniloom.views import send_sign_in_link
 
 # Setup logging
 logger = logging.getLogger(__name__)
+
+
+def allow_every_context(tree) -> None:
+    """
+    Let every command run in servers, the bot's DM and group DMs, and be installed by a
+    server or by a person's account. Discord keeps whatever a command was created with, so
+    this has to be set before the tree syncs. Without it the commands stay guild-install
+    only and never show up in a group DM or a DM with someone else.
+    """
+    tree.allowed_contexts = app_commands.AppCommandContext(guild=True, dm_channel=True, private_channel=True)
+    tree.allowed_installs = app_commands.AppInstallationType(guild=True, user=True)
+
 
 class SlashCommandManager:
     """Handles registration and execution of slash commands"""
@@ -75,6 +87,10 @@ class SlashCommandManager:
     async def register_commands(self):
         """Register all slash commands with Discord"""
         try:
+            # Every command, this one and all later ones, works in servers, the bot's DM
+            # and group DMs, and can be installed to a person's account as well as a server
+            allow_every_context(self.bot.tree)
+
             # Clear existing commands
             self.bot.tree.clear_commands(guild=None)
             
@@ -98,6 +114,7 @@ class SlashCommandManager:
             await self._register_stats_command()
             await self._register_courses_command()
             await self._register_recent_posts_command()
+            await self._register_note_command()
             await self._register_join_in_command()
             await self._register_help_command()  # Make sure this line is here
             
@@ -511,6 +528,41 @@ class SlashCommandManager:
             except Exception as e:
                 logger.error(f"Error handling memory command: {e}")
                 answer = "couldnt read my memory right now, try again in a bit"
+            await interaction.response.send_message(answer, ephemeral=True)
+
+    async def _register_note_command(self):
+        """Save a link or note from a command, so it also works where the bot only gets interactions"""
+        @self.bot.tree.command(name="note", description="Save a note or a link so you can ask for it later")
+        @app_commands.describe(text="What to save, such as a link or a reminder",
+                               visibility="Who can get it back: only you, or anyone who asks")
+        @app_commands.choices(visibility=[app_commands.Choice(name="only me", value="private"),
+                                          app_commands.Choice(name="anyone", value="public")])
+        async def note(interaction: discord.Interaction, text: str, visibility: str):
+            user = interaction.user
+            name = user.display_name
+            private = visibility != "public"
+            content = text.strip()
+            if not content:
+                await interaction.response.send_message("there is nothing to save", ephemeral=True)
+                return
+            try:
+                saved = await asyncio.to_thread(
+                    MemoryStore().remember, content, name, "self",
+                    Speaker(str(user.id), name), place_of(interaction.channel, user), private=private)
+            except Exception as e:
+                logger.error(f"Error saving a note: {e}")
+                await interaction.response.send_message("couldnt save that right now, try again in a bit",
+                                                        ephemeral=True)
+                return
+            if saved.memory_id is None:
+                answer = saved.note or "couldnt save that"
+            elif saved.note.startswith("already knew"):
+                answer = f"i already had that as m{saved.memory_id}"
+            elif private:
+                answer = (f"saved as m{saved.memory_id} (private). ask for it in a DM with me, "
+                          "not in a group, since everyone there reads my reply")
+            else:
+                answer = f"saved as m{saved.memory_id} (public). anyone can ask me for it"
             await interaction.response.send_message(answer, ephemeral=True)
 
     async def _register_join_in_command(self):

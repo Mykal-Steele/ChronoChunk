@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, List, Optional, Sequence
 
+import discord
+
 from src.database import Database, get_database
 
 RECALL_LIMIT = 10
@@ -63,6 +65,16 @@ class Place:
     # Whether the person the reply is for can see a channel of this server, by its id. None
     # when that is not known, and then only this channel counts as one they can see.
     can_view: Optional[Callable[[str], bool]] = field(default=None, compare=False, repr=False)
+    # True only for a one-to-one DM. A group DM has no server either, but a private note
+    # must never be read out in front of the group, so it does not count.
+    is_private_dm: bool = False
+
+
+def _is_private_dm(channel) -> bool:
+    """A one-to-one DM, the only place a private note may be shown. A group DM is not one."""
+    if getattr(channel, "guild", None) is not None:
+        return False
+    return getattr(channel, "type", None) == discord.ChannelType.private
 
 
 def _viewer(guild, member) -> Callable[[str], bool]:
@@ -82,6 +94,7 @@ def place_of(channel, member=None) -> Place:
         guild_id=str(guild.id) if guild else "", guild_name=getattr(guild, "name", "") if guild else "",
         channel_id=str(getattr(channel, "id", "") or ""), channel_name=getattr(channel, "name", "") or "",
         can_view=_viewer(guild, member) if guild is not None and member is not None else None,
+        is_private_dm=_is_private_dm(channel),
     )
 
 

@@ -12,6 +12,21 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 The time in each heading is when that version went out, in Bangkok time. For the versions before 3.31.0 it was taken from the commit each version's tag points to, and a version tagged on an earlier commit than the one before it shows that one's time.
 
+## 3.33.0 (2026-11-26 17:22)
+
+### Added
+
+- `/note <text> <visibility>` saves a link or a note from a command, so it also works where the bot only sees interactions and never your messages. `visibility` is `only me` or `anyone`, and the note comes back when you ask for it in normal words.
+- Every command can now be installed to a person's account as well as to a server, and used in servers, the bot's DM and group DMs. Before this they were server-install only, so they never appeared in a group DM or a DM with someone else.
+
+### Fixed
+
+- A private note could be read out in a group DM. The bot treated any channel without a server as a DM, and a group DM has no server either, so it showed private notes in front of the whole group. Only a one-to-one DM counts as a DM now.
+
+### For whoever runs the bot
+
+- The command list has to sync once with the new contexts before Discord shows the commands in group DMs. That happens on the next restart.
+
 ## 3.32.0 (2026-11-20 13:40)
 
 ### Added

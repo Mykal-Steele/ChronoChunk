@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import discord
 import pytest
 
 from src.memory_store import MemoryStore, Place, Speaker
@@ -314,3 +315,32 @@ def test_a_report_about_yourself_is_kept_as_yours_when_someone_said_it_first(sto
     assert memory.kind == "self" and memory.source_name == "Slade" and memory.confirmed_by == ["Mint"]
     fix = store.remember("Slade eats fish now", "Slade", "self", SLADE, KMUTT, replaces=memory.id)
     assert fix.replaced == memory.id
+
+
+def test_only_a_one_to_one_dm_counts_as_a_dm():
+    """A group DM has no server either, but a private note must never be read out there."""
+    from src.memory_store import place_of
+    from src.tools.memory import in_dm
+    dm = SimpleNamespace(id=8, guild=None, type=discord.ChannelType.private)
+    group = SimpleNamespace(id=9, guild=None, type=discord.ChannelType.group)
+    assert place_of(dm).is_private_dm
+    assert not place_of(group).is_private_dm
+    assert in_dm(SimpleNamespace(place=place_of(dm)))
+    assert not in_dm(SimpleNamespace(place=place_of(group)))
+
+
+async def test_a_private_note_is_not_read_out_in_a_group_dm(store):
+    group = Place("", "", "9", "", is_private_dm=False)
+    store.remember("the korean presentation link is x", "Kruskal", "self", KRUSKAL, group, private=True)
+    turn = SimpleNamespace(place=group, user_id="111", embed_memory=None)
+    block = await RecallMemory(store).find("korean presentation link", turn=turn)
+    assert "the korean presentation link is x" not in block
+    assert "private note" in block
+
+
+async def test_a_private_note_is_read_out_in_a_one_to_one_dm(store):
+    dm = Place("", "", "8", "", is_private_dm=True)
+    store.remember("the korean presentation link is x", "Kruskal", "self", KRUSKAL, dm, private=True)
+    turn = SimpleNamespace(place=dm, user_id="111", embed_memory=None)
+    block = await RecallMemory(store).find("korean presentation link", turn=turn)
+    assert "the korean presentation link is x" in block
