@@ -599,8 +599,7 @@ class SlashCommandManager:
                     Config.UNILOOM_GEMINI_PROXY_URL, Config.UNILOOM_GEMINI_PROXY_KEY))
             else:
                 text = summary(user_id)
-            # Their own numbers, so only they see them
-            await interaction.response.send_message(text, ephemeral=True)
+            await interaction.response.send_message(text)
     
     async def _register_model_command(self):
         """Register the model command"""

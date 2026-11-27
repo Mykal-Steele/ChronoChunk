@@ -21,6 +21,11 @@ def _spend(user_id, dollars):
     usage_context._current.set(("", "chat"))
 
 
+def _bar_line(text, name):
+    """A "- `bar` name ..." line, with the bar first so the bars line up."""
+    return next(line for line in text.splitlines() if line.startswith("- `") and line.split("` ", 1)[1].startswith(name))
+
+
 def _row(text, label):
     """The value of one "- label: value" line."""
     return next(line for line in text.splitlines() if line.startswith(f"- {label}:")).split(": ", 1)[1]
@@ -36,8 +41,8 @@ def test_a_fresh_person_has_everything_left(handler):
     assert _row(text, "web lookups") == "20 of 20, per day"
     assert _row(text, "course asks") == "120 of 120, per day"
     assert _row(text, "recaps") == "6 of 6, per hour"
-    assert _row(text, "today").startswith("░░░░░░░░░░ 0%, resets in")
-    assert "this month, resets " in _row(text, "bot")
+    assert _bar_line(text, "today").startswith("- `░░░░░░░░░░   0%` today, resets in")
+    assert _bar_line(text, "bot this month, resets ")
 
 
 def test_counts_go_down_as_things_are_used(handler):
@@ -61,9 +66,17 @@ def test_the_bars_show_their_own_spending(handler):
     _spend("42", 0.10)  # a fifth of the $0.50 day, a fifteenth of the $1.50 week
     _spend("99", 0.15)
     text = handler.usage_summary("42")
-    assert "▓▓░░░░░░░░ 20%" in _row(text, "today")
-    assert "▓░░░░░░░░░ 7%" in _row(text, "7 days")
-    assert "▓░░░░░░░░░ 1%" in _row(text, "bot")  # $0.25 of the bot's $20, everyone together
+    assert _bar_line(text, "today").startswith("- `▓▓░░░░░░░░  20%` today")
+    assert _bar_line(text, "7 days") == "- `▓░░░░░░░░░   7%` 7 days"
+    assert _bar_line(text, "bot").startswith("- `▓░░░░░░░░░   1%` bot")  # $0.25 of the bot's $20, everyone together
+
+
+def test_the_bars_line_up(handler):
+    # Discord's font is not monospaced, so each bar starts the line in a code span of the same width
+    text = handler.usage_summary("42", allowance=ALLOWANCE)
+    bars = [line for line in text.splitlines() if line.startswith("- `")]
+    assert len(bars) == 4
+    assert len({line.index("` ", 3) for line in bars}) == 1
 
 
 def test_someone_with_no_limit_is_told_so(handler, monkeypatch):
@@ -74,8 +87,9 @@ def test_someone_with_no_limit_is_told_so(handler, monkeypatch):
 
 
 def test_bars_and_durations():
-    assert _bar(0, 1) == "░░░░░░░░░░ 0%"
-    assert _bar(0.001, 1) == "▓░░░░░░░░░ 0%"   # any use shows
+    # The percentage is padded to 4 characters so 0% and 100% take the same room
+    assert _bar(0, 1) == "░░░░░░░░░░   0%"
+    assert _bar(0.001, 1) == "▓░░░░░░░░░   0%"   # any use shows
     assert _bar(2, 1) == "▓▓▓▓▓▓▓▓▓▓ 100%"
     assert _duration(30) == "1m" and _duration(3600) == "1h 0m" and _duration(22200) == "6h 10m"
 
@@ -86,20 +100,19 @@ ALLOWANCE = {"limitUsd": 40, "spentUsd": 10.5, "reservedUsd": 0.25, "remainingUs
 
 
 def test_the_uniloom_allowance_shows_what_is_used_and_left(handler):
-    row = _row(handler.usage_summary("42", allowance=ALLOWANCE), "uniloom")
+    line = _bar_line(handler.usage_summary("42", allowance=ALLOWANCE), "uniloom")
     # Money held for a call still running counts as used, since it is not free to spend yet
-    assert row == "▓▓▓░░░░░░░ 27%, $29.25 left of $40"
+    assert line == "- `▓▓▓░░░░░░░  27%` uniloom, $29.25 left of $40"
 
 
 def test_a_used_up_allowance_says_uniloom_is_on_the_bots_own_model(handler):
     spent = {**ALLOWANCE, "spentUsd": 40, "reservedUsd": 0, "remainingUsd": 0}
-    row = _row(handler.usage_summary("42", allowance=spent), "uniloom")
-    assert row.startswith("▓▓▓▓▓▓▓▓▓▓ 100%, $0.00 left of $40") and "bot's own" in row
+    line = _bar_line(handler.usage_summary("42", allowance=spent), "uniloom")
+    assert line.startswith("- `▓▓▓▓▓▓▓▓▓▓ 100%` uniloom, $0.00 left of $40") and "bot's own" in line
 
 
 def test_a_paused_allowance_says_so(handler):
-    row = _row(handler.usage_summary("42", allowance={**ALLOWANCE, "paused": True}), "uniloom")
-    assert "paused" in row
+    assert "paused" in _bar_line(handler.usage_summary("42", allowance={**ALLOWANCE, "paused": True}), "uniloom")
 
 
 def test_when_the_proxy_cannot_be_reached_the_row_says_so(handler):
@@ -107,4 +120,4 @@ def test_when_the_proxy_cannot_be_reached_the_row_says_so(handler):
 
 
 def test_without_the_proxy_set_up_there_is_no_uniloom_row(handler):
-    assert "- uniloom:" not in handler.usage_summary("42")
+    assert "uniloom" not in handler.usage_summary("42")

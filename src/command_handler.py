@@ -175,16 +175,19 @@ class CommandHandler:
 
         guard = get_usage_guard()
         mine, bot = guard.user_summary(user_id), guard.summary()
-        rows += [("", ""), ("ai overall", "")]
+        # Each bar starts its line, so they line up even though Discord's font is not monospaced
+        lines = ["**ai overall**"]
         if mine["unlimited"]:
-            rows.append(("  today", "no limit for u"))
+            lines.append("- today: no limit for u")
         else:
-            rows.append(("  today", f"{_bar(mine['day_cost'], mine['daily_budget'])}, resets in {_duration(mine['seconds_to_reset'])}"))
-            rows.append(("  7 days", _bar(mine["week_cost"], mine["weekly_budget"])))
-        rows.append(("  bot", f"{_bar(bot['cycle_cost'], bot['monthly_budget'])} this month, resets {_short_date(bot['resets_on'])}"))
+            lines.append(_bar_line(mine["day_cost"], mine["daily_budget"],
+                                   f"today, resets in {_duration(mine['seconds_to_reset'])}"))
+            lines.append(_bar_line(mine["week_cost"], mine["weekly_budget"], "7 days"))
+        lines.append(_bar_line(bot["cycle_cost"], bot["monthly_budget"],
+                               f"bot this month, resets {_short_date(bot['resets_on'])}"))
         if allowance is not None:
-            rows.append(("  uniloom", _allowance_words(allowance)))
-        return "**ur usage**\n" + labelled(rows)
+            lines.append(_allowance_line(allowance))
+        return "**ur usage**\n" + labelled(rows) + "\n\n" + "\n".join(lines)
 
 
 # The allowances /usage lists, as (label, key in Config.RATE_LIMITS)
@@ -220,10 +223,16 @@ def _bar(used: float, limit: float) -> str:
     # Any use at all shows as one step, so the bar never reads as untouched
     if used > 0 and filled == 0:
         filled = 1
-    return f"{'▓' * filled}{'░' * (10 - filled)} {int(round(share * 100))}%"
+    # Padded to 4 characters, so 0% takes the same room as 100%
+    return f"{'▓' * filled}{'░' * (10 - filled)} {int(round(share * 100)):>3}%"
 
 
-def _allowance_words(allowance: dict) -> str:
+def _bar_line(used: float, limit: float, words: str) -> str:
+    """A list item that starts with the bar in a code span, so every bar has the same width."""
+    return f"- `{_bar(used, limit)}` {words}"
+
+
+def _allowance_line(allowance: dict) -> str:
     """The Unicorp Gemini allowance as a bar and dollars, with what happens when it runs out."""
     try:
         limit = float(allowance["limitUsd"])
@@ -231,13 +240,13 @@ def _allowance_words(allowance: dict) -> str:
         used = float(allowance["spentUsd"]) + float(allowance.get("reservedUsd") or 0)
         left = max(0.0, float(allowance["remainingUsd"]))
     except (KeyError, TypeError, ValueError):
-        return "couldnt check right now"
-    words = f"{_bar(used, limit)}, ${left:.2f} left of ${limit:g}"
+        return "- uniloom: couldnt check right now"
+    words = f"uniloom, ${left:.2f} left of ${limit:g}"
     if allowance.get("paused"):
         words += ", paused, so uniloom runs on the bot's own model for now"
     elif left <= 0:
         words += ", used up, so uniloom runs on the bot's own model for now"
-    return words
+    return _bar_line(used, limit, words)
 
 
 def _short_date(iso_day: str) -> str:
