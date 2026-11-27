@@ -90,6 +90,20 @@ def test_a_call_made_on_another_provider_gets_the_documented_stand_in_signature(
     assert body["contents"][1]["parts"][0]["thoughtSignature"] == SKIP_SIGNATURE
 
 
+@pytest.mark.parametrize("arguments", ['{"key": "TG-', '["TG-1"]'])
+def test_a_call_with_broken_arguments_is_sent_back_with_its_error_instead_of_failing(arguments):
+    # The bot answers such a call with an error result so the model can try again
+    _, body = to_gemini({"model": "m", "messages": [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "c1", "type": "function", "function": {"name": "uniloom_get_item", "arguments": arguments}}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "error: the tool arguments were not valid JSON"},
+    ]})
+    assert body["contents"][1]["parts"][0]["functionCall"] == {"name": "uniloom_get_item", "args": {}}
+    assert body["contents"][2]["parts"][0]["functionResponse"]["response"] == {
+        "result": "error: the tool arguments were not valid JSON"}
+
+
 def test_text_from_the_model_turn_is_kept():
     _, body = to_gemini({"model": "m", "messages": [
         {"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"},

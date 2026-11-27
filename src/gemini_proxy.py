@@ -60,8 +60,15 @@ def _text_parts(content) -> List[dict]:
 
 
 def _call_part(call: dict) -> dict:
-    arguments = call["function"].get("arguments") or "{}"
-    part = {"functionCall": {"name": call["function"]["name"], "args": json.loads(arguments)}}
+    # Broken arguments already got an error result from the bot, which follows this call, so
+    # the model can see what went wrong and try again
+    try:
+        args = json.loads(call["function"].get("arguments") or "{}")
+    except ValueError:
+        args = {}
+    if not isinstance(args, dict):
+        args = {}
+    part = {"functionCall": {"name": call["function"]["name"], "args": args}}
     google = (call.get("extra_content") or {}).get("google") or {}
     signature = google.get("thought_signature")
     if signature:
