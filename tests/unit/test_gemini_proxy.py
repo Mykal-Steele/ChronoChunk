@@ -225,3 +225,36 @@ async def test_a_failed_request_raises_with_its_status(status, refused):
     assert caught.value.status_code == status
     assert caught.value.refused is refused
     assert "Spending limit reached" in str(caught.value)
+
+
+# ── what is left of the allowance ────────────────────────────────────────────
+
+async def test_the_allowance_is_read_from_the_usage_endpoint():
+    from src.gemini_proxy import fetch_allowance
+    seen = {}
+
+    async def handle(request: web.Request):
+        seen["path"], seen["key"] = request.path, request.headers.get("x-goog-api-key")
+        return web.json_response({"limitUsd": 40, "spentUsd": 1.5, "reservedUsd": 0, "remainingUsd": 38.5, "paused": False})
+
+    app = web.Application()
+    app.router.add_get("/usage", handle)
+    server = TestServer(app)
+    await server.start_server()
+    try:
+        allowance = await fetch_allowance(str(server.make_url("")).rstrip("/"), "friend-key")
+    finally:
+        await server.close()
+    assert (seen["path"], seen["key"]) == ("/usage", "friend-key")
+    assert allowance["remainingUsd"] == 38.5
+
+
+async def test_a_failed_allowance_check_gives_an_empty_answer():
+    from src.gemini_proxy import fetch_allowance
+    server, _ = await _serve(lambda body: (500, {}))
+    try:
+        # Nothing listens for GET here, so the server answers 405
+        assert await fetch_allowance(str(server.make_url("")).rstrip("/"), "k") == {}
+    finally:
+        await server.close()
+    assert await fetch_allowance("http://127.0.0.1:9", "k") == {}

@@ -12,6 +12,12 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 The time in each heading is when that version went out, in Bangkok time. For the versions before 3.31.0 it was taken from the commit each version's tag points to, and a version tagged on an earlier commit than the one before it shows that one's time.
 
+## 3.35.0 (2026-11-27 23:44)
+
+### Added
+
+- `/usage` shows how much of the Uniloom allowance is used and left, as a bar and in dollars. It also says when the allowance is used up or paused, since Uniloom replies then run on the bot's own model.
+
 ## 3.34.0 (2026-11-27 22:56)
 
 ### For whoever runs the bot
