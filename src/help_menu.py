@@ -108,7 +108,7 @@ def build_help_embed() -> discord.Embed:
         "reply to any message with `/` and what u want (`/summarize`, `/read this`) and i read it and whatever is attached",
         "`/tldr <count>` catch up on what was said here",
         "`/music <song>` play something in ur voice channel",
-        "`/usage` what u have left today. only u see it",
+        "`/usage` what u have left today",
     ]), inline=False)
     embed.add_field(name="i remember stuff", value=_bullets([
         "tell me to remember something or note a link and i keep it, then just ask for it later in normal words",

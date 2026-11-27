@@ -12,6 +12,13 @@ Nothing was tagged before 2.7.0. The earlier versions were worked out afterwards
 
 The time in each heading is when that version went out, in Bangkok time. For the versions before 3.31.0 it was taken from the commit each version's tag points to, and a version tagged on an earlier commit than the one before it shows that one's time.
 
+## 3.35.1 (2026-11-27 23:53)
+
+### Fixed
+
+- `/usage` shows its answer to everyone in the channel instead of only the person who asked.
+- The bars in `/usage` line up. Each one starts its line at the same width, instead of following labels of different lengths.
+
 ## 3.35.0 (2026-11-27 23:44)
 
 ### Added
