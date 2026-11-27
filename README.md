@@ -1,6 +1,6 @@
 # ChronoChunk Discord Bot
 
-A Discord bot with a personality. It chats, remembers things about the people it talks to, reads images and files, writes documents, searches the web and plays music. The live bot runs on Gemini through Google Vertex AI: gemini-3.1-flash-lite for chat and gemini-3.8-flash for study sets, detailed answers and documents. Azure OpenAI and other OpenAI-compatible services work too, see [Choosing the AI provider](#choosing-the-ai-provider).
+A Discord bot with a personality. It chats, remembers things about the people it talks to, reads images and files, writes documents, searches the web and plays music. The live bot runs on Gemini through Google Vertex AI: gemini-3.1-flash-lite for chat and gemini-3.8-flash for study sets, detailed answers and documents. It started on Azure OpenAI with gpt-6-luna for chat and gpt-5-nano for background jobs, and moved to Gemini in November 2026. Azure OpenAI and other OpenAI-compatible services still work, see [Choosing the AI provider](#choosing-the-ai-provider).
 
 ## Features
 
