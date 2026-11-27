@@ -2,6 +2,7 @@ import asyncio
 import io
 import logging
 import discord
+from config.config import Config
 from src import changelog
 from src.memory_control import about_me, about_server, delete_item
 from src.memory_store import MemoryStore, Speaker, place_of
@@ -10,6 +11,7 @@ from typing import Optional
 from src import usage_context
 from src.ai_response_handler import AIResponseHandler
 from src.exceptions import RateLimitError
+from src.gemini_proxy import fetch_allowance
 from src.game_manager import GameManager
 from src.help_menu import TOPICS, build_help_embed, build_topic_help
 from src.channel_settings import get_channel_settings
@@ -589,9 +591,16 @@ class SlashCommandManager:
         """Register the usage command"""
         @self.bot.tree.command(name="usage", description="See how much of the AI budget is used")
         async def usage(interaction: discord.Interaction):
+            summary = self.bot.command_handler.usage_summary
+            user_id = str(interaction.user.id)
+            if Config.UNILOOM_GEMINI_PROXY_URL and Config.UNILOOM_GEMINI_PROXY_KEY:
+                # What is left of the allowance Uniloom replies are paid from
+                text = summary(user_id, await fetch_allowance(
+                    Config.UNILOOM_GEMINI_PROXY_URL, Config.UNILOOM_GEMINI_PROXY_KEY))
+            else:
+                text = summary(user_id)
             # Their own numbers, so only they see them
-            await interaction.response.send_message(
-                self.bot.command_handler.usage_summary(str(interaction.user.id)), ephemeral=True)
+            await interaction.response.send_message(text, ephemeral=True)
     
     async def _register_model_command(self):
         """Register the model command"""

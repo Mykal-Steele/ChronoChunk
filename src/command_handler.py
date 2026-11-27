@@ -159,8 +159,12 @@ class CommandHandler:
             f"background model for memory: `{background}`. bot version {__version__}"
         )
 
-    def usage_summary(self, user_id: str) -> str:
-        """What one person has left of each allowance, and how much of their AI limit and the bot's is used."""
+    def usage_summary(self, user_id: str, allowance: Optional[dict] = None) -> str:
+        """
+        What one person has left of each allowance, and how much of their AI limit and the bot's
+        is used. allowance is what the Unicorp Gemini proxy reported for Uniloom replies: None
+        when it is not set up, empty when it could not be asked.
+        """
         rows = [("left right now", "")]
         for label, action in USAGE_ROWS:
             left, limit, window, wait = self.rate_limiter.remaining(user_id, action)
@@ -178,6 +182,8 @@ class CommandHandler:
             rows.append(("  today", f"{_bar(mine['day_cost'], mine['daily_budget'])}, resets in {_duration(mine['seconds_to_reset'])}"))
             rows.append(("  7 days", _bar(mine["week_cost"], mine["weekly_budget"])))
         rows.append(("  bot", f"{_bar(bot['cycle_cost'], bot['monthly_budget'])} this month, resets {_short_date(bot['resets_on'])}"))
+        if allowance is not None:
+            rows.append(("  uniloom", _allowance_words(allowance)))
         return "**ur usage**\n" + labelled(rows)
 
 
@@ -215,6 +221,23 @@ def _bar(used: float, limit: float) -> str:
     if used > 0 and filled == 0:
         filled = 1
     return f"{'▓' * filled}{'░' * (10 - filled)} {int(round(share * 100))}%"
+
+
+def _allowance_words(allowance: dict) -> str:
+    """The Unicorp Gemini allowance as a bar and dollars, with what happens when it runs out."""
+    try:
+        limit = float(allowance["limitUsd"])
+        # Money held for a call still running is not free to spend yet
+        used = float(allowance["spentUsd"]) + float(allowance.get("reservedUsd") or 0)
+        left = max(0.0, float(allowance["remainingUsd"]))
+    except (KeyError, TypeError, ValueError):
+        return "couldnt check right now"
+    words = f"{_bar(used, limit)}, ${left:.2f} left of ${limit:g}"
+    if allowance.get("paused"):
+        words += ", paused, so uniloom runs on the bot's own model for now"
+    elif left <= 0:
+        words += ", used up, so uniloom runs on the bot's own model for now"
+    return words
 
 
 def _short_date(iso_day: str) -> str:

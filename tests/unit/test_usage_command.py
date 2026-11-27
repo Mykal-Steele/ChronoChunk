@@ -78,3 +78,33 @@ def test_bars_and_durations():
     assert _bar(0.001, 1) == "▓░░░░░░░░░ 0%"   # any use shows
     assert _bar(2, 1) == "▓▓▓▓▓▓▓▓▓▓ 100%"
     assert _duration(30) == "1m" and _duration(3600) == "1h 0m" and _duration(22200) == "6h 10m"
+
+
+# ── the Unicorp Gemini allowance that Uniloom replies are paid from ──────────
+
+ALLOWANCE = {"limitUsd": 40, "spentUsd": 10.5, "reservedUsd": 0.25, "remainingUsd": 29.25, "paused": False}
+
+
+def test_the_uniloom_allowance_shows_what_is_used_and_left(handler):
+    row = _row(handler.usage_summary("42", allowance=ALLOWANCE), "uniloom")
+    # Money held for a call still running counts as used, since it is not free to spend yet
+    assert row == "▓▓▓░░░░░░░ 27%, $29.25 left of $40"
+
+
+def test_a_used_up_allowance_says_uniloom_is_on_the_bots_own_model(handler):
+    spent = {**ALLOWANCE, "spentUsd": 40, "reservedUsd": 0, "remainingUsd": 0}
+    row = _row(handler.usage_summary("42", allowance=spent), "uniloom")
+    assert row.startswith("▓▓▓▓▓▓▓▓▓▓ 100%, $0.00 left of $40") and "bot's own" in row
+
+
+def test_a_paused_allowance_says_so(handler):
+    row = _row(handler.usage_summary("42", allowance={**ALLOWANCE, "paused": True}), "uniloom")
+    assert "paused" in row
+
+
+def test_when_the_proxy_cannot_be_reached_the_row_says_so(handler):
+    assert _row(handler.usage_summary("42", allowance={}), "uniloom") == "couldnt check right now"
+
+
+def test_without_the_proxy_set_up_there_is_no_uniloom_row(handler):
+    assert "- uniloom:" not in handler.usage_summary("42")

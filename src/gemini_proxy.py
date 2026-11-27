@@ -207,3 +207,23 @@ def make_proxy_client(base_url: str, api_key: str, timeout: Optional[float] = No
     and the reply's cost still count. The proxy keeps its own total on top of that.
     """
     return guard_client(GeminiProxyClient(base_url, api_key, timeout), rate_limit_retries=2)
+
+
+# /usage has to answer Discord within 3 seconds
+ALLOWANCE_TIMEOUT_SECONDS = 2.5
+
+
+async def fetch_allowance(base_url: str, api_key: str) -> dict:
+    """
+    What the proxy says is used and left of the allowance: limitUsd, spentUsd, reservedUsd,
+    remainingUsd and paused. Empty when it could not be asked.
+    """
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=ALLOWANCE_TIMEOUT_SECONDS)) as session:
+            async with session.get(f"{base_url.rstrip('/')}/usage", headers={"x-goog-api-key": api_key}) as response:
+                if response.status != 200:
+                    return {}
+                data = await response.json(content_type=None)
+    except (aiohttp.ClientError, TimeoutError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
