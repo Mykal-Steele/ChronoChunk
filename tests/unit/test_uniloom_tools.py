@@ -197,3 +197,82 @@ async def test_uniloom_refusing_the_person_is_said_instead_of_breaking_the_reply
     uniloom.tools.side_effect = Forbidden("Complete the shared Unicorp terms step through UniAuth")
     result = await OpenUniloom(uniloom).run({}, _turn())
     assert "Unicorp terms" in result.text
+
+
+# ── paid from the Unicorp Gemini allowance ───────────────────────────────────
+
+@pytest.fixture
+def proxy():
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock()
+    return client
+
+
+async def test_once_uniloom_is_loaded_the_reply_runs_on_the_proxy(handler, mock_openai_client, proxy, uniloom):
+    handler.uniloom_client = proxy
+    mock_openai_client.chat.completions.create.side_effect = [_message(tool_calls=[_tool_call("uniloom", {})])]
+    proxy.chat.completions.create.side_effect = [
+        _message(tool_calls=[_tool_call("uniloom_list_projects", {}, "call_2")]),
+        _message(content="u have TG"),
+    ]
+    reply = await handler.generate_reply("/hey whats going on", "", "Oakar", "760", allow_files=True, uniloom=True)
+    assert reply.text == "u have TG"
+    # The first call, before the tools were loaded, stays on the bot's own model
+    assert mock_openai_client.chat.completions.create.call_count == 1
+    assert proxy.chat.completions.create.call_count == 2
+
+
+async def test_a_message_about_uniloom_is_on_the_proxy_from_the_first_call(handler, mock_openai_client, proxy):
+    handler.uniloom_client = proxy
+    proxy.chat.completions.create.side_effect = [_message(content="ok")]
+    await handler.generate_reply("/whats on my uniloom board", "", "Oakar", "760", allow_files=True, uniloom=True)
+    mock_openai_client.chat.completions.create.assert_not_awaited()
+    assert "uniloom_list_projects" in [t["function"]["name"] for t in proxy.chat.completions.create.call_args[1]["tools"]]
+
+
+async def test_a_reply_without_uniloom_never_touches_the_proxy(handler, mock_openai_client, proxy):
+    handler.uniloom_client = proxy
+    mock_openai_client.chat.completions.create.side_effect = [_message(content="yo")]
+    await handler.generate_reply("/hey whats going on", "", "Oakar", "760", allow_files=True, uniloom=True)
+    proxy.chat.completions.create.assert_not_awaited()
+
+
+# 404 is a model the proxy does not list, 429 its daily cap or too many at once (after the guard's retries)
+@pytest.mark.parametrize("status", [401, 402, 403, 404, 429])
+async def test_when_the_allowance_is_used_up_the_reply_goes_on_with_the_bots_model(
+        handler, mock_openai_client, proxy, status):
+    from src.gemini_proxy import ProxyError
+    handler.uniloom_client = proxy
+    proxy.chat.completions.create.side_effect = ProxyError(status, "Spending limit reached")
+    mock_openai_client.chat.completions.create.side_effect = [_message(content="u have TG")]
+    reply = await handler.generate_reply("/whats on my uniloom board", "", "Oakar", "760", allow_files=True, uniloom=True)
+    assert reply.text == "u have TG"
+
+
+async def test_other_proxy_failures_are_not_hidden(handler, mock_openai_client, proxy):
+    from src.gemini_proxy import ProxyError
+    handler.uniloom_client = proxy
+    proxy.chat.completions.create.side_effect = ProxyError(500, "upstream broke")
+    reply = await handler.generate_reply("/whats on my uniloom board", "", "Oakar", "760", allow_files=True, uniloom=True)
+    assert reply.ok is False
+    mock_openai_client.chat.completions.create.assert_not_awaited()
+
+
+def test_the_proxy_is_only_used_when_both_settings_are_there(mock_openai_client, monkeypatch):
+    from config.config import Config
+    from src.gemini_proxy import GeminiProxyClient
+    from src.usage_guard import GuardedClient
+    from src.ai_response_handler import AIResponseHandler
+
+    def build():
+        with patch("src.ai_provider.AsyncOpenAI", return_value=mock_openai_client):
+            return AIResponseHandler(endpoint="https://fake.openai.azure.com/openai/v1", api_key="k", deployment="gpt-5-mini")
+
+    monkeypatch.setattr(Config, "UNILOOM_GEMINI_PROXY_URL", "https://proxy.example")
+    monkeypatch.setattr(Config, "UNILOOM_GEMINI_PROXY_KEY", "")
+    assert build().uniloom_client is None
+    monkeypatch.setattr(Config, "UNILOOM_GEMINI_PROXY_KEY", "friend-key")
+    with patch("src.gemini_proxy.GeminiProxyClient", wraps=GeminiProxyClient) as made:
+        client = build().uniloom_client
+    assert isinstance(client, GuardedClient)
+    assert made.call_args[0][:2] == ("https://proxy.example", "friend-key")
