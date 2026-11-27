@@ -26,6 +26,7 @@ from src.document_builder import BuiltFile, plain_math, strip_filler
 from src.exceptions import ReplyLimitError, RequestBusy
 from src.request_governor import RequestGovernor
 from src.ai_provider import AiSettings, make_client
+from src.gemini_proxy import ProxyError, make_proxy_client
 from src.usage_guard import BudgetExceededError, UsageGuard, get_usage_guard
 from src.tools import Tool, ToolResult, Turn, default_tools
 from src.tools.base import user_content
@@ -647,6 +648,11 @@ class AIResponseHandler:
         self.memory_embedder = make_embedder(settings, self.ai_client)
         self.deployment = settings.chat_model
         self._settings_heavy_model = settings.heavy_model
+        # Replies working in Uniloom are paid from the Unicorp Gemini allowance when it is set up
+        self.uniloom_client = None
+        if Config.UNILOOM_GEMINI_PROXY_URL and Config.UNILOOM_GEMINI_PROXY_KEY:
+            self.uniloom_client = make_proxy_client(
+                Config.UNILOOM_GEMINI_PROXY_URL, Config.UNILOOM_GEMINI_PROXY_KEY, Config.AI_MODEL_TIMEOUT_SECONDS)
 
         # One queue for every reply, so a burst cannot open unbounded model calls.
         self.governor = RequestGovernor(
@@ -781,7 +787,17 @@ class AIResponseHandler:
             kwargs["reasoning_effort"] = reasoning_effort
         called_at = time.monotonic()
         try:
-            resp = await self.ai_client.chat.completions.create(**kwargs)
+            if self.uniloom_client and request and request.uniloom.loaded:
+                try:
+                    resp = await self.uniloom_client.chat.completions.create(**kwargs)
+                except ProxyError as e:
+                    # Used up, paused, over its daily cap or a bad key. The person still gets their answer.
+                    if not e.refused:
+                        raise
+                    logger.warning(f"{e}, answering this Uniloom call on the bot's own model")
+                    resp = await self.ai_client.chat.completions.create(**kwargs)
+            else:
+                resp = await self.ai_client.chat.completions.create(**kwargs)
         finally:
             # A call that fails still made them wait
             if request:

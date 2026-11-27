@@ -32,6 +32,9 @@ services:
       # The bot's own HTTPS address, through the tunnel below. It turns Uniloom on, since
       # signing in sends people back here (docs/uniloom-plan.md)
       PUBLIC_URL: https://chrono.oakar.dev
+      # Uniloom replies are paid from the Unicorp Gemini allowance. The key,
+      # UNILOOM_GEMINI_PROXY_KEY, goes in .env
+      UNILOOM_GEMINI_PROXY_URL: https://unicorp-gemini-proxy.oakar-adorio.workers.dev
     # Runs as the unprivileged user from the Dockerfile, with nothing it could use to become root
     cap_drop:
       - ALL

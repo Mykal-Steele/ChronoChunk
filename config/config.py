@@ -91,6 +91,10 @@ class Config:
     UNILOOM_TOKEN_KEY_PATH = os.getenv("UNILOOM_TOKEN_KEY_PATH", os.path.join(STATE_DIR, "uniloom.key"))
     # Planning work in Uniloom takes several steps (find the project, read an item, then save)
     UNILOOM_MAX_TOOL_ROUNDS = int(os.getenv("UNILOOM_MAX_TOOL_ROUNDS", 8))
+    # Once a reply loads the Uniloom tools, its model calls go to the Unicorp Gemini proxy and
+    # are paid from that capped allowance. Unset, Uniloom replies use the bot's own model.
+    UNILOOM_GEMINI_PROXY_URL = os.getenv("UNILOOM_GEMINI_PROXY_URL", "").strip().rstrip("/")
+    UNILOOM_GEMINI_PROXY_KEY = os.getenv("UNILOOM_GEMINI_PROXY_KEY", "").strip()
 
     # AI spending caps. Once a cap is hit the bot stops calling the model until it resets.
     # $20 is the whole Azure budget for a month. The daily cap stops one bad day from
